@@ -5,7 +5,7 @@ on:
 
 jobs:
   check_version:
-    name: Check what-to-eat version
+    name: Check wolt-cli version
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
@@ -31,7 +31,7 @@ jobs:
           pip install ruff
 
       - name: Run ruff linter
-        run: ruff what_to_eat
+        run: ruff wolt_cli
 
   mypy:
     name: Run mypy
@@ -49,7 +49,7 @@ jobs:
           pip install mypy
 
       - name: Run mypy
-        run: mypy what_to_eat
+        run: mypy wolt_cli
 
   pre-commit:
     name: Run pre-commit

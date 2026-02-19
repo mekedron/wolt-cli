@@ -1,8 +1,8 @@
 from factory import Factory
 
-from what_to_eat.models.config import Config, Profile
-from what_to_eat.models.location import Location
-from what_to_eat.models.wolt import Item, Link, Rating, Venue
+from wolt_cli.models.config import Config, Profile
+from wolt_cli.models.location import Location
+from wolt_cli.models.wolt import Item, Link, Rating, Venue
 
 
 class ConfigFactory(Factory):
@@ -42,13 +42,19 @@ class VenueFactory(Factory):
     class Meta:
         model = Venue
 
+    id = "venue-id-1"
+    slug = "test-venue"
     name = "Test venue"
     address = "Test address"
+    badges = []
     country = "PL"
     currency = "PLN"
     delivery_price_int = 1000
     estimate_range = "10-20"
     estimate = 15.0
+    online = True
+    product_line = "restaurant"
+    show_wolt_plus = True
     delivers = True
     short_description = "Test description"
     tags = ["test"]

@@ -1,25 +1,26 @@
 [tool.poetry]
-name = "what-to-eat"
+name = "wolt-cli"
 version = "1.1.1"
 description = "What to eat? CLI tool to interaction with Wolt API"
 authors = ["Kamil Woźniak <info@kamilwozniak.com>"]
 readme = "README.md"
 
 [tool.poetry.scripts]
-what-to-eat = "what_to_eat.main:app"
+wolt-cli = "wolt_cli.main:app"
 
 [tool.poetry.dependencies]
 python = "^3.12"
 typer = {extras = ["all"], version = "^0.9.0"}
+click = ">=8.1.7,<8.2.0"
 pydantic = "^2.4.2"
 httpx = "^0.25.0"
 inquirer = ">=2.10.1,<4.0.0"
 pydantic-settings = "^2.0.3"
 
 [tool.poetry.urls]
-homepage = "https://github.com/Valaraucoo/what-to-eat"
-repository = "https://github.com/Valaraucoo/what-to-eat"
-documentation = "https://github.com/Valaraucoo/what-to-eat"
+homepage = "https://github.com/Valaraucoo/wolt-cli"
+repository = "https://github.com/Valaraucoo/wolt-cli"
+documentation = "https://github.com/Valaraucoo/wolt-cli"
 
 [tool.poetry.group.dev.dependencies]
 ruff = "^0.0.286"

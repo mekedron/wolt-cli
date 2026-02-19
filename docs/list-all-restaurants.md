@@ -3,9 +3,9 @@
 Command manual:
 
 ```console
-$ what-to-eat ls --help
+$ wolt-cli ls --help
 
- Usage: what-to-eat ls [OPTIONS] [RESTAURANT]
+ Usage: wolt-cli ls [OPTIONS] [RESTAURANT]
 
  List restaurants queried from Wolt API.
 
@@ -29,13 +29,13 @@ $ what-to-eat ls --help
 By default your first profile is `default` one. But while listing restaurants you can change it using `profile` option:
 
 ```console
-$ what-to-eat ls --profile work
+$ wolt-cli ls --profile work
 ```
 
 You can query restaurants by name using `query` option and limit the number of results using `limit` option:
 
 ```console
-$ what-to-eat ls --query pizza --limit 3
+$ wolt-cli ls --query pizza --limit 3
 ┏━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━┓
 ┃ No. ┃                   Restaurant ┃             Address ┃ Estimate time ┃ Delivery cost ┃ Rating ┃ Price ┃                     Tags ┃
 ┡━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━┩
@@ -50,7 +50,7 @@ $ what-to-eat ls --query pizza --limit 3
 Another cool feature is to list restaurants by tags. You can use `--tag` (or `-t`) option to filter restaurants by tags:
 
 ```console
-$ what-to-eat ls --tag kebab --limit 3
+$ wolt-cli ls --tag kebab --limit 3
 ┏━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
 ┃ No. ┃                           Restaurant ┃       Address ┃ Estimate time ┃ Delivery cost ┃ Rating ┃ Price ┃                         Tags ┃
 ┡━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
@@ -65,7 +65,7 @@ $ what-to-eat ls --tag kebab --limit 3
 By using sorting options you can sort restaurants by name, rating, price, delivery cost and delivery time and chose order (ascending or descending):
 
 ```console
-$ what-to-eat ls --sort rating --ordering desc --limit 3
+$ wolt-cli ls --sort rating --ordering desc --limit 3
 ┏━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━┓
 ┃ No. ┃                              Restaurant ┃                  Address ┃ Estimate time ┃ Delivery cost ┃ Rating ┃ Price ┃                  Tags ┃
 ┡━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━┩
@@ -80,7 +80,7 @@ $ what-to-eat ls --sort rating --ordering desc --limit 3
 You can also display restaurant details by using `ls` command with restaurant name:
 
 ```console
-$ what-to-eat ls poco
+$ wolt-cli ls poco
 ┏━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
 ┃ 🍕 Poco Loco Czysta ┃                                Kraków, Ul. Czysta 9 🍕 ┃
 ┡━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
@@ -101,9 +101,9 @@ $ what-to-eat ls poco
 
 | Option             | Description                                                                                                                      | Example usage                              |
 |--------------------|----------------------------------------------------------------------------------------------------------------------------------|--------------------------------------------|
-| `--query`, `-q`    | Command used to query restaurants by `Restaurant Name`, `Address` and `Tags`. Query search is case insensitive.                  | `what-to-eat ls -q pizza`                  |
-| `--profile`, `-p`  | Command used to set profile while listing restaurants. By default the `default` profile is used.                                 | `what-to-eat ls -p work`                   |
-| `--tag`, `-t`      | Command used to search restaurants by `Tags`. Searching is case insensitive.                                                     | `what-to-eat ls -t italian`                |
-| `--sort`, `-s`     | Command used to sort restaurants by one of following fields: `restaurant, address, delivery_cost, estimate_time, rating, price`. | `what-to-eat ls -s rating`                 |
-| `--ordering`, `-o` | Command used to order restaurants ascending or descending by field specified in `--sort` option.                                 | `what-to-eat ls -s rating --ordering desc` |
-| `--limit`, `-l`    | Command used to limit result to specified number of restaurants.                                                                 | `what-to-eat ls -l 5`                      |
+| `--query`, `-q`    | Command used to query restaurants by `Restaurant Name`, `Address` and `Tags`. Query search is case insensitive.                  | `wolt-cli ls -q pizza`                  |
+| `--profile`, `-p`  | Command used to set profile while listing restaurants. By default the `default` profile is used.                                 | `wolt-cli ls -p work`                   |
+| `--tag`, `-t`      | Command used to search restaurants by `Tags`. Searching is case insensitive.                                                     | `wolt-cli ls -t italian`                |
+| `--sort`, `-s`     | Command used to sort restaurants by one of following fields: `restaurant, address, delivery_cost, estimate_time, rating, price`. | `wolt-cli ls -s rating`                 |
+| `--ordering`, `-o` | Command used to order restaurants ascending or descending by field specified in `--sort` option.                                 | `wolt-cli ls -s rating --ordering desc` |
+| `--limit`, `-l`    | Command used to limit result to specified number of restaurants.                                                                 | `wolt-cli ls -l 5`                      |

@@ -1,11 +1,11 @@
 # Security Policy
 
-Security is very important for `what-to-eat` maintainers. We appreciate your efforts to responsibly disclose your findings, and will make every effort to acknowledge your contributions.
+Security is very important for `wolt-cli` maintainers. We appreciate your efforts to responsibly disclose your findings, and will make every effort to acknowledge your contributions.
 Learn more about it below.
 
 ## Versions
 
-The latest versions of `what-to-eat` are always available on [GitHub](https://github.com/Valaraucoo/what-to-eat), and are published to [pypi](https://pypi.org/project/what-to-eat/).
+The latest versions of `wolt-cli` are always available on [GitHub](https://github.com/Valaraucoo/wolt-cli), and are published to [pypi](https://pypi.org/project/wolt-cli/).
 
 You are encouraged to create/write tests for your application and update your Typer version frequently after ensuring that your tests are passing. This way you will benefit from the latest features, bug fixes, and **security fixes**.
 

@@ -34,7 +34,7 @@ def get_master_version() -> str:
     content = response.text
     match = re.search(version_regex, content)
     if match is None:
-        raise ValueError(f"[{settings.github_ref}] Could not find version in what_to_eat/__init__.py")
+        raise ValueError(f"[{settings.github_ref}] Could not find version in wolt_cli/__init__.py")
     return match.group("version")
 
 

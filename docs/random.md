@@ -3,9 +3,9 @@
 Command manual:
 
 ```console
-$ what-to-eat random --help
+$ wolt-cli random --help
 
- Usage: what-to-eat random [OPTIONS]
+ Usage: wolt-cli random [OPTIONS]
 
  Finds random restaurant via Wolt API
 
@@ -22,7 +22,7 @@ $ what-to-eat random --help
 Random restaurant draw is a command that allows you to find a random restaurant from the list of restaurants available in your localization. The basic command is as follows:
 
 ```console
-$ what-to-eat random
+$ wolt-cli random
 ┏━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
 ┃ 🍕 Krowarzywa Kraków ┃                                                 Kraków, ul. Sławkowska 8 🍕 ┃
 ┡━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
@@ -53,12 +53,12 @@ The `--technique` option allows you to select one of the following techniques:
 The `mix` technique is the default one, but you can change it by using the `--technique` option:
 
 ```console
-$ what-to-eat random --technique delivery_price
+$ wolt-cli random --technique delivery_price
 ```
 
 While randomly drawing restaurants you can limit possible results by using specified tag option:
 ```console
-$ what-to-eat random --tag pizza
+$ wolt-cli random --tag pizza
 ```
 
 The following command will draw a random restaurant from the list of restaurants available in your localization, but only those that have the `pizza` tag.
@@ -67,6 +67,6 @@ The following command will draw a random restaurant from the list of restaurants
 
 | Option            | Description                                                                                                                                                                            | Example usage                           |
 |-------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------|
-| `--profile`, `-p` | Option used to set profile while drawing restaurants. By default the `default` profile is used.                                                                                        | `what-to-eat random -p work`            |
-| `--tag`, `-t`     | Option used to is used to filter restaurants by their tags while drawing restaurant. Searching is case insensitive.                                                                    | `what-to-eat random -t italian`         |
-| `--techique`      | Option is used to select the technique used to draw a random restaurant. The following techniques are available: `delivery_price, -delivery_price, rating, -rating, mix, -mix, random` | `what-to-eat random --technique random` |
+| `--profile`, `-p` | Option used to set profile while drawing restaurants. By default the `default` profile is used.                                                                                        | `wolt-cli random -p work`            |
+| `--tag`, `-t`     | Option used to is used to filter restaurants by their tags while drawing restaurant. Searching is case insensitive.                                                                    | `wolt-cli random -t italian`         |
+| `--techique`      | Option is used to select the technique used to draw a random restaurant. The following techniques are available: `delivery_price, -delivery_price, rating, -rating, mix, -mix, random` | `wolt-cli random --technique random` |

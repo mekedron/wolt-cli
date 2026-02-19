@@ -6,9 +6,9 @@ import pytest
 from httpx import Response
 
 from tests.factories import ItemFactory
-from what_to_eat.gateways import wolt
-from what_to_eat.models.location import Location
-from what_to_eat.models.wolt import Item, Translation
+from wolt_cli.gateways import wolt
+from wolt_cli.models.location import Location
+from wolt_cli.models.wolt import Item, Translation
 
 
 def read_data(filename: str) -> dict:
@@ -25,7 +25,7 @@ def create_success_response(json_data: dict) -> Response:
 
 @pytest.fixture
 def mock__httpx__get():
-	with patch("what_to_eat.gateways.wolt.httpx.get") as mock:
+	with patch("wolt_cli.gateways.wolt.httpx.get") as mock:
 		yield mock
 
 

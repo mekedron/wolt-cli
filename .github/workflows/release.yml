@@ -1,4 +1,4 @@
-name: Release what-to-eat to PyPI
+name: Release wolt-cli to PyPI
 
 on:
   push:
