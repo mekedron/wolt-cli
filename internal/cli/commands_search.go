@@ -33,7 +33,7 @@ func newSearchVenuesCommand(deps Dependencies) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "venues",
 		Short: "Search venues by query.",
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			format, err := parseOutputFormat(flags.Format)
 			if err != nil {
 				return err
@@ -91,7 +91,7 @@ func newSearchVenuesCommand(deps Dependencies) *cobra.Command {
 	cmd.Flags().IntVar(&limit, "limit", 0, "Limit returned rows")
 	cmd.Flags().IntVar(&offset, "offset", 0, "Offset returned rows")
 	addGlobalFlags(cmd, &flags)
-	cmd.PreRun = func(cmd *cobra.Command, args []string) {
+	cmd.PreRun = func(cmd *cobra.Command, _ []string) {
 		limitSet = cmd.Flags().Changed("limit")
 	}
 
@@ -110,7 +110,7 @@ func newSearchItemsCommand(deps Dependencies) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "items",
 		Short: "Search menu items by query.",
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			if query == "" {
 				return fmt.Errorf("%s", requiredArg("--query"))
 			}
@@ -171,7 +171,7 @@ func newSearchItemsCommand(deps Dependencies) *cobra.Command {
 	cmd.Flags().IntVar(&limit, "limit", 0, "Limit returned rows")
 	cmd.Flags().IntVar(&offset, "offset", 0, "Offset returned rows")
 	addGlobalFlags(cmd, &flags)
-	cmd.PreRun = func(cmd *cobra.Command, args []string) {
+	cmd.PreRun = func(cmd *cobra.Command, _ []string) {
 		limitSet = cmd.Flags().Changed("limit")
 	}
 

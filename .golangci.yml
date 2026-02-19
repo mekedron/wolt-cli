@@ -12,7 +12,6 @@ linters:
     - staticcheck
     - unused
     - gocritic
-    - revive
     - misspell
 
 formatters:

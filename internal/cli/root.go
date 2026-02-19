@@ -25,20 +25,20 @@ func NewRootCommand(deps Dependencies) *cobra.Command {
 		CompletionOptions: cobra.CompletionOptions{
 			DisableDefaultCmd: true,
 		},
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			showVersion, _ := cmd.Flags().GetBool("version")
 			if showVersion {
-				fmt.Fprintln(cmd.OutOrStdout(), version)
+				_, _ = fmt.Fprintln(cmd.OutOrStdout(), version)
 				return errVersionShown
 			}
 			return cmd.Help()
 		},
-		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
 			showVersion, _ := cmd.Flags().GetBool("version")
 			if !showVersion {
 				return nil
 			}
-			fmt.Fprintln(cmd.OutOrStdout(), version)
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), version)
 			return errVersionShown
 		},
 	}
@@ -63,22 +63,22 @@ func NewRootCommand(deps Dependencies) *cobra.Command {
 }
 
 func renderRootHelp(out io.Writer, root *cobra.Command) {
-	fmt.Fprintf(out, "%s: %s\n\n", root.Name(), root.Short)
-	fmt.Fprintf(out, "usage: %s <command> [options]\n", root.Name())
-	fmt.Fprintln(out, "global options:")
+	_, _ = fmt.Fprintf(out, "%s: %s\n\n", root.Name(), root.Short)
+	_, _ = fmt.Fprintf(out, "usage: %s <command> [options]\n", root.Name())
+	_, _ = fmt.Fprintln(out, "global options:")
 	for _, token := range rootOptionTokens(root) {
-		fmt.Fprintf(out, "  %s\n", token)
+		_, _ = fmt.Fprintf(out, "  %s\n", token)
 	}
 
-	fmt.Fprintln(out)
-	fmt.Fprintln(out, "commands:")
+	_, _ = fmt.Fprintln(out)
+	_, _ = fmt.Fprintln(out, "commands:")
 	for _, cmd := range visibleCommands(root) {
-		fmt.Fprintf(out, "  %s\n", cmd.Name())
-		fmt.Fprintf(out, "    %s\n", cmd.Short)
+		_, _ = fmt.Fprintf(out, "  %s\n", cmd.Name())
+		_, _ = fmt.Fprintf(out, "    %s\n", cmd.Short)
 	}
 
-	fmt.Fprintln(out)
-	fmt.Fprintln(out, "full reference:")
+	_, _ = fmt.Fprintln(out)
+	_, _ = fmt.Fprintln(out, "full reference:")
 	emitReference(out, root, root.Name())
 }
 
@@ -116,8 +116,8 @@ func emitReference(out io.Writer, parent *cobra.Command, path string) {
 		if len(flags) > 0 {
 			signature = signature + " " + strings.Join(flags, " ")
 		}
-		fmt.Fprintf(out, "- %s\n", signature)
-		fmt.Fprintf(out, "  %s\n\n", cmd.Short)
+		_, _ = fmt.Fprintf(out, "- %s\n", signature)
+		_, _ = fmt.Fprintf(out, "  %s\n\n", cmd.Short)
 		emitReference(out, cmd, strings.TrimSpace(path+" "+cmd.Name()))
 	}
 }

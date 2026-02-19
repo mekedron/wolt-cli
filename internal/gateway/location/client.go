@@ -48,7 +48,9 @@ func (c *Client) Get(ctx context.Context, address string) (domain.Location, erro
 	if err != nil {
 		return domain.Location{}, fmt.Errorf("%w: %v", ErrLocationLookup, err)
 	}
-	defer res.Body.Close()
+	defer func() {
+		_ = res.Body.Close()
+	}()
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
 		return domain.Location{}, ErrLocationLookup
 	}

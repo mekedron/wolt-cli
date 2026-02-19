@@ -15,7 +15,7 @@ func newConfigureCommand(deps Dependencies) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "configure",
 		Short: "Create and manage local profile configuration.",
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			if profileName == "" {
 				profileName = "default"
 			}

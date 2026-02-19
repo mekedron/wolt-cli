@@ -38,19 +38,3 @@ func asBool(value any) bool {
 	}
 	return false
 }
-
-func asFloat(value any) float64 {
-	if value == nil {
-		return 0
-	}
-	switch v := value.(type) {
-	case float64:
-		return v
-	case float32:
-		return float64(v)
-	case int:
-		return float64(v)
-	default:
-		return 0
-	}
-}

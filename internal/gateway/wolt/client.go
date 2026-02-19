@@ -99,7 +99,7 @@ func (c *Client) headers(extra map[string]string) map[string]string {
 }
 
 func (c *Client) doJSONRequest(ctx context.Context, method, rawURL string, params url.Values, body any, headers map[string]string) (map[string]any, error) {
-	if params != nil && len(params) > 0 {
+	if len(params) > 0 {
 		rawURL = rawURL + "?" + params.Encode()
 	}
 
@@ -124,7 +124,9 @@ func (c *Client) doJSONRequest(ctx context.Context, method, rawURL string, param
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrUpstream, err)
 	}
-	defer res.Body.Close()
+	defer func() {
+		_ = res.Body.Close()
+	}()
 
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
 		return nil, ErrUpstream

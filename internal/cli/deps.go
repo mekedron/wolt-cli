@@ -58,12 +58,12 @@ func Execute(ctx context.Context, args []string, deps Dependencies, stdout io.Wr
 	}
 
 	if matches := unknownCommandPattern.FindStringSubmatch(err.Error()); len(matches) > 1 {
-		fmt.Fprintf(stderr, "No such command '%s'\n", matches[1])
+		_, _ = fmt.Fprintf(stderr, "No such command '%s'\n", matches[1])
 		return 2
 	}
 
 	if msg := err.Error(); msg != "" {
-		fmt.Fprintln(stderr, msg)
+		_, _ = fmt.Fprintln(stderr, msg)
 	}
 	return 1
 }
