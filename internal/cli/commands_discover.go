@@ -28,7 +28,7 @@ func newDiscoverFeedCommand(deps Dependencies) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "feed",
 		Short: "Show discovery feed sections and venues.",
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			format, err := parseOutputFormat(flags.Format)
 			if err != nil {
 				return err
@@ -85,14 +85,14 @@ func newDiscoverFeedCommand(deps Dependencies) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().Float64Var(&lat, "lat", 0, "Latitude (optional with profile)")
+	cmd.Flags().Float64Var(&lat, "lat", 0, "Latitude override for location lookup. Provide together with --lon.")
 	cmd.Flags().Lookup("lat").NoOptDefVal = "0"
-	cmd.Flags().Float64Var(&lon, "lon", 0, "Longitude (optional with profile)")
+	cmd.Flags().Float64Var(&lon, "lon", 0, "Longitude override for location lookup. Provide together with --lat.")
 	cmd.Flags().Lookup("lon").NoOptDefVal = "0"
 	cmd.Flags().IntVar(&limit, "limit", 0, "Limit sections and items")
 	addGlobalFlags(cmd, &flags)
 
-	cmd.PreRunE = func(cmd *cobra.Command, args []string) error {
+	cmd.PreRunE = func(cmd *cobra.Command, _ []string) error {
 		latSet = cmd.Flags().Changed("lat")
 		lonSet = cmd.Flags().Changed("lon")
 		limitSet = cmd.Flags().Changed("limit")
@@ -112,7 +112,7 @@ func newDiscoverCategoriesCommand(deps Dependencies) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "categories",
 		Short: "List available discovery categories.",
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			format, err := parseOutputFormat(flags.Format)
 			if err != nil {
 				return err
@@ -155,10 +155,10 @@ func newDiscoverCategoriesCommand(deps Dependencies) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().Float64Var(&lat, "lat", 0, "Latitude (optional with profile)")
-	cmd.Flags().Float64Var(&lon, "lon", 0, "Longitude (optional with profile)")
+	cmd.Flags().Float64Var(&lat, "lat", 0, "Latitude override for location lookup. Provide together with --lon.")
+	cmd.Flags().Float64Var(&lon, "lon", 0, "Longitude override for location lookup. Provide together with --lat.")
 	addGlobalFlags(cmd, &flags)
-	cmd.PreRun = func(cmd *cobra.Command, args []string) {
+	cmd.PreRun = func(cmd *cobra.Command, _ []string) {
 		latSet = cmd.Flags().Changed("lat")
 		lonSet = cmd.Flags().Changed("lon")
 	}

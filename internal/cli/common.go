@@ -29,7 +29,7 @@ type globalFlags struct {
 
 func addGlobalFlags(cmd *cobra.Command, flags *globalFlags) {
 	cmd.Flags().StringVar(&flags.Format, "format", "table", "Output format: table, json, or yaml.")
-	cmd.Flags().StringVar(&flags.Profile, "profile", "", "Profile to use for location resolution.")
+	cmd.Flags().StringVar(&flags.Profile, "profile", "", "Profile name for saved location. Used when --lat and --lon are not provided.")
 	cmd.Flags().StringVar(&flags.Locale, "locale", "en-FI", "Response locale in BCP-47 format, for example en-FI.")
 	cmd.Flags().BoolVar(&flags.NoColor, "no-color", false, "Disable ANSI color codes in table output.")
 	cmd.Flags().StringVar(&flags.Output, "output", "", "Write the command output to a file.")

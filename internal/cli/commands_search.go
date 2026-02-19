@@ -170,6 +170,9 @@ func newSearchItemsCommand(deps Dependencies) *cobra.Command {
 	cmd.Flags().StringVar(&category, "category", "", "Category slug")
 	cmd.Flags().IntVar(&limit, "limit", 0, "Limit returned rows")
 	cmd.Flags().IntVar(&offset, "offset", 0, "Offset returned rows")
+	if err := cmd.MarkFlagRequired("query"); err != nil {
+		panic(err)
+	}
 	addGlobalFlags(cmd, &flags)
 	cmd.PreRun = func(cmd *cobra.Command, _ []string) {
 		limitSet = cmd.Flags().Changed("limit")

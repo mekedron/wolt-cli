@@ -16,12 +16,6 @@ func newConfigureCommand(deps Dependencies) *cobra.Command {
 		Use:   "configure",
 		Short: "Create and manage local profile configuration.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if profileName == "" {
-				profileName = "default"
-			}
-			if address == "" {
-				address = "Kraków"
-			}
 			if !overwrite {
 				if _, err := deps.Config.Load(cmd.Context()); err == nil {
 					return fmt.Errorf("config file already exists, rerun with --overwrite")
@@ -49,8 +43,11 @@ func newConfigureCommand(deps Dependencies) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&profileName, "profile-name", "default", "Profile name")
-	cmd.Flags().StringVar(&address, "address", "Kraków", "Profile address")
+	cmd.Flags().StringVar(&profileName, "profile-name", "Default", "Profile name")
+	cmd.Flags().StringVar(&address, "address", "", "Profile address")
 	cmd.Flags().BoolVar(&overwrite, "overwrite", false, "Overwrite existing config")
+	if err := cmd.MarkFlagRequired("address"); err != nil {
+		panic(err)
+	}
 	return cmd
 }

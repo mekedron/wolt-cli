@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Valaraucoo/wolt-cli/internal/domain"
@@ -21,6 +23,33 @@ var ErrLocationLookup = errors.New("error when trying to get location")
 type Client struct {
 	httpClient *http.Client
 	baseURL    string
+}
+
+type coordinate float64
+
+func (c *coordinate) UnmarshalJSON(data []byte) error {
+	var text string
+	if err := json.Unmarshal(data, &text); err == nil {
+		value, err := strconv.ParseFloat(strings.TrimSpace(text), 64)
+		if err != nil {
+			return fmt.Errorf("parse coordinate %q: %w", text, err)
+		}
+		*c = coordinate(value)
+		return nil
+	}
+
+	var value float64
+	if err := json.Unmarshal(data, &value); err == nil {
+		*c = coordinate(value)
+		return nil
+	}
+
+	return fmt.Errorf("coordinate must be a string or number")
+}
+
+type nominatimResult struct {
+	Lat coordinate `json:"lat"`
+	Lon coordinate `json:"lon"`
 }
 
 // NewClient creates a location client.
@@ -55,12 +84,15 @@ func (c *Client) Get(ctx context.Context, address string) (domain.Location, erro
 		return domain.Location{}, ErrLocationLookup
 	}
 
-	var payload []domain.Location
+	var payload []nominatimResult
 	if err := json.NewDecoder(res.Body).Decode(&payload); err != nil {
 		return domain.Location{}, fmt.Errorf("%w: %v", ErrLocationLookup, err)
 	}
 	if len(payload) == 0 {
 		return domain.Location{}, ErrLocationLookup
 	}
-	return payload[0], nil
+	return domain.Location{
+		Lat: float64(payload[0].Lat),
+		Lon: float64(payload[0].Lon),
+	}, nil
 }

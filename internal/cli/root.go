@@ -65,9 +65,9 @@ func NewRootCommand(deps Dependencies) *cobra.Command {
 func renderRootHelp(out io.Writer, root *cobra.Command) {
 	_, _ = fmt.Fprintf(out, "%s: %s\n\n", root.Name(), root.Short)
 	_, _ = fmt.Fprintf(out, "usage: %s <command> [options]\n", root.Name())
-	_, _ = fmt.Fprintln(out, "global options:")
-	for _, token := range rootOptionTokens(root) {
-		_, _ = fmt.Fprintf(out, "  %s\n", token)
+	_, _ = fmt.Fprintln(out, "global options (all optional unless marked required):")
+	for _, option := range rootOptions(root) {
+		_, _ = fmt.Fprintf(out, "  %s%s: %s\n", option.token, optionLabels(option), option.usage)
 	}
 
 	_, _ = fmt.Fprintln(out)
@@ -78,24 +78,11 @@ func renderRootHelp(out io.Writer, root *cobra.Command) {
 	}
 
 	_, _ = fmt.Fprintln(out)
+	_, _ = fmt.Fprintln(out, "notes:")
+	_, _ = fmt.Fprintln(out, "  - options are optional unless marked [required].")
+	_, _ = fmt.Fprintln(out)
 	_, _ = fmt.Fprintln(out, "full reference:")
 	emitReference(out, root, root.Name())
-}
-
-func rootOptionTokens(root *cobra.Command) []string {
-	options := []string{}
-	root.Flags().VisitAll(func(flag *pflag.Flag) {
-		if flag.Hidden || flag.Name == "help" {
-			return
-		}
-		token := "--" + flag.Name
-		if flag.Shorthand != "" {
-			token += "/-" + flag.Shorthand
-		}
-		options = append(options, token)
-	})
-	sort.Strings(options)
-	return options
 }
 
 func visibleCommands(parent *cobra.Command) []*cobra.Command {
@@ -112,24 +99,94 @@ func visibleCommands(parent *cobra.Command) []*cobra.Command {
 func emitReference(out io.Writer, parent *cobra.Command, path string) {
 	for _, cmd := range visibleCommands(parent) {
 		signature := strings.TrimSpace(path + " " + cmd.Use)
-		flags := optionTokens(cmd)
-		if len(flags) > 0 {
-			signature = signature + " " + strings.Join(flags, " ")
-		}
 		_, _ = fmt.Fprintf(out, "- %s\n", signature)
-		_, _ = fmt.Fprintf(out, "  %s\n\n", cmd.Short)
+		_, _ = fmt.Fprintf(out, "  %s\n", cmd.Short)
+		options := commandOptions(cmd)
+		if len(options) > 0 {
+			_, _ = fmt.Fprintln(out, "  options:")
+			for _, option := range options {
+				_, _ = fmt.Fprintf(out, "    %s%s: %s\n", option.token, optionLabels(option), option.usage)
+			}
+		}
+		_, _ = fmt.Fprintln(out)
 		emitReference(out, cmd, strings.TrimSpace(path+" "+cmd.Name()))
 	}
 }
 
-func optionTokens(cmd *cobra.Command) []string {
-	tokens := []string{}
-	cmd.NonInheritedFlags().VisitAll(func(flag *pflag.Flag) {
+type optionDoc struct {
+	name      string
+	token     string
+	usage     string
+	required  bool
+	inherited bool
+}
+
+func rootOptions(root *cobra.Command) []optionDoc {
+	return collectOptionDocs(root.Flags(), false)
+}
+
+func commandOptions(cmd *cobra.Command) []optionDoc {
+	seen := map[string]struct{}{}
+	options := make([]optionDoc, 0)
+	for _, option := range collectOptionDocs(cmd.NonInheritedFlags(), false) {
+		seen[option.name] = struct{}{}
+		options = append(options, option)
+	}
+	for _, option := range collectOptionDocs(cmd.InheritedFlags(), true) {
+		if _, ok := seen[option.name]; ok {
+			continue
+		}
+		options = append(options, option)
+	}
+	return options
+}
+
+func collectOptionDocs(flags *pflag.FlagSet, inherited bool) []optionDoc {
+	options := make([]optionDoc, 0)
+	flags.VisitAll(func(flag *pflag.Flag) {
 		if flag.Hidden || flag.Name == "help" {
 			return
 		}
-		tokens = append(tokens, "[--"+flag.Name+"]")
+		options = append(options, optionDoc{
+			name:      flag.Name,
+			token:     flagToken(flag),
+			usage:     strings.TrimSpace(flag.Usage),
+			required:  isFlagRequired(flag),
+			inherited: inherited,
+		})
 	})
-	sort.Strings(tokens)
-	return tokens
+	sort.Slice(options, func(i, j int) bool {
+		return options[i].name < options[j].name
+	})
+	return options
+}
+
+func flagToken(flag *pflag.Flag) string {
+	token := "--" + flag.Name
+	if flag.Shorthand != "" {
+		token += "/-" + flag.Shorthand
+	}
+	return token
+}
+
+func isFlagRequired(flag *pflag.Flag) bool {
+	values, ok := flag.Annotations[cobra.BashCompOneRequiredFlag]
+	if !ok || len(values) == 0 {
+		return false
+	}
+	return strings.EqualFold(values[0], "true") || values[0] == "1"
+}
+
+func optionLabels(option optionDoc) string {
+	labels := make([]string, 0, 2)
+	if option.required {
+		labels = append(labels, "required")
+	}
+	if option.inherited {
+		labels = append(labels, "global")
+	}
+	if len(labels) == 0 {
+		return ""
+	}
+	return " [" + strings.Join(labels, ", ") + "]"
 }
