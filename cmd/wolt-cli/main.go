@@ -11,7 +11,7 @@ import (
 	"github.com/Valaraucoo/wolt-cli/internal/service/profile"
 )
 
-const version = "1.1.1"
+var version = "dev"
 
 func main() {
 	store, err := config.NewStore()

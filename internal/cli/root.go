@@ -14,7 +14,7 @@ import (
 func NewRootCommand(deps Dependencies) *cobra.Command {
 	version := deps.Version
 	if strings.TrimSpace(version) == "" {
-		version = "1.1.1"
+		version = "dev"
 	}
 
 	root := &cobra.Command{
