@@ -26,7 +26,7 @@ ruff = "^0.0.286"
 pytest = "^7.2.2"
 mypy = "^1.6.0"
 factory-boy = "^3.2.1"
-pre-commit = "^3.2.1"
+pre-commit = ">=3.2.1,<5.0.0"
 
 [build-system]
 requires = ["poetry-core"]
