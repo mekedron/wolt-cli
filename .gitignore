@@ -1,3 +1,12 @@
-__pycache__
+# Go
+bin/
+coverage.out
+*.test
+
+# Local tooling
+.DS_Store
+
+# Python legacy caches kept ignored for local environments
+__pycache__/
 .venv*
-.pytest_cache
+.pytest_cache/

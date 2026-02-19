@@ -16,7 +16,7 @@ Global flags inherited by each command:
 Synopsis:
 
 ```console
-wolt discover feed --lat <float> --lon <float> [--limit <n>] [global flags]
+wolt discover feed [--lat <float> --lon <float>] [--limit <n>] [global flags]
 ```
 
 Arguments:
@@ -24,9 +24,14 @@ Arguments:
 
 Options:
 - `--format [json|yaml]`: machine-readable output
-- `--lat`: latitude
-- `--lon`: longitude
+- `--lat`: latitude override (optional when profile location is configured)
+- `--lon`: longitude override (optional when profile location is configured)
 - `--limit`: cap returned feed sections/items
+
+Location resolution:
+- if both `--lat` and `--lon` are omitted, use the selected profile location
+- if `--profile` is omitted, use the default profile
+- if only one of `--lat` or `--lon` is provided, return `WOLT_INVALID_ARGUMENT`
 
 Output schema:
 - `DiscoveryFeed`
@@ -34,6 +39,8 @@ Output schema:
 Examples:
 
 ```console
+wolt discover feed --format json
+wolt discover feed --profile work --format yaml
 wolt discover feed --lat 60.1484 --lon 24.6913 --limit 5 --format json
 wolt discover feed --lat 60.1484 --lon 24.6913 --format yaml
 ```
@@ -43,7 +50,7 @@ wolt discover feed --lat 60.1484 --lon 24.6913 --format yaml
 Synopsis:
 
 ```console
-wolt discover categories --lat <float> --lon <float> [global flags]
+wolt discover categories [--lat <float> --lon <float>] [global flags]
 ```
 
 Arguments:
@@ -51,8 +58,13 @@ Arguments:
 
 Options:
 - `--format [json|yaml]`: machine-readable output
-- `--lat`: latitude
-- `--lon`: longitude
+- `--lat`: latitude override (optional when profile location is configured)
+- `--lon`: longitude override (optional when profile location is configured)
+
+Location resolution:
+- if both `--lat` and `--lon` are omitted, use the selected profile location
+- if `--profile` is omitted, use the default profile
+- if only one of `--lat` or `--lon` is provided, return `WOLT_INVALID_ARGUMENT`
 
 Output schema:
 - `CategoryList`
@@ -60,6 +72,8 @@ Output schema:
 Examples:
 
 ```console
+wolt discover categories --format json
+wolt discover categories --profile work --format yaml
 wolt discover categories --lat 60.1484 --lon 24.6913 --format json
 wolt discover categories --lat 60.1484 --lon 24.6913 --format yaml
 ```
@@ -69,7 +83,7 @@ wolt discover categories --lat 60.1484 --lon 24.6913 --format yaml
 Synopsis:
 
 ```console
-wolt search venues --query <text> [options] [global flags]
+wolt search venues [--query <text>] [options] [global flags]
 ```
 
 Arguments:
@@ -77,7 +91,7 @@ Arguments:
 
 Options:
 - `--format [json|yaml]`: machine-readable output
-- `--query`: free text query
+- `--query`: free text query (optional; omit to list venues near profile location)
 - `--sort [recommended|distance|rating|delivery_price|delivery_time]`
 - `--type [restaurant|grocery|pharmacy|retail]`
 - `--category <slug>`
@@ -92,6 +106,7 @@ Output schema:
 Examples:
 
 ```console
+wolt search venues --format json
 wolt search venues --query burger --sort rating --open-now --limit 20 --format json
 wolt search venues --query sushi --wolt-plus --category asian --format yaml
 ```
@@ -196,9 +211,7 @@ Observed search request shape from web flow:
 }
 ```
 
-Current `wolt-cli ls` already implements a subset of this surface:
-- profile-scoped location
-- query/tag filtering
-- sorting and limiting
+Current `wolt-cli discover feed` and `wolt-cli discover categories` follow the
+same profile-scoped location behavior, with optional `--lat/--lon` overrides.
 
 Future `wolt search venues` should preserve that behavior while adding explicit Wolt filters.

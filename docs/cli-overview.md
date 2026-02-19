@@ -8,22 +8,20 @@ be implemented incrementally.
 
 Status on February 19, 2026:
 - Current shipped binary: `wolt-cli`
-- Current shipped commands: `configure`, `ls`, `discover`, `search`, `venue`, `item`
+- Current shipped commands: `configure`, `discover`, `search`, `venue`, `item`
 - This spec introduces a future primary binary: `wolt`
 - Compatibility requirement: `wolt-cli` remains an alias for the same command tree
 
 ## Current Implementation Snapshot
 
-Current code in `/Users/nikita/Projects/wolt-cli/wolt_cli/main.py` supports:
+Current code in `/Users/nikita/Projects/wolt-cli/cmd/wolt-cli/main.go` supports:
 - `wolt-cli configure`: profile and location configuration
-- `wolt-cli ls`: list/filter/sort restaurants fetched from Wolt APIs
 - `wolt-cli discover`: discovery feed and categories
 - `wolt-cli search`: venue and item search
 - `wolt-cli venue`: venue details, menu, and hours
 - `wolt-cli item`: item details by venue slug and item id
 
 Current docs remain valid for the shipped behavior:
-- `/Users/nikita/Projects/wolt-cli/docs/list-all-restaurants.md`
 - `/Users/nikita/Projects/wolt-cli/docs/cli-discovery-search.md`
 - `/Users/nikita/Projects/wolt-cli/docs/cli-venue-item.md`
 
@@ -81,7 +79,8 @@ Integration strategy with current implementation:
 
 Compatibility mapping (planned):
 - `wolt-cli configure` -> `wolt profile setup` (future, not in v1 command set yet)
-- `wolt-cli ls` -> `wolt search venues` / `wolt venue show`
+- `wolt-cli discover` -> `wolt discover *`
+- `wolt-cli search` -> `wolt search *`
 
 ## Observed Wolt Endpoint Families (Design Input)
 

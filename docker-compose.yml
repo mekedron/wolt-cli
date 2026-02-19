@@ -1,0 +1,13 @@
+version: "3.9"
+
+services:
+  wolt-cli:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: wolt-cli:local
+    command: ["--help"]
+    environment:
+      WOLT_CLI_CONFIG_PATH: /data/config.json
+    volumes:
+      - ./configs:/data

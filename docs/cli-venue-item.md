@@ -242,6 +242,6 @@ warnings: []
 
 ## Integration Notes (Current Implementation)
 
-Current `wolt-cli ls <restaurant>` resolves venue details from
-`/v3/venues/<venue_id>` and prints a rich table. `wolt venue show` should keep
-those details available while adding machine-readable output.
+Current `wolt-cli venue show` resolves venue details from
+`/v3/venues/<venue_id>` and keeps those details available with
+machine-readable output support.

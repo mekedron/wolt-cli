@@ -1,0 +1,13 @@
+{
+  "profiles": [
+    {
+      "name": "default",
+      "is_default": true,
+      "address": "Krakow",
+      "location": {
+        "lat": 50.0614,
+        "lon": 19.9366
+      }
+    }
+  ]
+}
