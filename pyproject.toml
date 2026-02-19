@@ -23,7 +23,7 @@ repository = "https://github.com/Valaraucoo/wolt-cli"
 documentation = "https://github.com/Valaraucoo/wolt-cli"
 
 [tool.poetry.group.dev.dependencies]
-ruff = "^0.0.286"
+ruff = "^0.15.1"
 pytest = "^7.2.2"
 mypy = "^1.6.0"
 factory-boy = "^3.2.1"
