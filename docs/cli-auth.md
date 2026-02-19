@@ -175,5 +175,5 @@ warnings: []
 
 ## Compatibility Note
 
-Current `wolt-cli` implementation does not yet have `auth` commands.
+Current `wolt` implementation does not yet have `auth` commands.
 This document defines the target behavior for v1 implementation.

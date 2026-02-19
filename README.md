@@ -1,6 +1,6 @@
-# wolt-cli (Go)
+# wolt (Go)
 
-`wolt-cli` is a production-oriented Go CLI for browsing Wolt discovery data,
+`wolt` is a production-oriented Go CLI for browsing Wolt discovery data,
 searching venues/items, and inspecting venue/item details.
 
 This repository has been migrated from Python to Go with an idiomatic project
@@ -8,10 +8,7 @@ layout, dependency-injected architecture, and CI-ready test/lint tooling.
 
 ## Binaries
 
-- Primary: `wolt`
-- Compatibility alias: `wolt-cli`
-
-Both binaries expose the same command tree.
+- Release artifact binary: `wolt` (`./cmd/wolt`)
 
 ## Features
 
@@ -30,7 +27,7 @@ Both binaries expose the same command tree.
 
 ```bash
 go build ./...
-go run ./cmd/wolt-cli --help
+go run ./cmd/wolt --help
 ```
 
 ## Recommended Workflow
@@ -46,7 +43,7 @@ Suggested command flow:
 ```bash
 # 1) build + smoke run
 go build ./...
-go run ./cmd/wolt-cli --help
+go run ./cmd/wolt --help
 
 # 2) focused test while iterating
 go test ./test/e2e ./test/integration
@@ -62,7 +59,6 @@ make lint
 
 ```text
 cmd/
-  wolt-cli/main.go
   wolt/main.go
 internal/
   cli/                 # command tree and output/error handling
@@ -88,7 +84,6 @@ test/
 
 ```bash
 go build ./...
-go build -o bin/wolt-cli ./cmd/wolt-cli
 go build -o bin/wolt ./cmd/wolt
 ```
 
@@ -101,24 +96,24 @@ make build
 ## Run
 
 ```bash
-go run ./cmd/wolt-cli --help
-go run ./cmd/wolt-cli discover feed --format json
-go run ./cmd/wolt-cli search venues --query burger --format json
+go run ./cmd/wolt --help
+go run ./cmd/wolt discover feed --format json
+go run ./cmd/wolt search venues --query burger --format json
 ```
 
 ## Configuration
 
 Configuration is loaded from:
 
-- `WOLT_CLI_CONFIG_PATH` (if set)
-- Otherwise: `~/.wolt-cli/.wolt-cli-config.json`
+- `WOLT_CONFIG_PATH` (if set)
+- Otherwise: `~/.wolt/.wolt-config.json`
 
 Example config is provided at `configs/example.config.json`.
 
 Create/update config from CLI:
 
 ```bash
-wolt-cli configure --profile-name default --address "Krakow" --overwrite
+wolt configure --profile-name default --address "Krakow" --overwrite
 ```
 
 ## CLI Examples
@@ -142,7 +137,7 @@ wolt venue hours burger-king-finnoo --format json
 wolt item show burger-king-finnoo 676939cb70769df4cec6cc6f --include-upsell --format json
 
 # Config bootstrap
-wolt-cli configure --profile-name default --address "Krakow" --overwrite
+wolt configure --profile-name default --address "Krakow" --overwrite
 ```
 
 ## Output Contract
@@ -205,8 +200,8 @@ go vet ./...
 ## Docker
 
 ```bash
-docker build -t wolt-cli:local .
-docker run --rm wolt-cli:local --help
+docker build -t wolt:local .
+docker run --rm wolt:local --help
 ```
 
 Or:

@@ -12,9 +12,9 @@ import (
 )
 
 const (
-	defaultDirName  = ".wolt-cli"
-	defaultFileName = ".wolt-cli-config.json"
-	envConfigPath   = "WOLT_CLI_CONFIG_PATH"
+	defaultDirName  = ".wolt"
+	defaultFileName = ".wolt-config.json"
+	envConfigPath   = "WOLT_CONFIG_PATH"
 )
 
 var (

@@ -211,7 +211,7 @@ Observed search request shape from web flow:
 }
 ```
 
-Current `wolt-cli discover feed` and `wolt-cli discover categories` follow the
+Current `wolt discover feed` and `wolt discover categories` follow the
 same profile-scoped location behavior, with optional `--lat/--lon` overrides.
 
 Future `wolt search venues` should preserve that behavior while adding explicit Wolt filters.

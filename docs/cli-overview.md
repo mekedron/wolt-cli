@@ -7,23 +7,21 @@ Implementation is intentionally deferred. The goal is a complete command contrac
 be implemented incrementally.
 
 Status on February 19, 2026:
-- Current shipped binary: `wolt-cli`
+- Current shipped binary: `wolt`
 - Current shipped commands: `configure`, `discover`, `search`, `venue`, `item`
-- This spec introduces a future primary binary: `wolt`
-- Compatibility requirement: `wolt-cli` remains an alias for the same command tree
 
 ## Current Implementation Snapshot
 
-Current code in `/Users/nikita/Projects/wolt-cli/cmd/wolt-cli/main.go` supports:
-- `wolt-cli configure`: profile and location configuration
-- `wolt-cli discover`: discovery feed and categories
-- `wolt-cli search`: venue and item search
-- `wolt-cli venue`: venue details, menu, and hours
-- `wolt-cli item`: item details by venue slug and item id
+Current code in `cmd/wolt/main.go` supports:
+- `wolt configure`: profile and location configuration
+- `wolt discover`: discovery feed and categories
+- `wolt search`: venue and item search
+- `wolt venue`: venue details, menu, and hours
+- `wolt item`: item details by venue slug and item id
 
 Current docs remain valid for the shipped behavior:
-- `/Users/nikita/Projects/wolt-cli/docs/cli-discovery-search.md`
-- `/Users/nikita/Projects/wolt-cli/docs/cli-venue-item.md`
+- `docs/cli-discovery-search.md`
+- `docs/cli-venue-item.md`
 
 ## v1 Command Taxonomy
 
@@ -31,12 +29,6 @@ Root interface:
 
 ```console
 wolt <group> <command> [flags]
-```
-
-Alias:
-
-```console
-wolt-cli <group> <command> [flags]
 ```
 
 Command groups in v1:
@@ -78,9 +70,9 @@ Integration strategy with current implementation:
 - Preserve profile-based location behavior from current config model
 
 Compatibility mapping (planned):
-- `wolt-cli configure` -> `wolt profile setup` (future, not in v1 command set yet)
-- `wolt-cli discover` -> `wolt discover *`
-- `wolt-cli search` -> `wolt search *`
+- `wolt configure` -> `wolt profile setup` (future, not in v1 command set yet)
+- `wolt discover` -> `wolt discover *`
+- `wolt search` -> `wolt search *`
 
 ## Observed Wolt Endpoint Families (Design Input)
 

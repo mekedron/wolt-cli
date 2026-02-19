@@ -42,21 +42,20 @@ jobs:
 
           out_dir="dist/${{ matrix.goos }}-${{ matrix.goarch }}"
           mkdir -p "${out_dir}"
+          binary_name="wolt"
 
-          for target in wolt wolt-cli; do
-            CGO_ENABLED=0 GOOS="${{ matrix.goos }}" GOARCH="${{ matrix.goarch }}" \
-              go build -trimpath -ldflags "-s -w -X main.version=${GITHUB_REF_NAME}" \
-              -o "${out_dir}/${target}" "./cmd/${target}"
-          done
+          CGO_ENABLED=0 GOOS="${{ matrix.goos }}" GOARCH="${{ matrix.goarch }}" \
+            go build -trimpath -ldflags "-s -w -X main.version=${GITHUB_REF_NAME}" \
+            -o "${out_dir}/${binary_name}" ./cmd/wolt
 
-          archive_name="wolt-cli_${GITHUB_REF_NAME}_${{ matrix.goos }}_${{ matrix.goarch }}.tar.gz"
-          tar -C "${out_dir}" -czf "dist/${archive_name}" wolt wolt-cli
+          archive_name="wolt_${GITHUB_REF_NAME}_${{ matrix.goos }}_${{ matrix.goarch }}.tar.gz"
+          tar -C "${out_dir}" -czf "dist/${archive_name}" "${binary_name}"
 
       - name: Upload platform archive
         uses: actions/upload-artifact@v4
         with:
           name: release-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: dist/wolt-cli_${{ github.ref_name }}_${{ matrix.goos }}_${{ matrix.goarch }}.tar.gz
+          path: dist/wolt_${{ github.ref_name }}_${{ matrix.goos }}_${{ matrix.goarch }}.tar.gz
           if-no-files-found: error
 
   release:

@@ -242,6 +242,6 @@ warnings: []
 
 ## Integration Notes (Current Implementation)
 
-Current `wolt-cli venue show` resolves venue details from
+Current `wolt venue show` resolves venue details from
 `/v3/venues/<venue_id>` and keeps those details available with
 machine-readable output support.

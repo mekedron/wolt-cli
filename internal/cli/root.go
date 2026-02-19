@@ -18,7 +18,7 @@ func NewRootCommand(deps Dependencies) *cobra.Command {
 	}
 
 	root := &cobra.Command{
-		Use:           "wolt-cli",
+		Use:           "wolt",
 		Short:         "Browse Wolt venues, inspect menus, and manage local profiles.",
 		SilenceErrors: true,
 		SilenceUsage:  true,

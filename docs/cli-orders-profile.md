@@ -230,6 +230,6 @@ warnings: []
 
 ## Integration Notes (Current Implementation)
 
-Current `wolt-cli configure` stores local profiles with address and geocoded
-location in `~/.wolt-cli/.wolt-cli-config.json`. New `wolt profile` commands
+Current `wolt configure` stores local profiles with address and geocoded
+location in `~/.wolt/.wolt-config.json`. New `wolt profile` commands
 must coexist with this local profile concept.
