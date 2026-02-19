@@ -31,6 +31,7 @@ jobs:
         uses: golangci/golangci-lint-action@v8
         with:
           version: v2.4.0
+          install-mode: goinstall
 
       - name: Unit and integration tests
         run: go test ./...
