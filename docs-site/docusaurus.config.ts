@@ -15,11 +15,11 @@ const config: Config = {
   },
 
   // Set the production url of your site here
-  url: 'https://valaraucoo.github.io',
+  url: 'https://mekedron.github.io',
   // Set the /<baseUrl>/ pathname under which your site is served.
-  baseUrl: '/',
+  baseUrl: '/wolt-cli/',
 
-  organizationName: 'Valaraucoo',
+  organizationName: 'mekedron',
   projectName: 'wolt-cli',
 
   onBrokenLinks: 'throw',
@@ -54,7 +54,7 @@ const config: Config = {
           // Please change this to your repo.
           // Remove this to remove the "edit this page" links.
           editUrl:
-            'https://github.com/Valaraucoo/wolt-cli/tree/master/',
+            'https://github.com/mekedron/wolt-cli/tree/master/',
           // Useful options to enforce blogging best practices
           onInlineTags: 'warn',
           onInlineAuthors: 'warn',
@@ -89,7 +89,7 @@ const config: Config = {
         {to: '/docs/cli-cart-checkout', label: 'Cart + Checkout', position: 'left'},
         {to: '/docs/cli-orders-profile', label: 'Profile', position: 'left'},
         {
-          href: 'https://github.com/Valaraucoo/wolt-cli',
+          href: 'https://github.com/mekedron/wolt-cli',
           label: 'GitHub',
           position: 'right',
         },
@@ -132,11 +132,11 @@ const config: Config = {
           items: [
             {
               label: 'Repository',
-              href: 'https://github.com/Valaraucoo/wolt-cli',
+              href: 'https://github.com/mekedron/wolt-cli',
             },
             {
               label: 'Security',
-              href: 'https://github.com/Valaraucoo/wolt-cli/blob/master/SECURITY.md',
+              href: 'https://github.com/mekedron/wolt-cli/blob/master/SECURITY.md',
             },
           ],
         },
