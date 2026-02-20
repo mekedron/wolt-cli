@@ -140,7 +140,7 @@ func TestBuildItemOptionsDataAndTable(t *testing.T) {
 		},
 	}
 
-	data, warnings := buildItemOptionsData("venue-1", "item-1", payload)
+	data, warnings := buildItemOptionsData("venue-1", "item-1", payload, nil)
 	if len(warnings) != 0 {
 		t.Fatalf("expected no warnings, got %v", warnings)
 	}

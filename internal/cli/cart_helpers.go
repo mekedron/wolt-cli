@@ -191,6 +191,120 @@ func visitOptionGroupCandidates(payload map[string]any, visit func(map[string]an
 	walk(payload)
 }
 
+func buildItemPayloadFromAssortment(assortment map[string]any, itemID string) map[string]any {
+	targetItemID := strings.TrimSpace(itemID)
+	if targetItemID == "" || assortment == nil {
+		return nil
+	}
+
+	var item map[string]any
+	for _, rawItem := range asSlice(assortment["items"]) {
+		candidate := asMap(rawItem)
+		if candidate == nil {
+			continue
+		}
+		candidateID := strings.TrimSpace(asString(coalesceAny(candidate["item_id"], candidate["id"])))
+		if candidateID != targetItemID {
+			continue
+		}
+		item = candidate
+		break
+	}
+	if item == nil {
+		return nil
+	}
+
+	priceAmount := asInt(item["price"])
+	if priceAmount <= 0 {
+		priceAmount = asInt(item["base_price"])
+	}
+	if priceAmount <= 0 {
+		priceAmount = asInt(asMap(item["price"])["amount"])
+	}
+	currency := strings.TrimSpace(asString(coalesceAny(
+		item["currency"],
+		asMap(item["price"])["currency"],
+		asMap(asMap(assortment["venue"])["price"])["currency"],
+		asMap(assortment["venue"])["currency"],
+	)))
+	if currency == "" {
+		currency = "EUR"
+	}
+
+	optionGroupIDs := extractAssortmentOptionGroupIDs(item)
+	optionGroupIndex := map[string]map[string]any{}
+	for _, rawGroup := range asSlice(coalesceAny(assortment["options"], assortment["option_groups"])) {
+		group := asMap(rawGroup)
+		if group == nil {
+			continue
+		}
+		groupID := strings.TrimSpace(asString(coalesceAny(group["id"], group["option_id"], group["group_id"])))
+		if groupID == "" {
+			continue
+		}
+		optionGroupIndex[groupID] = group
+	}
+	optionGroups := make([]any, 0, len(optionGroupIDs))
+	for _, groupID := range optionGroupIDs {
+		if group, ok := optionGroupIndex[groupID]; ok {
+			optionGroups = append(optionGroups, group)
+		}
+	}
+	if len(optionGroups) == 0 {
+		optionGroups = asSlice(coalesceAny(item["option_groups"], item["options"]))
+	}
+
+	price := map[string]any{
+		"amount":   priceAmount,
+		"currency": currency,
+	}
+	return map[string]any{
+		"item_id":       targetItemID,
+		"id":            targetItemID,
+		"name":          item["name"],
+		"description":   coalesceAny(item["description"], ""),
+		"price":         price,
+		"base_price":    price,
+		"option_groups": optionGroups,
+		"options":       optionGroups,
+		"items": []any{
+			map[string]any{
+				"id":            targetItemID,
+				"item_id":       targetItemID,
+				"name":          item["name"],
+				"description":   coalesceAny(item["description"], ""),
+				"price":         price,
+				"base_price":    price,
+				"option_groups": optionGroups,
+				"options":       optionGroups,
+			},
+		},
+	}
+}
+
+func extractAssortmentOptionGroupIDs(item map[string]any) []string {
+	groupIDs := []string{}
+	for _, value := range asSlice(item["option_group_ids"]) {
+		groupID := strings.TrimSpace(asString(value))
+		if groupID == "" {
+			continue
+		}
+		groupIDs = append(groupIDs, groupID)
+	}
+	for _, optionValue := range asSlice(item["options"]) {
+		option := asMap(optionValue)
+		if option == nil {
+			continue
+		}
+		groupID := strings.TrimSpace(asString(coalesceAny(option["option_id"], option["id"], option["group_id"])))
+		if groupID == "" {
+			continue
+		}
+		groupIDs = append(groupIDs, groupID)
+	}
+	return dedupeStrings(groupIDs)
+}
+
 func inferCurrency(formatted string) string {
 	formatted = strings.TrimSpace(formatted)
 	if formatted == "" {

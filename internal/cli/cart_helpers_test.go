@@ -60,3 +60,44 @@ func TestBuildBasketOptionsResolvesGroupAndValueNames(t *testing.T) {
 		t.Fatalf("expected price 100, got %v", value["price"])
 	}
 }
+
+func TestBuildItemPayloadFromAssortment(t *testing.T) {
+	assortment := map[string]any{
+		"items": []any{
+			map[string]any{
+				"id":      "item-1",
+				"name":    "Combo",
+				"price":   1590,
+				"options": []any{map[string]any{"option_id": "grp-drink"}},
+			},
+		},
+		"options": []any{
+			map[string]any{
+				"id":   "grp-drink",
+				"name": "Drink",
+				"values": []any{
+					map[string]any{"id": "val-cola", "name": "Cola", "price": 100},
+				},
+			},
+		},
+	}
+
+	itemPayload := buildItemPayloadFromAssortment(assortment, "item-1")
+	if itemPayload == nil {
+		t.Fatalf("expected assortment payload for item")
+	}
+	if asString(itemPayload["name"]) != "Combo" {
+		t.Fatalf("expected item name Combo, got %v", itemPayload["name"])
+	}
+	if asInt(asMap(itemPayload["price"])["amount"]) != 1590 {
+		t.Fatalf("expected item price 1590, got %v", asMap(itemPayload["price"])["amount"])
+	}
+	groups := asSlice(itemPayload["option_groups"])
+	if len(groups) != 1 {
+		t.Fatalf("expected one option group, got %d", len(groups))
+	}
+	group := asMap(groups[0])
+	if asString(group["id"]) != "grp-drink" {
+		t.Fatalf("expected option group grp-drink, got %v", group["id"])
+	}
+}

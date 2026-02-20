@@ -1,6 +1,9 @@
 package cli
 
-import "fmt"
+import (
+	"fmt"
+	"reflect"
+)
 
 func asMap(value any) map[string]any {
 	if value == nil {
@@ -19,7 +22,22 @@ func asSlice(value any) []any {
 	if values, ok := value.([]any); ok {
 		return values
 	}
-	return nil
+	rv := reflect.ValueOf(value)
+	if !rv.IsValid() {
+		return nil
+	}
+	kind := rv.Kind()
+	if kind != reflect.Slice && kind != reflect.Array {
+		return nil
+	}
+	if rv.Type().Elem().Kind() == reflect.Uint8 {
+		return nil
+	}
+	values := make([]any, rv.Len())
+	for idx := 0; idx < rv.Len(); idx++ {
+		values[idx] = rv.Index(idx).Interface()
+	}
+	return values
 }
 
 func asString(value any) string {

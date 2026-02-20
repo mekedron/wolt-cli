@@ -1,173 +1,131 @@
-# wolt (Go)
+# wolt-cli
 
-`wolt` is a production-oriented Go CLI for browsing Wolt discovery data,
-searching venues/items, managing carts, previewing checkout totals, and
-inspecting profile/auth state.
+`wolt-cli` is an unofficial community Go CLI for interacting with Wolt endpoints from a terminal.
+It is not affiliated with Wolt. Use it at your own responsibility.
 
-## Binaries
+## What It Covers
 
-- Release artifact binary: `wolt` (`./cmd/wolt`)
-
-## Features
-
-- Discovery feed and category listing
-- Venue and item search with filters and fallback behavior
-- Venue details, menu, opening hours
-- Item details with option groups and optional upsell section
-- Item option matrix command for cart-ready option/value selections
-- Cart commands: show/count/add/remove/clear
-- Checkout projection command: `checkout preview` (no order placement)
-- Auth/profile commands with automatic access-token rotation via refresh token
-- Favorite venues commands: list/add/remove for authenticated profiles
-- Profile bootstrap command: `configure`
-- JSON/YAML machine output envelope with warnings and structured errors
+- discovery feed and category listing
+- venue and item search
+- venue details, menus, and hours
+- item detail and option matrix inspection
+- cart commands (`show`, `count`, `add`, `remove`, `clear`)
+- checkout projection (`checkout preview`, no order placement)
+- profile/auth commands (`status`, `show`, addresses, payments, favorites)
+- token rotation using refresh token (`--wrtoken`)
 
 ## Requirements
 
 - Go `1.26+`
 
-## Quick Start
-
-```bash
-go build ./...
-go run ./cmd/wolt --help
-```
-
-## Build
+## Build and Run
 
 ```bash
 go build ./...
 go build -o bin/wolt ./cmd/wolt
+./bin/wolt --help
 ```
 
-Or via Make:
-
-```bash
-make build
-```
-
-## Run
+Or without installing:
 
 ```bash
 go run ./cmd/wolt --help
-go run ./cmd/wolt discover feed --format json
-go run ./cmd/wolt search venues --query burger --format json
 ```
 
-## Configuration
+## First Command to Run
+
+Configure a profile first:
+
+```bash
+wolt configure --profile-name default --address "<address>" --overwrite
+```
+
+Configure auth in the same profile:
+
+```bash
+wolt configure --profile-name default --wtoken "<token>" --wrtoken "<refresh-token>"
+```
+
+Cookie auth is also supported:
+
+```bash
+wolt configure --profile-name default --cookie "__wtoken=<token>" --cookie "__wrtoken=<refresh-token>"
+```
+
+## Config Location
 
 Configuration is loaded from:
-
 - `WOLT_CONFIG_PATH` (if set)
-- Otherwise: `~/.wolt/.wolt-config.json`
+- otherwise `~/.wolt/.wolt-config.json`
 
-Example config is provided at `configs/example.config.json`.
+Example config: `configs/example.config.json`
 
-Create/update config from CLI:
+## Common Flags
 
-```bash
-wolt configure --profile-name default --address "Krakow" --overwrite
-```
+Global flags for all leaf commands:
+- `--format [table|json|yaml]`
+- `--profile <name>`
+- `--locale <bcp47>`
+- `--no-color`
+- `--output <path>`
+- `--verbose`
+- `--wtoken <token>`
+- `--wrtoken <token>`
+- `--cookie <name=value>` (repeatable)
 
-Optional auth storage in profile:
+Shared location override flags for location-aware commands:
+- `--lat <float>`
+- `--lon <float>`
 
-```bash
-wolt configure --profile-name default --address "Krakow" --wtoken "<token>" --overwrite
-wolt configure --profile-name default --address "Krakow" --wrtoken "<refresh-token>" --overwrite
-wolt configure --profile-name default --address "Krakow" --cookie "__wtoken=<token>" --cookie "foo=bar" --overwrite
-wolt configure --profile-name default --address "Krakow" --cookie "__wrtoken=<refresh-token>" --overwrite
-# update auth only on an existing profile (keeps address/location unchanged)
-wolt configure --profile-name default --wtoken "<token>" --wrtoken "<refresh-token>"
-```
+`--lat` and `--lon` must be provided together.
 
-Security:
-- profile config may contain `wtoken`, `wrefresh_token`, and `cookies`; keep it local and never commit it.
-- local config patterns are ignored in `.gitignore` (`.wolt/`, `.wolt-config.json`, `*.wolt-config.json`).
-
-## CLI Examples
+## Typical Flows
 
 ```bash
-# Discovery
-wolt discover feed --format json
-wolt discover categories --format yaml
+# Validate auth/profile
+wolt profile status --verbose
+wolt profile show --format json
 
-# Search
-wolt search venues --format json
-wolt search venues --query burger --sort rating --limit 10 --format json
-wolt search items --query whopper --format json
+# Menu -> item options -> cart -> checkout preview
+wolt venue menu burger-king-finnoo --include-options --format json
+wolt item options burger-king-finnoo <item-id> --format json
+wolt cart add <venue-id> <item-id> --option "<group-id>=<value-id>" --format json
+wolt cart show --details --format json
+wolt checkout preview --delivery-mode standard --format json
 
-# Venue
-wolt venue show burger-king-finnoo --include tags,hours --format json
-wolt venue menu burger-king-finnoo --include-options --format yaml
-wolt venue hours burger-king-finnoo --format json
-
-# Item
-wolt item show burger-king-finnoo 676939cb70769df4cec6cc6f --include-upsell --format json
-wolt item options burger-king-finnoo 676939cb70769df4cec6cc6f --format json
-
-# Cart / Checkout (safe preview only)
-wolt cart show --details --wtoken "<token>" --format json
-wolt cart add <venue-id> <item-id> --count 1 --option "<group-id>=<value-id>" --wtoken "<token>" --format json
-wolt cart remove <item-id> --count 1 --wtoken "<token>" --format json
-wolt cart clear --wtoken "<token>" --format json
-wolt checkout preview --delivery-mode standard --wtoken "<token>" --format json
-
-# Auth/Profile
-wolt auth status --wtoken "<token>" --format json
-wolt auth status --wtoken "<token>" --wrtoken "<refresh-token>" --format json
-wolt profile status --wtoken "<token>" --format json
-wolt profile payments --wtoken "<token>" --format json
-wolt profile favorites --wtoken "<token>" --format json
-wolt profile favorites add rioni-espoo --wtoken "<token>" --format json
-wolt profile favorites remove 5a8426f188b5de000b8857bb --wtoken "<token>" --format json
-
-# Config bootstrap
-wolt configure --profile-name default --address "Krakow" --overwrite
-wolt configure --profile-name default --address "Krakow" --wtoken "<token>" --overwrite
-wolt configure --profile-name default --address "Krakow" --wrtoken "<refresh-token>" --overwrite
-wolt configure --profile-name default --address "Krakow" --cookie "__wtoken=<token>" --overwrite
-wolt configure --profile-name default --wtoken "<token>" --wrtoken "<refresh-token>"
+# Profile workflows
+wolt profile addresses --format json
+wolt profile payments --format json
+wolt profile favorites --format json
 ```
 
-## Output Contract
+## Docs
 
-See `/docs/cli-output-contract.md` for the canonical machine-output schema.
+- `docs/cli-overview.md`
+- `docs/cli-installation.md`
+- `docs/cli-auth.md`
+- `docs/cli-discovery-search.md`
+- `docs/cli-venue-item.md`
+- `docs/cli-cart-checkout.md`
+- `docs/cli-orders-profile.md`
+- `docs/cli-profile-addresses.md`
+- `docs/cli-output-contract.md`
 
-## Testing
+## Test and Lint
 
 ```bash
 go test ./...
-go test -race ./...
-go test ./test/e2e ./test/integration
-```
-
-Includes:
-
-- Unit tests (`internal/service/...`)
-- Integration tests (`test/integration`)
-- E2E-style CLI behavior tests (`test/e2e`)
-
-## Lint
-
-```bash
 make lint
 ```
 
-If `golangci-lint` is not installed locally:
+If `golangci-lint` is missing:
 
 ```bash
 go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
 ```
 
-## Docker
+## Security
 
-```bash
-docker build -t wolt:local .
-docker run --rm wolt:local --help
-```
-
-Or:
-
-```bash
-docker compose up --build
-```
+Profile config may contain `wtoken`, `wrefresh_token`, and cookies.
+Keep config local and do not commit it.
+Local config patterns are ignored by `.gitignore` (`.wolt/`, `.wolt-config.json`, `*.wolt-config.json`).

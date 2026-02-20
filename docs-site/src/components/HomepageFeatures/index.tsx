@@ -59,10 +59,10 @@ export default function HomepageFeatures(): ReactNode {
     <section className={styles.features}>
       <div className="container">
         <div className={styles.topLine}>
-          <Heading as="h2">Built for practical usage</Heading>
+          <Heading as="h2">Built for practical terminal workflows</Heading>
           <p>
-            Reference-focused docs for the actual command surface. This site is
-            maintained by the community, independently.
+            Reference-focused docs for the real command surface of the
+            unofficial community `wolt-cli` tool.
           </p>
         </div>
         <div className="row">

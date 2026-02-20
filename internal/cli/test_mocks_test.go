@@ -39,6 +39,10 @@ func (m *testWoltAPI) VenuePageDynamic(context.Context, string) (map[string]any,
 	return map[string]any{}, nil
 }
 
+func (m *testWoltAPI) AssortmentByVenueSlug(context.Context, string) (map[string]any, error) {
+	return map[string]any{}, nil
+}
+
 func (m *testWoltAPI) VenueItemPage(context.Context, string, string) (map[string]any, error) {
 	return map[string]any{}, nil
 }

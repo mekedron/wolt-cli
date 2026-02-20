@@ -164,10 +164,10 @@ func newCheckoutPreviewCommand(deps Dependencies) *cobra.Command {
 			if format == output.FormatTable {
 				return writeTable(cmd, buildCheckoutPreviewTable(data), flags.Output)
 			}
-			allWarnings := append(checkoutWarnings, authWarnings...)
-			allWarnings = append(allWarnings, checkoutAuthWarnings...)
-			allWarnings = append(allWarnings, selectionWarnings...)
-			env := output.BuildEnvelope(profile, flags.Locale, data, allWarnings, nil)
+			checkoutWarnings = append(checkoutWarnings, authWarnings...)
+			checkoutWarnings = append(checkoutWarnings, checkoutAuthWarnings...)
+			checkoutWarnings = append(checkoutWarnings, selectionWarnings...)
+			env := output.BuildEnvelope(profile, flags.Locale, data, checkoutWarnings, nil)
 			return writeMachinePayload(cmd, env, format, flags.Output)
 		},
 	}
@@ -213,18 +213,18 @@ func buildCheckoutPayload(
 	warnings := []string{}
 	itemDetails := map[string]map[string]any{}
 	categoryIDsByItemID := map[string]string{}
+	assortmentPayload := map[string]any{}
 
 	venueSlug := resolveBasketVenueSlug(venue)
 	if venueSlug != "" && deps.Wolt != nil {
-		if payload, err := deps.Wolt.VenuePageDynamic(ctx, venueSlug); err == nil {
+		if payload, err := deps.Wolt.AssortmentByVenueSlug(ctx, venueSlug); err == nil {
+			assortmentPayload = payload
 			mergeCheckoutCategoryIndexes(categoryIDsByItemID, buildCheckoutCategoryIDIndex(payload))
 		} else {
-			warnings = append(warnings, fmt.Sprintf("unable to load venue dynamic payload for category mapping (slug=%s)", venueSlug))
+			warnings = append(warnings, fmt.Sprintf("unable to load venue assortment payload for category mapping (slug=%s)", venueSlug))
 		}
-		if len(categoryIDsByItemID) == 0 {
-			if payload, err := deps.Wolt.VenuePageStatic(ctx, venueSlug); err == nil {
-				mergeCheckoutCategoryIndexes(categoryIDsByItemID, buildCheckoutCategoryIDIndex(payload))
-			}
+		if payload, err := deps.Wolt.VenuePageStatic(ctx, venueSlug); err == nil {
+			mergeCheckoutCategoryIndexes(categoryIDsByItemID, buildCheckoutCategoryIDIndex(payload))
 		}
 	}
 
@@ -249,6 +249,9 @@ func buildCheckoutPayload(
 				detail = payload
 				itemDetails[itemID] = payload
 				mergeCheckoutCategoryIndexes(categoryIDsByItemID, buildCheckoutCategoryIDIndex(payload))
+			} else if len(assortmentPayload) > 0 {
+				detail = assortmentPayload
+				itemDetails[itemID] = assortmentPayload
 			} else {
 				warnings = append(warnings, fmt.Sprintf("unable to enrich checkout payload for item %s; using basket defaults", itemID))
 			}
@@ -498,27 +501,13 @@ func resolveCheckoutCategoryIDs(item map[string]any, categoryID string) []any {
 
 func buildOptionValuePriceIndex(detail map[string]any) map[string]int {
 	index := map[string]int{}
-	for _, sectionValue := range asSlice(detail["sections"]) {
-		section := asMap(sectionValue)
-		if section == nil {
-			continue
-		}
-		for _, optionValue := range asSlice(section["options"]) {
-			option := asMap(optionValue)
-			if option == nil {
+	for _, spec := range extractOptionSpecs(detail) {
+		for valueID, value := range spec.Values {
+			valueID = strings.TrimSpace(valueID)
+			if valueID == "" {
 				continue
 			}
-			for _, candidateValue := range asSlice(option["values"]) {
-				candidate := asMap(candidateValue)
-				if candidate == nil {
-					continue
-				}
-				valueID := strings.TrimSpace(asString(candidate["id"]))
-				if valueID == "" {
-					continue
-				}
-				index[valueID] = asInt(candidate["price"])
-			}
+			index[valueID] = value.Price
 		}
 	}
 	return index

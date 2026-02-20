@@ -113,6 +113,7 @@ func newCartAddCommand(deps Dependencies) *cobra.Command {
 	var nameOverride string
 	var priceOverride int
 	var currencyOverride string
+	var venueSlug string
 	var lat float64
 	var lon float64
 	var latSet bool
@@ -165,9 +166,36 @@ func newCartAddCommand(deps Dependencies) *cobra.Command {
 				return err
 			}
 
-			itemPayload, itemErr := deps.Wolt.VenueItemPage(cmd.Context(), venueID, itemID)
-			if itemErr != nil {
-				itemPayload = map[string]any{}
+			warnings := []string{}
+			itemPayload := map[string]any{}
+			if payload, itemErr := deps.Wolt.VenueItemPage(cmd.Context(), venueID, itemID); itemErr == nil {
+				itemPayload = payload
+			} else {
+				warnings = append(warnings, "item endpoint unavailable")
+			}
+			if needsAssortmentFallback(itemPayload) {
+				slugCandidates := []string{}
+				if overrideSlug := strings.TrimSpace(venueSlug); overrideSlug != "" {
+					slugCandidates = append(slugCandidates, overrideSlug)
+				}
+				if ref := strings.TrimSpace(venueID); ref != "" && !looksLikeObjectID(ref) {
+					slugCandidates = append(slugCandidates, ref)
+				}
+				if restaurant, err := deps.Wolt.RestaurantByID(cmd.Context(), venueID); err == nil && restaurant != nil {
+					if restaurantSlug := strings.TrimSpace(restaurant.Slug); restaurantSlug != "" {
+						slugCandidates = append(slugCandidates, restaurantSlug)
+					}
+				}
+				for _, candidateSlug := range dedupeStrings(slugCandidates) {
+					assortmentPayload, err := deps.Wolt.AssortmentByVenueSlug(cmd.Context(), candidateSlug)
+					if err != nil {
+						continue
+					}
+					if fallback := buildItemPayloadFromAssortment(assortmentPayload, itemID); fallback != nil {
+						itemPayload = mergeItemPayloadFallback(itemPayload, fallback)
+						break
+					}
+				}
 			}
 
 			name := strings.TrimSpace(nameOverride)
@@ -208,6 +236,9 @@ func newCartAddCommand(deps Dependencies) *cobra.Command {
 			selectedOptions, err := parseOptionSelections(optionFlags)
 			if err != nil {
 				return err
+			}
+			if len(selectedOptions) > 0 && len(extractOptionSpecs(itemPayload)) == 0 {
+				warnings = append(warnings, "option metadata unavailable; provide option IDs or use --venue-slug to resolve option names")
 			}
 			options := buildBasketOptions(itemPayload, selectedOptions)
 
@@ -288,7 +319,8 @@ func newCartAddCommand(deps Dependencies) *cobra.Command {
 			if format == output.FormatTable {
 				return writeTable(cmd, buildCartMutationTable(data), flags.Output)
 			}
-			env := output.BuildEnvelope(profile, flags.Locale, data, authWarnings, nil)
+			warnings = append(warnings, authWarnings...)
+			env := output.BuildEnvelope(profile, flags.Locale, data, warnings, nil)
 			return writeMachinePayload(cmd, env, format, flags.Output)
 		},
 	}
@@ -299,6 +331,7 @@ func newCartAddCommand(deps Dependencies) *cobra.Command {
 	cmd.Flags().StringVar(&nameOverride, "name", "", "Override item display name.")
 	cmd.Flags().IntVar(&priceOverride, "price", 0, "Override item price in minor units.")
 	cmd.Flags().StringVar(&currencyOverride, "currency", "", "Override basket currency, for example EUR.")
+	cmd.Flags().StringVar(&venueSlug, "venue-slug", "", "Venue slug used to enrich item metadata/options when needed.")
 	cmd.Flags().Float64Var(&lat, "lat", 0, "Latitude override for cart totals refresh. Provide together with --lon.")
 	cmd.Flags().Float64Var(&lon, "lon", 0, "Longitude override for cart totals refresh. Provide together with --lat.")
 	addGlobalFlags(cmd, &flags)
@@ -540,11 +573,11 @@ func newCartRemoveCommand(deps Dependencies) *cobra.Command {
 				"total_items":   totalItems,
 				"total":         total,
 			}
-			warnings := append(authWarnings, selectionWarnings...)
+			selectionWarnings = append(selectionWarnings, authWarnings...)
 			if format == output.FormatTable {
 				return writeTable(cmd, buildCartMutationTable(data), flags.Output)
 			}
-			env := output.BuildEnvelope(profile, flags.Locale, data, warnings, nil)
+			env := output.BuildEnvelope(profile, flags.Locale, data, selectionWarnings, nil)
 			return writeMachinePayload(cmd, env, format, flags.Output)
 		},
 	}
@@ -695,11 +728,6 @@ func newCartClearCommand(deps Dependencies) *cobra.Command {
 		lonSet = cmd.Flags().Changed("lon")
 	}
 	return cmd
-}
-
-func selectBasket(page map[string]any, venueID string) map[string]any {
-	selected, _, _ := selectBasketWithMeta(page, venueID)
-	return selected
 }
 
 func selectBasketWithMeta(page map[string]any, venueID string) (map[string]any, map[string]any, []string) {
@@ -995,7 +1023,6 @@ func findBasketLineByID(basket map[string]any, itemID string) (map[string]any, i
 }
 
 func buildBasketMutationItem(line map[string]any, count int) map[string]any {
-	currency := inferCurrency(asString(line["total"]))
 	price := asInt(line["price"])
 	lineOptions := make([]any, 0, len(asSlice(line["options"])))
 	for _, optionValue := range asSlice(line["options"]) {
@@ -1024,9 +1051,6 @@ func buildBasketMutationItem(line map[string]any, count int) map[string]any {
 			"values": values,
 		})
 	}
-	if currency == "" {
-		currency = "EUR"
-	}
 	return map[string]any{
 		"id":      asString(line["id"]),
 		"count":   count,
@@ -1037,6 +1061,42 @@ func buildBasketMutationItem(line map[string]any, count int) map[string]any {
 			"is_allowed": asBool(asMap(line["substitution_settings"])["is_allowed"]),
 		},
 	}
+}
+
+func needsAssortmentFallback(itemPayload map[string]any) bool {
+	if len(itemPayload) == 0 {
+		return true
+	}
+	if price := asInt(asMap(itemPayload["price"])["amount"]); price > 0 {
+		return len(extractOptionSpecs(itemPayload)) == 0
+	}
+	if price := asInt(itemPayload["price"]); price > 0 {
+		return len(extractOptionSpecs(itemPayload)) == 0
+	}
+	return true
+}
+
+func mergeItemPayloadFallback(base map[string]any, fallback map[string]any) map[string]any {
+	if len(base) == 0 {
+		return fallback
+	}
+	merged := map[string]any{}
+	for key, value := range base {
+		merged[key] = value
+	}
+	if strings.TrimSpace(asString(merged["name"])) == "" {
+		merged["name"] = fallback["name"]
+	}
+	if asInt(asMap(merged["price"])["amount"]) <= 0 && asInt(merged["price"]) <= 0 {
+		merged["price"] = fallback["price"]
+		merged["base_price"] = fallback["base_price"]
+	}
+	if len(extractOptionSpecs(merged)) == 0 {
+		merged["option_groups"] = fallback["option_groups"]
+		merged["options"] = fallback["options"]
+		merged["items"] = fallback["items"]
+	}
+	return merged
 }
 
 func toStringSlice(values []any) []string {

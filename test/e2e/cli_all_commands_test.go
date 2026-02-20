@@ -120,28 +120,35 @@ func TestSearchVenuesWithoutQueryListsRestaurants(t *testing.T) {
 }
 
 func TestVenueMenuJSON(t *testing.T) {
-	venueItem := &domain.Item{Title: "Burger Place", TrackID: "track-1", Link: domain.Link{Target: "venue-1"}, Venue: buildVenue("venue-1", "burger-place", "Street")}
 	staticPayload := map[string]any{
-		"item_id":          "item-1",
-		"name":             "Fries",
-		"description":      "Crispy fries",
-		"base_price":       599,
-		"currency":         "PLN",
-		"option_group_ids": []any{"opt-1"},
-		"category":         "sides",
-		"is_sold_out":      false,
+		"venue": map[string]any{
+			"id": "venue-1",
+		},
+	}
+	assortmentPayload := map[string]any{
+		"categories": []any{
+			map[string]any{
+				"name":     "sides",
+				"item_ids": []any{"item-1"},
+			},
+		},
+		"items": []any{
+			map[string]any{
+				"id":      "item-1",
+				"name":    "Fries",
+				"price":   599,
+				"options": []any{map[string]any{"option_id": "opt-1"}},
+			},
+		},
 	}
 
 	deps := cli.Dependencies{
 		Wolt: &mockWolt{
-			itemBySlugFunc: func(context.Context, domain.Location, string) (*domain.Item, error) {
-				return venueItem, nil
-			},
 			venuePageStaticFunc: func(context.Context, string) (map[string]any, error) {
 				return staticPayload, nil
 			},
-			venuePageDynamicFunc: func(context.Context, string) (map[string]any, error) {
-				return map[string]any{}, nil
+			assortmentBySlugFunc: func(context.Context, string) (map[string]any, error) {
+				return assortmentPayload, nil
 			},
 		},
 		Profiles: &mockProfiles{profile: domain.Profile{Name: "default", IsDefault: true, Location: domain.Location{Lat: 0, Lon: 0}}},
@@ -169,6 +176,52 @@ func TestVenueMenuJSON(t *testing.T) {
 	}
 	if len(asSlicePayload(t, first["option_group_ids"])) != 1 {
 		t.Fatalf("expected option_group_ids to be present")
+	}
+}
+
+func TestVenueMenuTableShowsRows(t *testing.T) {
+	staticPayload := map[string]any{
+		"venue": map[string]any{
+			"id": "venue-1",
+		},
+	}
+	assortmentPayload := map[string]any{
+		"categories": []any{
+			map[string]any{
+				"name":     "sides",
+				"item_ids": []any{"item-1"},
+			},
+		},
+		"items": []any{
+			map[string]any{
+				"id":    "item-1",
+				"name":  "Fries",
+				"price": 599,
+			},
+		},
+	}
+
+	deps := cli.Dependencies{
+		Wolt: &mockWolt{
+			venuePageStaticFunc: func(context.Context, string) (map[string]any, error) {
+				return staticPayload, nil
+			},
+			assortmentBySlugFunc: func(context.Context, string) (map[string]any, error) {
+				return assortmentPayload, nil
+			},
+		},
+		Profiles: &mockProfiles{profile: domain.Profile{Name: "default", IsDefault: true, Location: domain.Location{Lat: 0, Lon: 0}}},
+		Location: &mockLocation{},
+		Config:   &mockConfig{},
+		Version:  "1.1.1",
+	}
+
+	exitCode, out := runCLIWithDeps(t, deps, "venue", "menu", "burger-place", "--limit", "1")
+	if exitCode != 0 {
+		t.Fatalf("expected exit 0, got %d\noutput:\n%s", exitCode, out)
+	}
+	if !strings.Contains(out, "item-1") || !strings.Contains(out, "Fries") {
+		t.Fatalf("expected table output to include item row, got:\n%s", out)
 	}
 }
 
@@ -219,31 +272,39 @@ func TestVenueHoursJSON(t *testing.T) {
 }
 
 func TestItemOptionsJSON(t *testing.T) {
-	venueItem := &domain.Item{
-		Title: "Burger Place",
-		Link:  domain.Link{Target: "venue-1"},
-		Venue: buildVenue("venue-1", "burger-place", "Street"),
+	staticPayload := map[string]any{
+		"venue": map[string]any{
+			"id": "venue-1",
+		},
+	}
+	assortmentPayload := map[string]any{
+		"items": []any{
+			map[string]any{
+				"id":      "item-1",
+				"name":    "Combo",
+				"price":   1299,
+				"options": []any{map[string]any{"option_id": "group-drink"}},
+			},
+		},
+		"options": []any{
+			map[string]any{
+				"id":   "group-drink",
+				"name": "Drink",
+				"min":  1,
+				"max":  1,
+				"values": []any{
+					map[string]any{"id": "value-cola", "name": "Cola", "price": 100},
+				},
+			},
+		},
 	}
 	deps := cli.Dependencies{
 		Wolt: &mockWolt{
-			itemBySlugFunc: func(context.Context, domain.Location, string) (*domain.Item, error) {
-				return venueItem, nil
+			venuePageStaticFunc: func(context.Context, string) (map[string]any, error) {
+				return staticPayload, nil
 			},
-			venueItemPageFunc: func(context.Context, string, string) (map[string]any, error) {
-				return map[string]any{
-					"price": map[string]any{"currency": "EUR"},
-					"option_groups": []any{
-						map[string]any{
-							"id":   "group-drink",
-							"name": "Drink",
-							"min":  1,
-							"max":  1,
-							"values": []any{
-								map[string]any{"id": "value-cola", "name": "Cola", "price": map[string]any{"amount": 100}},
-							},
-						},
-					},
-				}, nil
+			assortmentBySlugFunc: func(context.Context, string) (map[string]any, error) {
+				return assortmentPayload, nil
 			},
 		},
 		Profiles: &mockProfiles{profile: domain.Profile{Name: "default", IsDefault: true, Location: domain.Location{Lat: 0, Lon: 0}}},
@@ -279,6 +340,45 @@ func TestItemOptionsJSON(t *testing.T) {
 	value := asMapPayload(t, values[0])
 	if value["example_option"] != "group-drink=value-cola" {
 		t.Fatalf("expected example option group-drink=value-cola, got %v", value["example_option"])
+	}
+}
+
+func TestItemShowFailsWhenItemMissingInVenue(t *testing.T) {
+	staticPayload := map[string]any{
+		"venue": map[string]any{
+			"id": "venue-1",
+		},
+	}
+	assortmentPayload := map[string]any{
+		"items": []any{
+			map[string]any{
+				"id":    "item-available",
+				"name":  "Combo",
+				"price": 1299,
+			},
+		},
+	}
+	deps := cli.Dependencies{
+		Wolt: &mockWolt{
+			venuePageStaticFunc: func(context.Context, string) (map[string]any, error) {
+				return staticPayload, nil
+			},
+			assortmentBySlugFunc: func(context.Context, string) (map[string]any, error) {
+				return assortmentPayload, nil
+			},
+		},
+		Profiles: &mockProfiles{profile: domain.Profile{Name: "default", IsDefault: true, Location: domain.Location{Lat: 0, Lon: 0}}},
+		Location: &mockLocation{},
+		Config:   &mockConfig{},
+		Version:  "1.1.1",
+	}
+
+	exitCode, out := runCLIWithDeps(t, deps, "item", "show", "burger-place", "item-missing")
+	if exitCode != 1 {
+		t.Fatalf("expected exit 1, got %d\noutput:\n%s", exitCode, out)
+	}
+	if !strings.Contains(out, "was not found for venue slug") {
+		t.Fatalf("expected not-found error message, got:\n%s", out)
 	}
 }
 

@@ -275,3 +275,27 @@ func TestFavoriteVenueMutationsUseExpectedMethods(t *testing.T) {
 		t.Fatalf("unexpected remove URL: %s", got)
 	}
 }
+
+func TestAssortmentByVenueSlugUsesExpectedURL(t *testing.T) {
+	httpClient := &captureHTTPClient{}
+	client := NewClient(
+		WithHTTPClient(httpClient),
+		WithEndpoints(Endpoints{
+			Assortment: "https://example.test/consumer-assortment/v1/venues/slug/",
+		}),
+	)
+
+	_, err := client.AssortmentByVenueSlug(context.Background(), "burger-king-finnoo")
+	if err != nil {
+		t.Fatalf("assortment by venue slug returned error: %v", err)
+	}
+	if httpClient.request == nil {
+		t.Fatal("expected request to be captured")
+	}
+	if got := httpClient.request.Method; got != http.MethodGet {
+		t.Fatalf("expected GET request, got %s", got)
+	}
+	if got := httpClient.request.URL.String(); got != "https://example.test/consumer-assortment/v1/venues/slug/burger-king-finnoo/assortment" {
+		t.Fatalf("unexpected URL: %s", got)
+	}
+}

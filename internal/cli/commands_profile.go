@@ -1202,18 +1202,6 @@ func setProfileWoltAddressID(ctx context.Context, deps Dependencies, selectedPro
 	return deps.Config.Save(ctx, cfg)
 }
 
-func localeLanguage(locale string) string {
-	value := strings.TrimSpace(locale)
-	if value == "" {
-		return "en"
-	}
-	parts := strings.Split(value, "-")
-	if len(parts) == 0 || strings.TrimSpace(parts[0]) == "" {
-		return "en"
-	}
-	return strings.ToLower(strings.TrimSpace(parts[0]))
-}
-
 func maskEmail(email string) string {
 	email = strings.TrimSpace(email)
 	parts := strings.Split(email, "@")

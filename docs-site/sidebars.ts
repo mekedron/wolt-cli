@@ -16,34 +16,32 @@ const sidebars: SidebarsConfig = {
   tutorialSidebar: [
     {
       type: 'category',
-      label: 'Getting Started',
+      label: 'Start Here',
       collapsed: false,
-      items: ['cli-overview', 'cli-installation'],
+      items: ['cli-overview', 'cli-installation', 'cli-auth'],
     },
     {
       type: 'category',
-      label: 'Authentication',
-      items: ['cli-auth'],
-    },
-    {
-      type: 'category',
-      label: 'Discovery and Menus',
+      label: 'Discovery and Menu',
+      collapsed: false,
       items: ['cli-discovery-search', 'cli-venue-item'],
     },
     {
       type: 'category',
       label: 'Cart and Checkout',
+      collapsed: false,
       items: ['cli-cart-checkout'],
     },
     {
       type: 'category',
-      label: 'Profile and Orders',
+      label: 'Profile and Account',
       collapsed: false,
       items: ['cli-orders-profile', 'cli-profile-addresses'],
     },
     {
       type: 'category',
-      label: 'Output Reference',
+      label: 'Reference',
+      collapsed: false,
       items: ['cli-output-contract'],
     },
   ],

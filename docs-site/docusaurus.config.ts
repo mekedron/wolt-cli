@@ -6,7 +6,7 @@ import type * as Preset from '@docusaurus/preset-classic';
 
 const config: Config = {
   title: 'wolt-cli',
-  tagline: 'Independent CLI docs for discovery, carts, and checkout preview',
+  tagline: 'Unofficial CLI tool for interacting with Wolt from terminal',
   favicon: 'img/favicon.ico',
 
   // Future flags, see https://docusaurus.io/docs/api/docusaurus-config#future
@@ -83,10 +83,10 @@ const config: Config = {
           type: 'docSidebar',
           sidebarId: 'tutorialSidebar',
           position: 'left',
-          label: 'Documentation',
+          label: 'Docs',
         },
-        {to: '/docs/cli-overview', label: 'Getting started', position: 'left'},
-        {to: '/docs/cli-cart-checkout', label: 'Cart and checkout', position: 'left'},
+        {to: '/docs/cli-overview', label: 'Start Here', position: 'left'},
+        {to: '/docs/cli-cart-checkout', label: 'Cart + Checkout', position: 'left'},
         {to: '/docs/cli-orders-profile', label: 'Profile', position: 'left'},
         {
           href: 'https://github.com/Valaraucoo/wolt-cli',
@@ -106,7 +106,11 @@ const config: Config = {
               to: '/docs/cli-overview',
             },
             {
-              label: 'Auth commands',
+              label: 'Installation',
+              to: '/docs/cli-installation',
+            },
+            {
+              label: 'Auth and profiles',
               to: '/docs/cli-auth',
             },
             {
@@ -114,12 +118,12 @@ const config: Config = {
               to: '/docs/cli-cart-checkout',
             },
             {
-              label: 'Profile commands',
-              to: '/docs/cli-orders-profile',
+              label: 'Venue and items',
+              to: '/docs/cli-venue-item',
             },
             {
-              label: 'Address book guide',
-              to: '/docs/cli-profile-addresses',
+              label: 'Profile commands',
+              to: '/docs/cli-orders-profile',
             },
           ],
         },
@@ -140,7 +144,7 @@ const config: Config = {
           title: 'Notice',
           items: [
             {
-              label: 'Unofficial and independent',
+              label: 'Unofficial tool notice',
               to: '/',
             },
           ],

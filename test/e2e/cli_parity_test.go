@@ -21,6 +21,7 @@ type mockWolt struct {
 	searchFunc           func(context.Context, domain.Location, string) (map[string]any, error)
 	venuePageStaticFunc  func(context.Context, string) (map[string]any, error)
 	venuePageDynamicFunc func(context.Context, string) (map[string]any, error)
+	assortmentBySlugFunc func(context.Context, string) (map[string]any, error)
 	venueItemPageFunc    func(context.Context, string, string) (map[string]any, error)
 	itemBySlugFunc       func(context.Context, domain.Location, string) (*domain.Item, error)
 	userMeFunc           func(context.Context, woltgateway.AuthContext) (map[string]any, error)
@@ -88,6 +89,13 @@ func (m *mockWolt) VenuePageDynamic(ctx context.Context, slug string) (map[strin
 		return nil, errors.New("venue page dynamic not mocked")
 	}
 	return m.venuePageDynamicFunc(ctx, slug)
+}
+
+func (m *mockWolt) AssortmentByVenueSlug(ctx context.Context, slug string) (map[string]any, error) {
+	if m.assortmentBySlugFunc == nil {
+		return nil, errors.New("assortment by venue slug not mocked")
+	}
+	return m.assortmentBySlugFunc(ctx, slug)
 }
 
 func (m *mockWolt) VenueItemPage(ctx context.Context, venueID, itemID string) (map[string]any, error) {

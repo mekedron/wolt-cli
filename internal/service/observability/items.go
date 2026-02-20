@@ -118,19 +118,38 @@ func extractOptionGroupIDs(node map[string]any) []string {
 	}
 
 	groups := toSlice(node["option_groups"])
-	if groups == nil {
-		return []string{}
+	if groups != nil {
+		ids := make([]string, 0, len(groups))
+		for _, group := range groups {
+			groupMap := toMap(group)
+			if groupMap == nil {
+				continue
+			}
+			id := groupMap["group_id"]
+			if id == nil {
+				id = groupMap["id"]
+			}
+			if id == nil {
+				continue
+			}
+			ids = append(ids, stringFromAny(id))
+		}
+		return ids
 	}
 
-	ids := make([]string, 0, len(groups))
-	for _, group := range groups {
-		groupMap := toMap(group)
-		if groupMap == nil {
+	options := toSlice(node["options"])
+	if options == nil {
+		return []string{}
+	}
+	ids := make([]string, 0, len(options))
+	for _, option := range options {
+		optionMap := toMap(option)
+		if optionMap == nil {
 			continue
 		}
-		id := groupMap["group_id"]
+		id := optionMap["option_id"]
 		if id == nil {
-			id = groupMap["id"]
+			id = optionMap["id"]
 		}
 		if id == nil {
 			continue
@@ -273,10 +292,50 @@ func hasAnyKeys(m map[string]any, keys ...string) bool {
 	return false
 }
 
+func isOptionLikeObject(obj map[string]any) bool {
+	if _, hasOptionID := obj["option_id"]; hasOptionID {
+		return true
+	}
+	if _, hasValues := obj["values"]; hasValues {
+		if !hasAnyKeys(
+			obj,
+			"item_id",
+			"options",
+			"option_groups",
+			"option_group_ids",
+			"is_cutlery",
+			"allowed_delivery_methods",
+			"description",
+			"disabled_info",
+			"vat_percentage",
+		) {
+			return true
+		}
+	}
+	if _, hasMultiChoice := obj["multi_choice_config"]; hasMultiChoice {
+		if !hasAnyKeys(
+			obj,
+			"item_id",
+			"options",
+			"option_groups",
+			"option_group_ids",
+			"is_cutlery",
+			"allowed_delivery_methods",
+			"description",
+			"disabled_info",
+			"vat_percentage",
+		) {
+			return true
+		}
+	}
+	return false
+}
+
 // ExtractMenuItems walks payload and normalizes menu-like entries.
 func ExtractMenuItems(payload map[string]any, venueID string, venueSlug string) []map[string]any {
 	items := []map[string]any{}
 	seen := map[string]struct{}{}
+	itemCategoryMap := categoryByItemID(payload)
 
 	for _, obj := range walkObjects(payload) {
 		itemID := obj["item_id"]
@@ -292,7 +351,13 @@ func ExtractMenuItems(payload map[string]any, venueID string, venueSlug string) 
 		}
 
 		signalKeys := []string{"option_group_ids", "option_groups", "base_price", "price", "is_sold_out", "sold_out", "item_id"}
+		if hasAnyKeys(obj, "options") {
+			signalKeys = append(signalKeys, "options")
+		}
 		if !hasAnyKeys(obj, signalKeys...) {
+			continue
+		}
+		if isOptionLikeObject(obj) {
 			continue
 		}
 
@@ -307,7 +372,13 @@ func ExtractMenuItems(payload map[string]any, venueID string, venueSlug string) 
 
 		amount := extractAmount(obj)
 		currency := extractCurrency(obj)
-		categoryName := stringFromAny(coalesce(obj["category_name"], obj["category"], obj["section_name"], "uncategorized"))
+		categoryName := stringFromAny(coalesce(
+			obj["category_name"],
+			obj["category"],
+			obj["section_name"],
+			itemCategoryMap[resolvedItemID],
+			"uncategorized",
+		))
 		isSoldOut := boolValue(coalesce(obj["is_sold_out"], obj["sold_out"]))
 
 		var formatted any
@@ -342,6 +413,32 @@ func ExtractMenuItems(payload map[string]any, venueID string, venueSlug string) 
 	}
 
 	return items
+}
+
+func categoryByItemID(payload map[string]any) map[string]any {
+	out := map[string]any{}
+	categories := toSlice(payload["categories"])
+	for _, rawCategory := range categories {
+		category := toMap(rawCategory)
+		if category == nil {
+			continue
+		}
+		categoryName := strings.TrimSpace(stringFromAny(coalesce(category["name"], category["slug"], category["id"])))
+		if categoryName == "" {
+			continue
+		}
+		for _, rawItemID := range toSlice(category["item_ids"]) {
+			itemID := strings.TrimSpace(stringFromAny(rawItemID))
+			if itemID == "" {
+				continue
+			}
+			if _, exists := out[itemID]; exists {
+				continue
+			}
+			out[itemID] = categoryName
+		}
+	}
+	return out
 }
 
 func emptyToNil(v string) any {

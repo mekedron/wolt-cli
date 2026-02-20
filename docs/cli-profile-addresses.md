@@ -2,20 +2,7 @@
 
 This page focuses on Wolt address-book management and map validation helpers.
 
-## Shared flags
-
-All commands below support global flags:
-
-- `--format [table|json|yaml]`
-- `--profile <name>`
-- `--locale <bcp47>`
-- `--no-color`
-- `--output <path>`
-- `--verbose`
-- `--wtoken <token>`
-- `--wrtoken <token>`
-- `--cookie <name=value>` (repeatable)
-
+Shared/global flags are documented in `cli-overview`.
 Auth is required for all address-book calls.
 
 ## `wolt profile addresses`
@@ -25,11 +12,9 @@ wolt profile addresses [--active-only] [global flags]
 ```
 
 Lists saved addresses from:
-
 - `GET https://restaurant-api.wolt.com/v2/delivery/info`
 
 Returns:
-
 - `addresses[]:{address_id,label,street,is_default}`
 - `profile_default_address_id`
 
@@ -49,13 +34,7 @@ wolt profile addresses add \
 ```
 
 Creates a new address with:
-
 - `POST https://restaurant-api.wolt.com/v2/delivery/info`
-
-Notes:
-
-- `--label home` or `--label work` maps to Wolt label type.
-- `--alias` is useful with `--label other` for custom labels.
 
 ## `wolt profile addresses update <address-id>`
 
@@ -81,7 +60,6 @@ wolt profile addresses remove <address-id> [global flags]
 ```
 
 Deletes one address:
-
 - `DELETE https://restaurant-api.wolt.com/v2/delivery/info/{address-id}`
 
 ## `wolt profile addresses use <address-id>`
@@ -99,7 +77,6 @@ wolt profile addresses links [address-id] [global flags]
 ```
 
 Generates Google Maps validation URLs:
-
 - `address_link`
 - `entrance_link`
 - `coordinates_link`

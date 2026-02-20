@@ -20,6 +20,7 @@ const (
 	defaultConsumerAPIURL       = "https://consumer-api.wolt.com/v1/pages/front"
 	defaultSearchAPIURL         = "https://restaurant-api.wolt.com/v1/pages/search"
 	defaultVenuePageAPIURL      = "https://restaurant-api.wolt.com/order-xp/web/v1/pages/venue/slug/"
+	defaultAssortmentAPIURL     = "https://consumer-api.wolt.com/consumer-api/consumer-assortment/v1/venues/slug/"
 	defaultVenueItemAPIURL      = "https://restaurant-api.wolt.com/order-xp/web/v1/pages/venue/"
 	defaultRestaurantAPIURL     = "https://restaurant-api.wolt.com/v3/venues/"
 	defaultUserMeAPIURL         = "https://restaurant-api.wolt.com/v1/user/me"
@@ -81,6 +82,7 @@ type Endpoints struct {
 	ConsumerFront    string
 	SearchPage       string
 	VenuePage        string
+	Assortment       string
 	VenueItem        string
 	Restaurant       string
 	UserMe           string
@@ -138,6 +140,7 @@ func NewClient(opts ...Option) *Client {
 			ConsumerFront:    defaultConsumerAPIURL,
 			SearchPage:       defaultSearchAPIURL,
 			VenuePage:        defaultVenuePageAPIURL,
+			Assortment:       defaultAssortmentAPIURL,
 			VenueItem:        defaultVenueItemAPIURL,
 			Restaurant:       defaultRestaurantAPIURL,
 			UserMe:           defaultUserMeAPIURL,
@@ -339,8 +342,7 @@ func payloadString(payload map[string]any, keys ...string) string {
 			if !strings.EqualFold(strings.TrimSpace(actualKey), strings.TrimSpace(key)) {
 				continue
 			}
-			switch value := rawValue.(type) {
-			case string:
+			if value, ok := rawValue.(string); ok {
 				if token := strings.TrimSpace(value); token != "" {
 					return token
 				}
@@ -488,6 +490,11 @@ func (c *Client) VenuePageStatic(ctx context.Context, slug string) (map[string]a
 // VenuePageDynamic returns venue dynamic page payload.
 func (c *Client) VenuePageDynamic(ctx context.Context, slug string) (map[string]any, error) {
 	return c.doJSONRequest(ctx, http.MethodGet, c.endpoints.VenuePage+slug+"/dynamic", nil, nil, c.headers(nil, nil))
+}
+
+// AssortmentByVenueSlug returns full assortment payload for one venue slug.
+func (c *Client) AssortmentByVenueSlug(ctx context.Context, slug string) (map[string]any, error) {
+	return c.doJSONRequest(ctx, http.MethodGet, c.endpoints.Assortment+slug+"/assortment", nil, nil, c.headers(nil, nil))
 }
 
 // VenueItemPage returns single item payload from a venue.

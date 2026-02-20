@@ -14,7 +14,7 @@ function HomepageHeader() {
     <header className={clsx(styles.heroBanner)}>
       <div className={clsx('container', styles.heroGrid)}>
         <div className={styles.heroLeft}>
-          <p className={styles.kicker}>Independent docs project</p>
+          <p className={styles.kicker}>Unofficial community CLI tool</p>
           <Heading as="h1" className={styles.heroTitle}>
             {siteConfig.title}
           </Heading>
@@ -23,24 +23,25 @@ function HomepageHeader() {
             <Link
               className="button button--lg button--primary"
               to="/docs/cli-overview">
-              Start with CLI overview
+              Start with configure
             </Link>
             <Link className="button button--lg button--secondary" to="/docs/cli-cart-checkout">
               Cart and checkout docs
             </Link>
-            <Link className="button button--lg button--secondary" to="/docs/cli-profile-addresses">
-              Profile addresses docs
+            <Link className="button button--lg button--secondary" to="/docs/cli-auth">
+              Auth and profile docs
             </Link>
           </div>
           <p className={styles.notice}>
-            Community-maintained documentation. Not an official Wolt product or
-            partner integration. Use the tool and credentials at your own risk.
+            Community-maintained tool documentation. This is not an official
+            Wolt product or partner integration. Use the tool and credentials
+            at your own risk.
           </p>
         </div>
         <div className={styles.heroRight}>
           <div className={styles.shellCard}>
-            <p className={styles.shellTitle}>Quick command</p>
-            <code>go run ./cmd/wolt checkout preview --verbose</code>
+            <p className={styles.shellTitle}>First command</p>
+            <code>wolt configure --profile-name default --address "&lt;address&gt;"</code>
           </div>
           <div className={styles.shellCardMuted}>
             <p>Safe boundary</p>
@@ -56,8 +57,8 @@ export default function Home(): ReactNode {
   const {siteConfig} = useDocusaurusContext();
   return (
     <Layout
-      title={`${siteConfig.title} documentation`}
-      description="Unofficial community documentation for the wolt-cli tool.">
+      title={`${siteConfig.title}`}
+      description="Unofficial community CLI tool documentation for wolt-cli.">
       <HomepageHeader />
       <main>
         <HomepageFeatures />

@@ -2,6 +2,7 @@ package e2e_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -452,6 +453,110 @@ func TestCartAddJSON(t *testing.T) {
 	}
 }
 
+func TestCartAddUsesVenueSlugAssortmentFallback(t *testing.T) {
+	seenAddPayload := map[string]any{}
+	deps := cli.Dependencies{
+		Wolt: &mockWolt{
+			venueItemPageFunc: func(context.Context, string, string) (map[string]any, error) {
+				return nil, errors.New("item endpoint unavailable")
+			},
+			restaurantByIDFunc: func(context.Context, string) (*domain.Restaurant, error) {
+				return nil, errors.New("restaurant endpoint unavailable")
+			},
+			assortmentBySlugFunc: func(context.Context, string) (map[string]any, error) {
+				return map[string]any{
+					"items": []any{
+						map[string]any{
+							"id":      "item-1",
+							"name":    "Classics set",
+							"price":   1700,
+							"options": []any{map[string]any{"option_id": "group-drink"}},
+						},
+					},
+					"options": []any{
+						map[string]any{
+							"id":   "group-drink",
+							"name": "Drink",
+							"values": []any{
+								map[string]any{"id": "value-cola", "name": "Cola", "price": 0},
+							},
+						},
+					},
+				}, nil
+			},
+			addToBasketFunc: func(_ context.Context, payload map[string]any, _ woltgateway.AuthContext) (map[string]any, error) {
+				seenAddPayload = payload
+				return map[string]any{"id": "basket-1", "venue_id": "venue-1"}, nil
+			},
+			basketCountFunc: func(context.Context, woltgateway.AuthContext) (map[string]any, error) {
+				return map[string]any{"count": 1}, nil
+			},
+			basketsPageFunc: func(context.Context, domain.Location, woltgateway.AuthContext) (map[string]any, error) {
+				return map[string]any{
+					"baskets": []any{
+						map[string]any{
+							"id":    "basket-1",
+							"total": "€17.00",
+							"venue": map[string]any{"id": "venue-1"},
+							"items": []any{
+								map[string]any{"id": "line-1", "name": "Classics set", "count": 1, "price": 1700, "options": []any{}},
+							},
+							"telemetry": map[string]any{"basket_total": 1700},
+						},
+					},
+				}, nil
+			},
+		},
+		Profiles: &mockProfiles{profile: domain.Profile{Name: "default", IsDefault: true, Location: domain.Location{Lat: 60.1, Lon: 24.9}}},
+		Location: &mockLocation{},
+		Config:   &mockConfig{},
+		Version:  "1.1.1",
+	}
+
+	exitCode, out := runCLIWithDeps(
+		t,
+		deps,
+		"cart",
+		"add",
+		"venue-1",
+		"item-1",
+		"--venue-slug",
+		"venue-slug",
+		"--option",
+		"Drink=Cola",
+		"--wtoken",
+		"token",
+		"--format",
+		"json",
+	)
+	if exitCode != 0 {
+		t.Fatalf("expected exit 0, got %d\noutput:\n%s", exitCode, out)
+	}
+	items := asSlicePayload(t, seenAddPayload["items"])
+	if len(items) != 1 {
+		t.Fatalf("expected one added item, got %d", len(items))
+	}
+	first := asMapPayload(t, items[0])
+	if first["name"] != "Classics set" {
+		t.Fatalf("expected inferred name Classics set, got %v", first["name"])
+	}
+	if asIntPayload(first["price"]) != 1700 {
+		t.Fatalf("expected inferred price 1700, got %v", first["price"])
+	}
+	options := asSlicePayload(t, first["options"])
+	if len(options) != 1 {
+		t.Fatalf("expected one option group, got %d", len(options))
+	}
+	group := asMapPayload(t, options[0])
+	if group["id"] != "group-drink" {
+		t.Fatalf("expected option group id group-drink, got %v", group["id"])
+	}
+	values := asSlicePayload(t, group["values"])
+	if len(values) != 1 || asMapPayload(t, values[0])["id"] != "value-cola" {
+		t.Fatalf("expected resolved option value value-cola, got %v", values)
+	}
+}
+
 func TestCartRemoveJSON(t *testing.T) {
 	seenPayload := map[string]any{}
 	deps := cli.Dependencies{
@@ -773,16 +878,12 @@ func TestCheckoutPreviewUsesVenuePayloadCategoryFallback(t *testing.T) {
 					"name": "Fallback Burger",
 				}, nil
 			},
-			venuePageDynamicFunc: func(context.Context, string) (map[string]any, error) {
+			assortmentBySlugFunc: func(context.Context, string) (map[string]any, error) {
 				return map[string]any{
-					"sections": []any{
+					"categories": []any{
 						map[string]any{
-							"categories": []any{
-								map[string]any{
-									"id":       "cat-fallback",
-									"item_ids": []any{"item-1"},
-								},
-							},
+							"id":       "cat-fallback",
+							"item_ids": []any{"item-1"},
 						},
 					},
 				}, nil
