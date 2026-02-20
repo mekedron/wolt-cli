@@ -1,6 +1,6 @@
 # wolt-cli
 
-![wolt-cli logo](assets/logo.png)
+<img src="assets/logo.png" alt="wolt-cli logo" width="160" />
 
 `wolt-cli` is an unofficial community Go CLI for interacting with Wolt endpoints from a terminal.
 It is not affiliated with Wolt. Use it at your own responsibility.
