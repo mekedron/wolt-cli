@@ -5,7 +5,9 @@ description: Use Nikita's local Wolt CLI to browse venues, inspect menus/items/o
 
 # Wolt CLI
 
-Use installed Homebrew binary:
+Tool repository: https://github.com/mekedron/wolt-cli
+
+Open the repository for setup/build details, then use the local `wolt` binary:
 
 ```bash
 wolt <group> <command> [flags]

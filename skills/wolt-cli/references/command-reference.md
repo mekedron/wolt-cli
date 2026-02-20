@@ -2,7 +2,9 @@
 
 ## Invocation
 
-Use installed binary:
+Tool repository: https://github.com/mekedron/wolt-cli
+
+Open the repository for setup/build details, then use the local binary:
 
 ```bash
 wolt <group> <command> [flags]
