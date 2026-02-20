@@ -257,7 +257,8 @@ func newVenueMenuCommand(deps Dependencies) *cobra.Command {
 			}
 			categorySlug := strings.TrimSpace(category)
 			categoryFilter := categorySlug
-			if categorySlug != "" {
+			switch {
+			case categorySlug != "":
 				categoryPayload, err := requestAssortmentCategoryPayload(
 					cmd.Context(),
 					deps,
@@ -272,7 +273,7 @@ func newVenueMenuCommand(deps Dependencies) *cobra.Command {
 				categoryPayload = hydrateAssortmentCategoryItems(cmd.Context(), deps, slug, categoryPayload, auth)
 				payloads = append(payloads, categoryPayload)
 				categoryFilter = ""
-			} else if isAssortmentPartial(assortmentPayload) && !fullCatalog {
+			case isAssortmentPartial(assortmentPayload) && !fullCatalog:
 				return emitError(
 					cmd,
 					format,
@@ -287,7 +288,7 @@ func newVenueMenuCommand(deps Dependencies) *cobra.Command {
 						slug,
 					),
 				)
-			} else if needsVenueContentFallback(assortmentPayload, venueID) {
+			case needsVenueContentFallback(assortmentPayload, venueID):
 				if isAssortmentPartial(assortmentPayload) && fullCatalog {
 					warnings = append(warnings, "full catalog mode enabled for partial assortment; loading all categories (this may be slow)")
 					categoryPayloads, categoryWarnings := loadAssortmentCategoryPayloads(
@@ -1251,10 +1252,8 @@ func normalizeVenueSearchPrice(price map[string]any, fallbackCurrency string) ma
 		"currency":         nil,
 		"formatted_amount": nil,
 	}
-	if price != nil {
-		for key, value := range price {
-			normalized[key] = value
-		}
+	for key, value := range price {
+		normalized[key] = value
 	}
 
 	currency := strings.TrimSpace(asString(normalized["currency"]))

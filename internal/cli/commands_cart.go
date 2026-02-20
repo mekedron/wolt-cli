@@ -314,7 +314,7 @@ func newCartAddCommand(deps Dependencies) *cobra.Command {
 			}
 
 			addPayload := map[string]any{
-				"items":   mergedItems,
+				"items":    mergedItems,
 				"venue_id": venueMutationID,
 				"currency": currency,
 			}
