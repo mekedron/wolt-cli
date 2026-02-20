@@ -31,6 +31,8 @@ type mockWolt struct {
 	deliveryInfoListFunc func(context.Context, woltgateway.AuthContext) (map[string]any, error)
 	deliveryInfoCreateFn func(context.Context, map[string]any, woltgateway.AuthContext) (map[string]any, error)
 	deliveryInfoDeleteFn func(context.Context, string, woltgateway.AuthContext) (map[string]any, error)
+	orderHistoryFunc     func(context.Context, woltgateway.AuthContext, woltgateway.OrderHistoryOptions) (map[string]any, error)
+	orderHistoryShowFn   func(context.Context, string, woltgateway.AuthContext) (map[string]any, error)
 	favoriteVenuesFunc   func(context.Context, domain.Location, woltgateway.AuthContext) (map[string]any, error)
 	favoriteVenueAddFn   func(context.Context, string, woltgateway.AuthContext) (map[string]any, error)
 	favoriteVenueRemFn   func(context.Context, string, woltgateway.AuthContext) (map[string]any, error)
@@ -168,6 +170,28 @@ func (m *mockWolt) DeliveryInfoDelete(ctx context.Context, addressID string, aut
 		return nil, errors.New("delivery info delete not mocked")
 	}
 	return m.deliveryInfoDeleteFn(ctx, addressID, auth)
+}
+
+func (m *mockWolt) OrderHistory(
+	ctx context.Context,
+	auth woltgateway.AuthContext,
+	options woltgateway.OrderHistoryOptions,
+) (map[string]any, error) {
+	if m.orderHistoryFunc == nil {
+		return nil, errors.New("order history not mocked")
+	}
+	return m.orderHistoryFunc(ctx, auth, options)
+}
+
+func (m *mockWolt) OrderHistoryPurchase(
+	ctx context.Context,
+	purchaseID string,
+	auth woltgateway.AuthContext,
+) (map[string]any, error) {
+	if m.orderHistoryShowFn == nil {
+		return nil, errors.New("order history purchase not mocked")
+	}
+	return m.orderHistoryShowFn(ctx, purchaseID, auth)
 }
 
 func (m *mockWolt) FavoriteVenues(ctx context.Context, location domain.Location, auth woltgateway.AuthContext) (map[string]any, error) {

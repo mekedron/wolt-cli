@@ -3,6 +3,7 @@
 Included commands:
 - `wolt profile status`
 - `wolt profile show`
+- `wolt profile orders`
 - `wolt profile addresses`
 - `wolt profile payments`
 - `wolt profile favorites`
@@ -28,6 +29,40 @@ wolt profile show [--include personal,settings] [global flags]
 Behavior:
 - calls `GET https://restaurant-api.wolt.com/v1/user/me`
 - returns `ProfileSummary` fields (`user_id`, `name`, masked contact, country)
+
+## `wolt profile orders`
+
+```console
+wolt profile orders [--limit <1-50>] [--page-token <token>] [--status <value>] [global flags]
+```
+
+Aliases:
+- `history`
+- `order-history`
+
+Behavior:
+- calls `GET https://consumer-api.wolt.com/order-tracking-api/v1/order_history/?limit=<n>`
+- forwards `page_token` when `--page-token` is provided
+- supports local status filter (`--status`) after upstream payload is read
+- returns normalized list plus `count` and optional `next_page_token`
+
+Subcommands:
+
+### `wolt profile orders list`
+
+```console
+wolt profile orders list [--limit <1-50>] [--page-token <token>] [--status <value>] [global flags]
+```
+
+### `wolt profile orders show <purchase-id>`
+
+```console
+wolt profile orders show <purchase-id> [global flags]
+```
+
+Behavior:
+- calls `GET https://consumer-api.wolt.com/order-tracking-api/v1/order_history/purchase/{purchase_id}?tips_use_percentage=true`
+- returns order totals in minor units and formatted currency values
 
 ## `wolt profile addresses`
 

@@ -41,6 +41,8 @@ type API interface {
 	DeliveryInfoList(ctx context.Context, auth AuthContext) (map[string]any, error)
 	DeliveryInfoCreate(ctx context.Context, payload map[string]any, auth AuthContext) (map[string]any, error)
 	DeliveryInfoDelete(ctx context.Context, addressID string, auth AuthContext) (map[string]any, error)
+	OrderHistory(ctx context.Context, auth AuthContext, options OrderHistoryOptions) (map[string]any, error)
+	OrderHistoryPurchase(ctx context.Context, purchaseID string, auth AuthContext) (map[string]any, error)
 	FavoriteVenues(ctx context.Context, location domain.Location, auth AuthContext) (map[string]any, error)
 	FavoriteVenueAdd(ctx context.Context, venueID string, auth AuthContext) (map[string]any, error)
 	FavoriteVenueRemove(ctx context.Context, venueID string, auth AuthContext) (map[string]any, error)
@@ -64,4 +66,10 @@ type TokenRefreshResult struct {
 	AccessToken  string
 	RefreshToken string
 	ExpiresIn    int
+}
+
+// OrderHistoryOptions controls order-history endpoint query params.
+type OrderHistoryOptions struct {
+	Limit     int
+	PageToken string
 }

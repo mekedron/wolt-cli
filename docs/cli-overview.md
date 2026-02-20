@@ -83,6 +83,8 @@ wolt venue menu burger-king-finnoo --include-options --format json
 wolt item options burger-king-finnoo <item-id> --format json
 wolt cart show --details --format json
 wolt checkout preview --delivery-mode standard --format json
+wolt profile orders --limit 20 --format json
+wolt profile orders show <purchase-id> --format json
 wolt profile payments --format json
 wolt profile favorites --format json
 ```

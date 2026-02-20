@@ -276,6 +276,68 @@ func TestFavoriteVenueMutationsUseExpectedMethods(t *testing.T) {
 	}
 }
 
+func TestOrderHistorySetsPaginationQueryAndHeaders(t *testing.T) {
+	httpClient := &captureHTTPClient{}
+	client := NewClient(
+		WithHTTPClient(httpClient),
+		WithEndpoints(Endpoints{
+			OrderHistory: "https://example.test/order-tracking-api/v1/order_history/",
+		}),
+	)
+
+	_, err := client.OrderHistory(
+		context.Background(),
+		AuthContext{WToken: "jwt-token"},
+		OrderHistoryOptions{
+			Limit:     25,
+			PageToken: "2025-12-03T14:40:50.585Z",
+		},
+	)
+	if err != nil {
+		t.Fatalf("order history returned error: %v", err)
+	}
+	if httpClient.request == nil {
+		t.Fatal("expected request to be captured")
+	}
+	if got := httpClient.request.Method; got != http.MethodGet {
+		t.Fatalf("expected GET request, got %s", got)
+	}
+	if got := httpClient.request.Header.Get("Authorization"); got != "Bearer jwt-token" {
+		t.Fatalf("expected authorization header, got %q", got)
+	}
+	values := httpClient.request.URL.Query()
+	if got := values.Get("limit"); got != "25" {
+		t.Fatalf("expected limit query param 25, got %q", got)
+	}
+	if got := values.Get("page_token"); got != "2025-12-03T14:40:50.585Z" {
+		t.Fatalf("expected page_token query param, got %q", got)
+	}
+}
+
+func TestOrderHistoryPurchaseUsesExpectedURL(t *testing.T) {
+	httpClient := &captureHTTPClient{}
+	client := NewClient(
+		WithHTTPClient(httpClient),
+		WithEndpoints(Endpoints{
+			OrderHistory: "https://example.test/order-tracking-api/v1/order_history/",
+		}),
+	)
+
+	_, err := client.OrderHistoryPurchase(context.Background(), "purchase-1", AuthContext{WToken: "jwt-token"})
+	if err != nil {
+		t.Fatalf("order history purchase returned error: %v", err)
+	}
+	if httpClient.request == nil {
+		t.Fatal("expected request to be captured")
+	}
+	if got := httpClient.request.Method; got != http.MethodGet {
+		t.Fatalf("expected GET request, got %s", got)
+	}
+	if got := httpClient.request.URL.String(); got != "https://example.test/order-tracking-api/v1/order_history/purchase/purchase-1?tips_use_percentage=true" {
+		t.Fatalf("unexpected URL: %s", got)
+	}
+}
+
 func TestAssortmentByVenueSlugUsesExpectedURL(t *testing.T) {
 	httpClient := &captureHTTPClient{}
 	client := NewClient(

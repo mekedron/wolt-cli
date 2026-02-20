@@ -1300,6 +1300,210 @@ func TestProfileFavoritesRemoveByIDJSON(t *testing.T) {
 	}
 }
 
+func TestProfileOrdersListJSON(t *testing.T) {
+	seenLimit := 0
+	seenPageToken := ""
+	deps := cli.Dependencies{
+		Wolt: &mockWolt{
+			orderHistoryFunc: func(_ context.Context, auth woltgateway.AuthContext, options woltgateway.OrderHistoryOptions) (map[string]any, error) {
+				if auth.WToken != "token" {
+					t.Fatalf("expected token to be forwarded")
+				}
+				seenLimit = options.Limit
+				seenPageToken = options.PageToken
+				return map[string]any{
+					"orders": []any{
+						map[string]any{
+							"purchase_id":     "purchase-1",
+							"received_at":     "15/02/2026, 10:06",
+							"status":          "delivered",
+							"venue_name":      "Burger King Iso Omena",
+							"total_amount":    "€15.38",
+							"is_active":       false,
+							"payment_time_ts": 1771142803530,
+							"items": []any{
+								map[string]any{"name": "LONG CHICKEN®"},
+								map[string]any{"name": "WHOPPER® Jr."},
+							},
+						},
+						map[string]any{
+							"purchase_id":     "purchase-2",
+							"received_at":     "03/02/2026, 11:07",
+							"status":          "deferred_payment_failed",
+							"venue_name":      "KFC Iso Omena",
+							"total_amount":    "--",
+							"is_active":       false,
+							"payment_time_ts": 1770109674437,
+							"items":           "Twister Lunchbox",
+						},
+					},
+					"next_page_token": "2025-12-03T14:40:50.585Z",
+				}, nil
+			},
+		},
+		Profiles: &mockProfiles{profile: domain.Profile{Name: "default", IsDefault: true, Location: domain.Location{Lat: 60.14889, Lon: 24.6911577}}},
+		Location: &mockLocation{},
+		Config:   &mockConfig{},
+		Version:  "1.1.1",
+	}
+
+	exitCode, out := runCLIWithDeps(
+		t,
+		deps,
+		"profile",
+		"orders",
+		"--wtoken",
+		"token",
+		"--limit",
+		"25",
+		"--status",
+		"delivered",
+		"--format",
+		"json",
+	)
+	if exitCode != 0 {
+		t.Fatalf("expected exit 0, got %d\noutput:\n%s", exitCode, out)
+	}
+	if seenLimit != 25 {
+		t.Fatalf("expected limit 25, got %d", seenLimit)
+	}
+	if seenPageToken != "" {
+		t.Fatalf("expected empty page token on first request, got %q", seenPageToken)
+	}
+
+	payload := mustJSON(t, out)
+	data := asMapPayload(t, payload["data"])
+	if asIntPayload(data["count"]) != 1 {
+		t.Fatalf("expected one filtered order, got %v", data["count"])
+	}
+	if asStringPayload(data["next_page_token"]) != "2025-12-03T14:40:50.585Z" {
+		t.Fatalf("expected next_page_token in payload, got %v", data["next_page_token"])
+	}
+	orders := asSlicePayload(t, data["orders"])
+	if len(orders) != 1 {
+		t.Fatalf("expected one order in payload, got %d", len(orders))
+	}
+	first := asMapPayload(t, orders[0])
+	if first["purchase_id"] != "purchase-1" {
+		t.Fatalf("unexpected purchase id: %v", first["purchase_id"])
+	}
+	if first["status"] != "delivered" {
+		t.Fatalf("unexpected order status: %v", first["status"])
+	}
+	if first["items_summary"] != "LONG CHICKEN®, WHOPPER® Jr." {
+		t.Fatalf("unexpected items summary: %v", first["items_summary"])
+	}
+}
+
+func TestProfileOrdersShowJSON(t *testing.T) {
+	seenPurchaseID := ""
+	deps := cli.Dependencies{
+		Wolt: &mockWolt{
+			orderHistoryShowFn: func(_ context.Context, purchaseID string, auth woltgateway.AuthContext) (map[string]any, error) {
+				seenPurchaseID = purchaseID
+				if auth.WToken != "token" {
+					t.Fatalf("expected token to be forwarded")
+				}
+				return map[string]any{
+					"order_id":           "purchase-1",
+					"order_number":       "413",
+					"status":             "delivered",
+					"creation_time":      "15/02/2026, 10:06",
+					"delivery_time":      "15/02/2026, 10:37",
+					"delivery_method":    "homedelivery",
+					"currency":           "EUR",
+					"venue_id":           "5bbdcb7d556891000bf66ed8",
+					"venue_name":         "Burger King Iso Omena",
+					"venue_full_address": "Piispansilta 11, 02230, Espoo",
+					"venue_phone":        "+358403546482",
+					"venue_country":      "FIN",
+					"venue_product_line": "restaurant",
+					"total_price":        1538,
+					"items_price":        2395,
+					"delivery_price":     101,
+					"service_fee":        101,
+					"subtotal":           1538,
+					"credits":            0,
+					"tokens":             0,
+					"items": []any{
+						map[string]any{
+							"id":         "item-1",
+							"name":       "LONG CHICKEN®",
+							"count":      1,
+							"price":      825,
+							"end_amount": 825,
+							"options":    []any{},
+						},
+					},
+					"payments": []any{
+						map[string]any{
+							"name":         "Edenred",
+							"amount":       1538,
+							"payment_time": "15/02/2026, 10:06",
+							"method": map[string]any{
+								"type":     "edenred",
+								"id":       "payment-1",
+								"provider": "edenred",
+							},
+						},
+					},
+					"delivery_location": map[string]any{
+						"alias":  "Home",
+						"street": "Iivisniemenkatu 2, 36",
+						"city":   "Espoo",
+					},
+					"delivery_comment": "Leave order at the door",
+					"discounts": []any{
+						map[string]any{"title": "Discounts", "amount": 958},
+					},
+					"surcharges": []any{},
+				}, nil
+			},
+		},
+		Profiles: &mockProfiles{profile: domain.Profile{Name: "default", IsDefault: true, Location: domain.Location{Lat: 60.14889, Lon: 24.6911577}}},
+		Location: &mockLocation{},
+		Config:   &mockConfig{},
+		Version:  "1.1.1",
+	}
+
+	exitCode, out := runCLIWithDeps(
+		t,
+		deps,
+		"profile",
+		"orders",
+		"show",
+		"purchase-1",
+		"--wtoken",
+		"token",
+		"--format",
+		"json",
+	)
+	if exitCode != 0 {
+		t.Fatalf("expected exit 0, got %d\noutput:\n%s", exitCode, out)
+	}
+	if seenPurchaseID != "purchase-1" {
+		t.Fatalf("expected purchase id purchase-1, got %q", seenPurchaseID)
+	}
+
+	payload := mustJSON(t, out)
+	data := asMapPayload(t, payload["data"])
+	if data["order_id"] != "purchase-1" {
+		t.Fatalf("expected order_id purchase-1, got %v", data["order_id"])
+	}
+	totals := asMapPayload(t, data["totals"])
+	total := asMapPayload(t, totals["total"])
+	if asIntPayload(total["amount"]) != 1538 {
+		t.Fatalf("expected total amount 1538, got %v", total["amount"])
+	}
+	if asStringPayload(total["formatted_amount"]) != "€15.38" {
+		t.Fatalf("expected formatted total €15.38, got %v", total["formatted_amount"])
+	}
+	items := asSlicePayload(t, data["items"])
+	if len(items) != 1 {
+		t.Fatalf("expected one item in detailed order payload, got %d", len(items))
+	}
+}
+
 func asBoolPayload(value any) bool {
 	b, ok := value.(bool)
 	return ok && b

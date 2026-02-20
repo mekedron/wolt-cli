@@ -11,7 +11,7 @@ It is not affiliated with Wolt. Use it at your own responsibility.
 - item detail and option matrix inspection
 - cart commands (`show`, `count`, `add`, `remove`, `clear`)
 - checkout projection (`checkout preview`, no order placement)
-- profile/auth commands (`status`, `show`, addresses, payments, favorites)
+- profile/auth commands (`status`, `show`, orders, addresses, payments, favorites)
 - token rotation using refresh token (`--wrtoken`)
 
 ## Requirements
@@ -133,6 +133,8 @@ wolt cart clear --venue-id <venue-id> --format json
 
 ```bash
 wolt profile addresses --format json
+wolt profile orders --limit 20 --format json
+wolt profile orders show <purchase-id> --format json
 wolt profile payments --format json
 wolt profile favorites --format json
 ```

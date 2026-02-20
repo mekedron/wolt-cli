@@ -79,6 +79,14 @@ func (m *testWoltAPI) DeliveryInfoDelete(context.Context, string, woltgateway.Au
 	return map[string]any{}, nil
 }
 
+func (m *testWoltAPI) OrderHistory(context.Context, woltgateway.AuthContext, woltgateway.OrderHistoryOptions) (map[string]any, error) {
+	return map[string]any{}, nil
+}
+
+func (m *testWoltAPI) OrderHistoryPurchase(context.Context, string, woltgateway.AuthContext) (map[string]any, error) {
+	return map[string]any{}, nil
+}
+
 func (m *testWoltAPI) FavoriteVenues(context.Context, domain.Location, woltgateway.AuthContext) (map[string]any, error) {
 	return map[string]any{}, nil
 }

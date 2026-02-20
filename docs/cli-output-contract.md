@@ -224,6 +224,34 @@ Required:
 - `phone_masked`
 - `country`
 
+### OrderHistoryList (`profile orders`, `profile orders list`)
+Required:
+- `orders[]:{purchase_id,received_at,status,venue_name,total_amount,is_active,items_summary,payment_time_ts,main_image,main_image_blurhash}`
+- `count`
+
+Optional:
+- `next_page_token`
+- `status_filter`
+
+### OrderHistoryDetail (`profile orders show`)
+Required:
+- `order_id`
+- `status`
+- `currency`
+- `venue:{id,name,address,phone,country,product_line}`
+- `totals:{items,delivery,service_fee,subtotal,credits,tokens,total}` where each value is `{amount,formatted_amount}`
+- `items[]:{id,name,count,price,line_total,options}`
+- `payments[]:{name,amount,method_type,method_id,provider,payment_time}`
+- `delivery:{alias,address,city,comment}`
+
+Optional:
+- `order_number`
+- `creation_time`
+- `delivery_time`
+- `delivery_method`
+- `discounts[]:{title,amount}`
+- `surcharges[]:{title,amount}`
+
 ### AddressList (`profile addresses`)
 Required:
 - `addresses[]:{address_id,label,street,is_default}`

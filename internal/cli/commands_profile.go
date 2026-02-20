@@ -17,10 +17,11 @@ import (
 func newProfileCommand(deps Dependencies) *cobra.Command {
 	profile := &cobra.Command{
 		Use:   "profile",
-		Short: "Inspect profile, address, and payment details.",
+		Short: "Inspect profile, orders, address, and payment details.",
 	}
 	profile.AddCommand(newProfileStatusCommand(deps))
 	profile.AddCommand(newProfileShowCommand(deps))
+	profile.AddCommand(newProfileOrdersCommand(deps))
 	profile.AddCommand(newProfileAddressesCommand(deps))
 	profile.AddCommand(newProfilePaymentsCommand(deps))
 	profile.AddCommand(newProfileFavoritesCommand(deps))

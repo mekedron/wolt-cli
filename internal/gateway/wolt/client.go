@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -28,6 +29,7 @@ const (
 	defaultPaymentProfileAPIURL = "https://payment-service.wolt.com/v1/payment-methods/profile"
 	defaultAddressFieldsAPIURL  = "https://restaurant-api.wolt.com/v1/consumer-api/address-fields"
 	defaultDeliveryInfoAPIURL   = "https://restaurant-api.wolt.com/v2/delivery/info"
+	defaultOrderHistoryAPIURL   = "https://consumer-api.wolt.com/order-tracking-api/v1/order_history/"
 	defaultFavoritesPageAPIURL  = "https://consumer-api.wolt.com/v1/pages/venue-list/profile/favourites"
 	defaultFavoriteVenueAPIURL  = "https://restaurant-api.wolt.com/v3/venues/favourites"
 	defaultBasketCountAPIURL    = "https://consumer-api.wolt.com/order-xp/v1/baskets/count"
@@ -90,6 +92,7 @@ type Endpoints struct {
 	PaymentProfile   string
 	AddressFields    string
 	DeliveryInfo     string
+	OrderHistory     string
 	FavoritesPage    string
 	FavoriteVenue    string
 	BasketCount      string
@@ -148,6 +151,7 @@ func NewClient(opts ...Option) *Client {
 			PaymentProfile:   defaultPaymentProfileAPIURL,
 			AddressFields:    defaultAddressFieldsAPIURL,
 			DeliveryInfo:     defaultDeliveryInfoAPIURL,
+			OrderHistory:     defaultOrderHistoryAPIURL,
 			FavoritesPage:    defaultFavoritesPageAPIURL,
 			FavoriteVenue:    defaultFavoriteVenueAPIURL,
 			BasketCount:      defaultBasketCountAPIURL,
@@ -581,6 +585,33 @@ func (c *Client) DeliveryInfoCreate(ctx context.Context, payload map[string]any,
 func (c *Client) DeliveryInfoDelete(ctx context.Context, addressID string, auth AuthContext) (map[string]any, error) {
 	endpoint := strings.TrimRight(c.endpoints.DeliveryInfo, "/") + "/" + strings.TrimSpace(addressID)
 	return c.doJSONRequest(ctx, http.MethodDelete, endpoint, nil, nil, c.headers(nil, &auth))
+}
+
+// OrderHistory returns paginated account order history.
+func (c *Client) OrderHistory(ctx context.Context, auth AuthContext, options OrderHistoryOptions) (map[string]any, error) {
+	params := url.Values{}
+	limit := options.Limit
+	if limit <= 0 {
+		limit = 50
+	}
+	params.Set("limit", strconv.Itoa(limit))
+	if pageToken := strings.TrimSpace(options.PageToken); pageToken != "" {
+		params.Set("page_token", pageToken)
+	}
+	endpoint := strings.TrimRight(c.endpoints.OrderHistory, "/") + "/"
+	return c.doJSONRequest(ctx, http.MethodGet, endpoint, params, nil, c.headers(nil, &auth))
+}
+
+// OrderHistoryPurchase returns detailed payload for one purchase id.
+func (c *Client) OrderHistoryPurchase(ctx context.Context, purchaseID string, auth AuthContext) (map[string]any, error) {
+	trimmedID := strings.TrimSpace(purchaseID)
+	if trimmedID == "" {
+		return nil, fmt.Errorf("purchase id is required")
+	}
+	params := url.Values{}
+	params.Set("tips_use_percentage", "true")
+	endpoint := strings.TrimRight(c.endpoints.OrderHistory, "/") + "/purchase/" + url.PathEscape(trimmedID)
+	return c.doJSONRequest(ctx, http.MethodGet, endpoint, params, nil, c.headers(nil, &auth))
 }
 
 // FavoriteVenues returns account favourite venues list page payload.
