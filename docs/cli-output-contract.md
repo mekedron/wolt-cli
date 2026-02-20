@@ -131,6 +131,9 @@ Required:
 - `total`
 - `items[]:{item_id,venue_id,venue_slug,name,base_price,currency,is_sold_out}`
 
+Notes:
+- `base_price.currency`/`base_price.formatted_amount` are normalized from payload venue metadata when upstream omits currency.
+
 ### VenueDetail (`venue show`)
 Required:
 - `venue_id`
@@ -141,6 +144,28 @@ Required:
 - `rating`
 - `delivery_methods`
 - `order_minimum`
+
+### VenueCategoryList (`venue categories`)
+Required:
+- `venue_id`
+- `loading_strategy`
+- `categories[]:{id,slug,name,parent_slug,level,leaf,item_refs_count}`
+
+### VenueItemSearchResult (`venue search`)
+Required:
+- `venue_id`
+- `venue_slug`
+- `query`
+- `total`
+- `items[]:{item_id,name,category,base_price,discounts,is_sold_out}`
+
+Optional:
+- `original_price` (when upstream exposes pre-discount amount)
+- `option_group_ids` (when `--include-options`)
+
+Notes:
+- `base_price.currency`/`base_price.formatted_amount` are normalized from venue metadata when upstream search payload omits currency.
+- when upstream returns `original_price` without promotion labels, `discounts[]` may contain a derived label like `21% off`.
 
 ### VenueMenu (`venue menu`)
 Required:
@@ -167,6 +192,10 @@ Required:
 - `price`
 - `option_groups[]`
 - `upsell_items[]`
+
+Notes:
+- `price.currency`/`price.formatted_amount` are normalized from payload venue metadata when upstream omits currency.
+- `upsell_items[].price` follows the same normalization.
 
 ### ItemOptions (`item options`)
 Required:

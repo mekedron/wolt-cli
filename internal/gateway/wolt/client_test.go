@@ -1,7 +1,9 @@
 package wolt
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/url"
@@ -16,10 +18,14 @@ type captureHTTPClient struct {
 	requestBody  string
 	statusCode   int
 	responseBody string
+	doErr        error
 }
 
 func (c *captureHTTPClient) Do(req *http.Request) (*http.Response, error) {
 	c.request = req
+	if c.doErr != nil {
+		return nil, c.doErr
+	}
 	if req.Body != nil {
 		body, _ := io.ReadAll(req.Body)
 		c.requestBody = string(body)
@@ -129,6 +135,102 @@ func TestRefreshAccessTokenUsesFormBodyAndCookies(t *testing.T) {
 	}
 	if !strings.Contains(httpClient.requestBody, "refresh_token=refresh-token-1") {
 		t.Fatalf("expected refresh_token in request body, got %q", httpClient.requestBody)
+	}
+}
+
+func TestVerboseTraceLogsRequestAndResponse(t *testing.T) {
+	httpClient := &captureHTTPClient{
+		responseBody: `{"categories":[]}`,
+	}
+	trace := &bytes.Buffer{}
+	client := NewClient(
+		WithHTTPClient(httpClient),
+		WithVerboseOutput(trace),
+		WithEndpoints(Endpoints{
+			Assortment: "https://example.test/consumer-assortment/v1/venues/slug/",
+		}),
+	)
+
+	_, err := client.AssortmentByVenueSlug(context.Background(), "wolt-market-niittari")
+	if err != nil {
+		t.Fatalf("assortment call returned error: %v", err)
+	}
+
+	out := trace.String()
+	if !strings.Contains(out, "[http] -> GET https://example.test/consumer-assortment/v1/venues/slug/wolt-market-niittari/assortment") {
+		t.Fatalf("expected request trace line, got:\n%s", out)
+	}
+	if !strings.Contains(out, "[http] <- GET https://example.test/consumer-assortment/v1/venues/slug/wolt-market-niittari/assortment status=200") {
+		t.Fatalf("expected response trace line with status, got:\n%s", out)
+	}
+}
+
+func TestAssortmentItemsSearchByVenueSlugUsesSearchEndpoint(t *testing.T) {
+	httpClient := &captureHTTPClient{}
+	client := NewClient(
+		WithHTTPClient(httpClient),
+		WithLocale("fi"),
+		WithEndpoints(Endpoints{
+			Assortment: "https://example.test/consumer-assortment/v1/venues/slug/",
+		}),
+	)
+
+	_, err := client.AssortmentItemsSearchByVenueSlug(
+		context.Background(),
+		"wolt-market-niittari",
+		" milk ",
+		"",
+		AuthContext{WToken: "jwt-token"},
+	)
+	if err != nil {
+		t.Fatalf("assortment items search returned error: %v", err)
+	}
+	if httpClient.request == nil {
+		t.Fatal("expected request to be captured")
+	}
+	if got := httpClient.request.Method; got != http.MethodPost {
+		t.Fatalf("expected POST request, got %s", got)
+	}
+	if got := httpClient.request.URL.Path; got != "/consumer-assortment/v1/venues/slug/wolt-market-niittari/assortment/items/search" {
+		t.Fatalf("unexpected path: %s", got)
+	}
+	if got := httpClient.request.URL.Query().Get("language"); got != "fi" {
+		t.Fatalf("expected language=fi query param, got %q", got)
+	}
+	if got := httpClient.request.Header.Get("Authorization"); got != "Bearer jwt-token" {
+		t.Fatalf("expected authorization header, got %q", got)
+	}
+	if got := httpClient.request.Header.Get("Content-Type"); got != "application/json" {
+		t.Fatalf("expected content-type application/json, got %q", got)
+	}
+	if strings.TrimSpace(httpClient.requestBody) != `{"q":"milk"}` {
+		t.Fatalf("unexpected request body: %s", httpClient.requestBody)
+	}
+}
+
+func TestVerboseTraceLogsUpstreamErrors(t *testing.T) {
+	httpClient := &captureHTTPClient{
+		doErr: errors.New("network down"),
+	}
+	trace := &bytes.Buffer{}
+	client := NewClient(
+		WithHTTPClient(httpClient),
+		WithVerboseOutput(trace),
+		WithEndpoints(Endpoints{
+			Assortment: "https://example.test/consumer-assortment/v1/venues/slug/",
+		}),
+	)
+
+	_, err := client.AssortmentByVenueSlug(context.Background(), "wolt-market-niittari")
+	if err == nil {
+		t.Fatal("expected upstream error")
+	}
+	out := trace.String()
+	if !strings.Contains(out, "[http] -> GET https://example.test/consumer-assortment/v1/venues/slug/wolt-market-niittari/assortment") {
+		t.Fatalf("expected request trace line, got:\n%s", out)
+	}
+	if !strings.Contains(out, "[http] <- GET https://example.test/consumer-assortment/v1/venues/slug/wolt-market-niittari/assortment error=") {
+		t.Fatalf("expected error trace line, got:\n%s", out)
 	}
 }
 
@@ -358,6 +460,115 @@ func TestAssortmentByVenueSlugUsesExpectedURL(t *testing.T) {
 		t.Fatalf("expected GET request, got %s", got)
 	}
 	if got := httpClient.request.URL.String(); got != "https://example.test/consumer-assortment/v1/venues/slug/burger-king-finnoo/assortment" {
+		t.Fatalf("unexpected URL: %s", got)
+	}
+}
+
+func TestAssortmentCategoryByVenueSlugUsesExpectedURL(t *testing.T) {
+	httpClient := &captureHTTPClient{}
+	client := NewClient(
+		WithHTTPClient(httpClient),
+		WithEndpoints(Endpoints{
+			Assortment: "https://example.test/consumer-assortment/v1/venues/slug/",
+		}),
+	)
+
+	_, err := client.AssortmentCategoryByVenueSlug(
+		context.Background(),
+		"wolt-market-niittari",
+		"seasonal-fruits-52",
+		"en",
+		AuthContext{WToken: "jwt-token"},
+	)
+	if err != nil {
+		t.Fatalf("assortment category by venue slug returned error: %v", err)
+	}
+	if httpClient.request == nil {
+		t.Fatal("expected request to be captured")
+	}
+	if got := httpClient.request.Method; got != http.MethodGet {
+		t.Fatalf("expected GET request, got %s", got)
+	}
+	if got := httpClient.request.Header.Get("Authorization"); got != "Bearer jwt-token" {
+		t.Fatalf("expected authorization header, got %q", got)
+	}
+	if got := httpClient.request.URL.String(); got != "https://example.test/consumer-assortment/v1/venues/slug/wolt-market-niittari/assortment/categories/slug/seasonal-fruits-52?language=en" {
+		t.Fatalf("unexpected URL: %s", got)
+	}
+}
+
+func TestAssortmentItemsByVenueSlugUsesExpectedPayload(t *testing.T) {
+	httpClient := &captureHTTPClient{}
+	client := NewClient(
+		WithHTTPClient(httpClient),
+		WithEndpoints(Endpoints{
+			Assortment: "https://example.test/consumer-assortment/v1/venues/slug/",
+		}),
+	)
+
+	_, err := client.AssortmentItemsByVenueSlug(
+		context.Background(),
+		"wolt-market-niittari",
+		[]string{" item-1 ", "", "item-2"},
+		AuthContext{Cookies: []string{"foo=bar"}},
+	)
+	if err != nil {
+		t.Fatalf("assortment items by venue slug returned error: %v", err)
+	}
+	if httpClient.request == nil {
+		t.Fatal("expected request to be captured")
+	}
+	if got := httpClient.request.Method; got != http.MethodPost {
+		t.Fatalf("expected POST request, got %s", got)
+	}
+	if got := httpClient.request.Header.Get("Cookie"); got != "foo=bar" {
+		t.Fatalf("expected cookie header, got %q", got)
+	}
+	if got := httpClient.request.Header.Get("Content-Type"); got != "application/json" {
+		t.Fatalf("expected content-type application/json, got %q", got)
+	}
+	if got := httpClient.request.URL.String(); got != "https://example.test/consumer-assortment/v1/venues/slug/wolt-market-niittari/assortment/items" {
+		t.Fatalf("unexpected URL: %s", got)
+	}
+	if strings.TrimSpace(httpClient.requestBody) != `{"item_ids":["item-1","item-2"]}` {
+		t.Fatalf("unexpected request body: %s", httpClient.requestBody)
+	}
+}
+
+func TestVenueContentByVenueSlugUsesExpectedURL(t *testing.T) {
+	httpClient := &captureHTTPClient{}
+	client := NewClient(
+		WithHTTPClient(httpClient),
+		WithEndpoints(Endpoints{
+			VenueContent: "https://example.test/venue-content-api/v3/web/venue-content/slug/",
+		}),
+	)
+
+	_, err := client.VenueContentByVenueSlug(
+		context.Background(),
+		"wolt-market-niittari",
+		"token-1",
+		AuthContext{
+			WToken:  "jwt-token",
+			Cookies: []string{"foo=bar"},
+		},
+	)
+	if err != nil {
+		t.Fatalf("venue content by venue slug returned error: %v", err)
+	}
+	if httpClient.request == nil {
+		t.Fatal("expected request to be captured")
+	}
+	if got := httpClient.request.Method; got != http.MethodGet {
+		t.Fatalf("expected GET request, got %s", got)
+	}
+	if got := httpClient.request.Header.Get("Authorization"); got != "Bearer jwt-token" {
+		t.Fatalf("expected authorization header, got %q", got)
+	}
+	if got := httpClient.request.Header.Get("Cookie"); got != "foo=bar" {
+		t.Fatalf("expected cookie header, got %q", got)
+	}
+	if got := httpClient.request.URL.String(); got != "https://example.test/venue-content-api/v3/web/venue-content/slug/wolt-market-niittari?next_page_token=token-1" {
 		t.Fatalf("unexpected URL: %s", got)
 	}
 }

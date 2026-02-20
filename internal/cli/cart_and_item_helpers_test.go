@@ -30,7 +30,7 @@ func TestDedupeStrings(t *testing.T) {
 func TestSelectBasketWithMeta(t *testing.T) {
 	page := map[string]any{
 		"baskets": []any{
-			map[string]any{"id": "basket-1", "venue": map[string]any{"id": "venue-1", "name": "A"}},
+			map[string]any{"id": "basket-1", "venue": map[string]any{"id": "venue-1", "name": "A", "slug": "venue-a"}},
 			map[string]any{"id": "basket-2", "venue": map[string]any{"id": "venue-2", "name": "B"}},
 		},
 	}
@@ -44,6 +44,17 @@ func TestSelectBasketWithMeta(t *testing.T) {
 	}
 	if asString(meta["selection_mode"]) != "first-available" {
 		t.Fatalf("expected first-available selection mode, got %v", meta["selection_mode"])
+	}
+
+	selectedBySlug, metaBySlug, warningsBySlug := selectBasketWithMeta(page, "venue-a")
+	if asString(selectedBySlug["id"]) != "basket-1" {
+		t.Fatalf("expected basket-1 selected by slug, got %v", selectedBySlug["id"])
+	}
+	if len(warningsBySlug) != 0 {
+		t.Fatalf("expected no warnings for explicit slug selection, got %v", warningsBySlug)
+	}
+	if asString(metaBySlug["selection_mode"]) != "requested-venue-slug" {
+		t.Fatalf("expected requested-venue-slug selection mode, got %v", metaBySlug["selection_mode"])
 	}
 }
 
@@ -121,6 +132,29 @@ func TestBuildBasketMutationItem(t *testing.T) {
 	opts := asSlice(item["options"])
 	if len(opts) != 1 {
 		t.Fatalf("expected one option group in mutation item, got %d", len(opts))
+	}
+}
+
+func TestBuildBasketUpsertItemKeepsUnitPrice(t *testing.T) {
+	line := map[string]any{
+		"id":    "item-1",
+		"name":  "Combo",
+		"price": 1700,
+		"options": []any{
+			map[string]any{
+				"id": "drink",
+				"values": []any{
+					map[string]any{"id": "cola", "count": 1, "price": 100},
+				},
+			},
+		},
+	}
+	item := buildBasketUpsertItem(line, 3)
+	if asInt(item["price"]) != 1700 {
+		t.Fatalf("expected unit price 1700, got %v", item["price"])
+	}
+	if asInt(item["count"]) != 3 {
+		t.Fatalf("expected count 3, got %v", item["count"])
 	}
 }
 

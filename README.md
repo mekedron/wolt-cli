@@ -86,7 +86,7 @@ Global flags for all leaf commands:
 - `--locale <bcp47>`
 - `--no-color`
 - `--output <path>`
-- `--verbose`
+- `--verbose` (prints upstream HTTP request trace and detailed error diagnostics)
 - `--wtoken <token>`
 - `--wrtoken <token>`
 - `--cookie <name=value>` (repeatable)
@@ -118,6 +118,11 @@ wolt search venues --query "burger king" --limit 10 --format json \
 wolt venue menu burger-king-finnoo --include-options --format json
 wolt venue menu burger-king-finnoo --include-options --format json \
   | jq -r '.data.items[] | select(.name|test("whopper"; "i")) | "\(.item_id)\t\(.name)\t\(.base_price.amount)"'
+# for partial market assortments, use category-first flow:
+wolt venue categories wolt-market-niittari --format json \
+  | jq -r '.data.categories[] | "\(.slug)\t\(.name)\tparent=\(.parent_slug // "-")"'
+wolt venue search wolt-market-niittari --query "milk" --format json
+wolt venue menu wolt-market-niittari --category <category-slug> --include-options --format json
 
 # 3) Inspect a single WHOPPER meal item in detail (item_id from step 2)
 wolt item show burger-king-finnoo <item-id> --format json

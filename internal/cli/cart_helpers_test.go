@@ -101,3 +101,79 @@ func TestBuildItemPayloadFromAssortment(t *testing.T) {
 		t.Fatalf("expected option group grp-drink, got %v", group["id"])
 	}
 }
+
+func TestBuildItemPayloadFromMenuPayload(t *testing.T) {
+	payload := map[string]any{
+		"sections": []any{
+			map[string]any{
+				"name": "Deals",
+				"items": []any{
+					map[string]any{
+						"id":          "item-1",
+						"name":        "Iced Tea",
+						"description": "Cold drink",
+						"price":       299,
+						"options": []any{
+							map[string]any{
+								"id":   "grp-size",
+								"name": "Size",
+								"values": []any{
+									map[string]any{"id": "val-small", "name": "Small", "price": 0},
+									map[string]any{"id": "val-large", "name": "Large", "price": 100},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	itemPayload := buildItemPayloadFromMenuPayload(payload, "venue-1", "item-1")
+	if itemPayload == nil {
+		t.Fatalf("expected menu payload fallback for item")
+	}
+	if asString(itemPayload["name"]) != "Iced Tea" {
+		t.Fatalf("expected item name Iced Tea, got %v", itemPayload["name"])
+	}
+	if asInt(asMap(itemPayload["price"])["amount"]) != 299 {
+		t.Fatalf("expected item price 299, got %v", asMap(itemPayload["price"])["amount"])
+	}
+	if asString(asMap(itemPayload["price"])["currency"]) != "EUR" {
+		t.Fatalf("expected fallback currency EUR, got %v", asMap(itemPayload["price"])["currency"])
+	}
+	groups := asSlice(itemPayload["option_groups"])
+	if len(groups) != 1 {
+		t.Fatalf("expected one option group, got %d", len(groups))
+	}
+	group := asMap(groups[0])
+	if asString(group["id"]) != "grp-size" {
+		t.Fatalf("expected option group grp-size, got %v", group["id"])
+	}
+	values := asSlice(group["values"])
+	if len(values) != 2 {
+		t.Fatalf("expected two option values, got %d", len(values))
+	}
+}
+
+func TestNeedsVenueContentFallback(t *testing.T) {
+	partialAssortment := map[string]any{
+		"loading_strategy": "partial",
+	}
+	if !needsVenueContentFallback(partialAssortment, "venue-1") {
+		t.Fatalf("expected partial assortment to require venue-content fallback")
+	}
+
+	regularAssortment := map[string]any{
+		"items": []any{
+			map[string]any{
+				"id":    "item-1",
+				"name":  "Combo",
+				"price": 1290,
+			},
+		},
+	}
+	if needsVenueContentFallback(regularAssortment, "venue-1") {
+		t.Fatalf("did not expect full assortment to require venue-content fallback")
+	}
+}

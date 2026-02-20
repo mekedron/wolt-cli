@@ -55,6 +55,7 @@ func NewRootCommand(deps Dependencies) *cobra.Command {
 			return cmd.Help()
 		},
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
+			attachVerboseHTTPTrace(cmd, deps.Wolt)
 			showVersion, _ := cmd.Flags().GetBool("version")
 			if !showVersion {
 				return nil
@@ -85,6 +86,26 @@ func NewRootCommand(deps Dependencies) *cobra.Command {
 	root.AddCommand(newConfigureCommand(deps))
 
 	return root
+}
+
+type verboseHTTPTraceSetter interface {
+	SetVerboseOutput(out io.Writer)
+}
+
+func attachVerboseHTTPTrace(cmd *cobra.Command, upstream any) {
+	if cmd == nil || upstream == nil {
+		return
+	}
+	verbose, _ := cmd.Flags().GetBool("verbose")
+	if !verbose {
+		return
+	}
+	setter, ok := upstream.(verboseHTTPTraceSetter)
+	if !ok {
+		return
+	}
+	setter.SetVerboseOutput(cmd.ErrOrStderr())
+	_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "[verbose] http trace enabled")
 }
 
 func renderRootHelp(out io.Writer, root *cobra.Command) {

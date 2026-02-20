@@ -59,7 +59,7 @@ All command leaf nodes support:
 - `--locale <bcp47>`
 - `--no-color`
 - `--output <path>`
-- `--verbose`
+- `--verbose` (prints upstream HTTP request trace and detailed error diagnostics)
 - `--wtoken <token>`
 - `--wrtoken <token>`
 - `--cookie <name=value>` (repeatable)
@@ -98,9 +98,13 @@ Used by:
 - final order placement in Wolt uses the delivery address selected in your Wolt account.
 - There is no order placement command.
 
+For large marketplace-style venues, prefer `wolt venue search <slug> --query "<text>"` to find items quickly instead of forcing full menu traversal.
+
 ## Quick Reference
 
 ```console
+wolt venue categories burger-king-finnoo --format json
+wolt venue search wolt-market-niittari --query "milk" --format json
 wolt venue menu burger-king-finnoo --include-options --format json
 wolt item options burger-king-finnoo <item-id> --format json
 wolt cart show --details --format json

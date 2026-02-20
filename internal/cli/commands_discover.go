@@ -170,14 +170,14 @@ func newDiscoverCategoriesCommand(deps Dependencies) *cobra.Command {
 }
 
 func buildDiscoveryFeedTable(data map[string]any) string {
-	headers := []string{"Section", "Venue", "Rating", "Delivery estimate", "Delivery fee", "Price", "Promotions", "Wolt+"}
+	headers := []string{"Section", "Venue", "Slug", "Rating", "Delivery estimate", "Delivery fee", "Price", "Promotions", "Wolt+"}
 	rows := [][]string{}
 	for _, sectionValue := range asSlice(data["sections"]) {
 		section := asMap(sectionValue)
 		sectionName := asString(section["title"])
 		items := asSlice(section["items"])
 		if len(items) == 0 {
-			rows = append(rows, []string{sectionName, "-", "-", "-", "-", "-", "-", "-"})
+			rows = append(rows, []string{sectionName, "-", "-", "-", "-", "-", "-", "-", "-"})
 			continue
 		}
 		for idx, itemValue := range items {
@@ -205,6 +205,7 @@ func buildDiscoveryFeedTable(data map[string]any) string {
 			rows = append(rows, []string{
 				sectionName,
 				name,
+				fallbackString(asString(item["slug"]), "-"),
 				rating,
 				asString(item["delivery_estimate"]),
 				fee,

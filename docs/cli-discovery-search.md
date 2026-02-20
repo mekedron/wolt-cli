@@ -16,7 +16,7 @@ Output schema:
 - `DiscoveryFeed`
 
 Notes:
-- feed venue rows include `price_range`, `price_range_scale`, `promotions[]`, and `wolt_plus`
+- feed venue rows include `slug`, `price_range`, `price_range_scale`, `promotions[]`, and `wolt_plus`
 - location defaults to profile location; use `--address` or `--lat/--lon` for a temporary override
 
 Examples:
@@ -96,6 +96,7 @@ Output schema:
 
 Notes:
 - location defaults to profile location; use global `--address` for a temporary override
+- for large marketplace venues, prefer venue-scoped search: `wolt venue search <slug> --query <text>`
 
 Examples:
 

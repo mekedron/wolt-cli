@@ -14,34 +14,38 @@ import (
 )
 
 type mockWolt struct {
-	frontPageFunc        func(context.Context, domain.Location) (map[string]any, error)
-	sectionsFunc         func(context.Context, domain.Location) ([]domain.Section, error)
-	itemsFunc            func(context.Context, domain.Location) ([]domain.Item, error)
-	restaurantByIDFunc   func(context.Context, string) (*domain.Restaurant, error)
-	searchFunc           func(context.Context, domain.Location, string) (map[string]any, error)
-	venuePageStaticFunc  func(context.Context, string) (map[string]any, error)
-	venuePageDynamicFunc func(context.Context, string) (map[string]any, error)
-	assortmentBySlugFunc func(context.Context, string) (map[string]any, error)
-	venueItemPageFunc    func(context.Context, string, string) (map[string]any, error)
-	itemBySlugFunc       func(context.Context, domain.Location, string) (*domain.Item, error)
-	userMeFunc           func(context.Context, woltgateway.AuthContext) (map[string]any, error)
-	paymentMethodsFunc   func(context.Context, woltgateway.AuthContext) (map[string]any, error)
-	paymentProfileFunc   func(context.Context, woltgateway.AuthContext, woltgateway.PaymentMethodsProfileOptions) (map[string]any, error)
-	addressFieldsFunc    func(context.Context, domain.Location, string, woltgateway.AuthContext) (map[string]any, error)
-	deliveryInfoListFunc func(context.Context, woltgateway.AuthContext) (map[string]any, error)
-	deliveryInfoCreateFn func(context.Context, map[string]any, woltgateway.AuthContext) (map[string]any, error)
-	deliveryInfoDeleteFn func(context.Context, string, woltgateway.AuthContext) (map[string]any, error)
-	orderHistoryFunc     func(context.Context, woltgateway.AuthContext, woltgateway.OrderHistoryOptions) (map[string]any, error)
-	orderHistoryShowFn   func(context.Context, string, woltgateway.AuthContext) (map[string]any, error)
-	favoriteVenuesFunc   func(context.Context, domain.Location, woltgateway.AuthContext) (map[string]any, error)
-	favoriteVenueAddFn   func(context.Context, string, woltgateway.AuthContext) (map[string]any, error)
-	favoriteVenueRemFn   func(context.Context, string, woltgateway.AuthContext) (map[string]any, error)
-	basketCountFunc      func(context.Context, woltgateway.AuthContext) (map[string]any, error)
-	basketsPageFunc      func(context.Context, domain.Location, woltgateway.AuthContext) (map[string]any, error)
-	addToBasketFunc      func(context.Context, map[string]any, woltgateway.AuthContext) (map[string]any, error)
-	deleteBasketsFunc    func(context.Context, []string, woltgateway.AuthContext) (map[string]any, error)
-	checkoutPreviewFunc  func(context.Context, map[string]any, woltgateway.AuthContext) (map[string]any, error)
-	refreshAccessTokenFn func(context.Context, string, woltgateway.AuthContext) (woltgateway.TokenRefreshResult, error)
+	frontPageFunc           func(context.Context, domain.Location) (map[string]any, error)
+	sectionsFunc            func(context.Context, domain.Location) ([]domain.Section, error)
+	itemsFunc               func(context.Context, domain.Location) ([]domain.Item, error)
+	restaurantByIDFunc      func(context.Context, string) (*domain.Restaurant, error)
+	searchFunc              func(context.Context, domain.Location, string) (map[string]any, error)
+	venuePageStaticFunc     func(context.Context, string) (map[string]any, error)
+	venuePageDynamicFunc    func(context.Context, string) (map[string]any, error)
+	assortmentBySlugFunc    func(context.Context, string) (map[string]any, error)
+	assortmentCategoryFn    func(context.Context, string, string, string, woltgateway.AuthContext) (map[string]any, error)
+	assortmentItemsFn       func(context.Context, string, []string, woltgateway.AuthContext) (map[string]any, error)
+	assortmentItemsSearchFn func(context.Context, string, string, string, woltgateway.AuthContext) (map[string]any, error)
+	venueContentBySlugFn    func(context.Context, string, string, woltgateway.AuthContext) (map[string]any, error)
+	venueItemPageFunc       func(context.Context, string, string) (map[string]any, error)
+	itemBySlugFunc          func(context.Context, domain.Location, string) (*domain.Item, error)
+	userMeFunc              func(context.Context, woltgateway.AuthContext) (map[string]any, error)
+	paymentMethodsFunc      func(context.Context, woltgateway.AuthContext) (map[string]any, error)
+	paymentProfileFunc      func(context.Context, woltgateway.AuthContext, woltgateway.PaymentMethodsProfileOptions) (map[string]any, error)
+	addressFieldsFunc       func(context.Context, domain.Location, string, woltgateway.AuthContext) (map[string]any, error)
+	deliveryInfoListFunc    func(context.Context, woltgateway.AuthContext) (map[string]any, error)
+	deliveryInfoCreateFn    func(context.Context, map[string]any, woltgateway.AuthContext) (map[string]any, error)
+	deliveryInfoDeleteFn    func(context.Context, string, woltgateway.AuthContext) (map[string]any, error)
+	orderHistoryFunc        func(context.Context, woltgateway.AuthContext, woltgateway.OrderHistoryOptions) (map[string]any, error)
+	orderHistoryShowFn      func(context.Context, string, woltgateway.AuthContext) (map[string]any, error)
+	favoriteVenuesFunc      func(context.Context, domain.Location, woltgateway.AuthContext) (map[string]any, error)
+	favoriteVenueAddFn      func(context.Context, string, woltgateway.AuthContext) (map[string]any, error)
+	favoriteVenueRemFn      func(context.Context, string, woltgateway.AuthContext) (map[string]any, error)
+	basketCountFunc         func(context.Context, woltgateway.AuthContext) (map[string]any, error)
+	basketsPageFunc         func(context.Context, domain.Location, woltgateway.AuthContext) (map[string]any, error)
+	addToBasketFunc         func(context.Context, map[string]any, woltgateway.AuthContext) (map[string]any, error)
+	deleteBasketsFunc       func(context.Context, []string, woltgateway.AuthContext) (map[string]any, error)
+	checkoutPreviewFunc     func(context.Context, map[string]any, woltgateway.AuthContext) (map[string]any, error)
+	refreshAccessTokenFn    func(context.Context, string, woltgateway.AuthContext) (woltgateway.TokenRefreshResult, error)
 }
 
 func (m *mockWolt) FrontPage(ctx context.Context, location domain.Location) (map[string]any, error) {
@@ -98,6 +102,56 @@ func (m *mockWolt) AssortmentByVenueSlug(ctx context.Context, slug string) (map[
 		return nil, errors.New("assortment by venue slug not mocked")
 	}
 	return m.assortmentBySlugFunc(ctx, slug)
+}
+
+func (m *mockWolt) AssortmentCategoryByVenueSlug(
+	ctx context.Context,
+	slug string,
+	categorySlug string,
+	language string,
+	auth woltgateway.AuthContext,
+) (map[string]any, error) {
+	if m.assortmentCategoryFn == nil {
+		return nil, errors.New("assortment category by venue slug not mocked")
+	}
+	return m.assortmentCategoryFn(ctx, slug, categorySlug, language, auth)
+}
+
+func (m *mockWolt) AssortmentItemsByVenueSlug(
+	ctx context.Context,
+	slug string,
+	itemIDs []string,
+	auth woltgateway.AuthContext,
+) (map[string]any, error) {
+	if m.assortmentItemsFn == nil {
+		return nil, errors.New("assortment items by venue slug not mocked")
+	}
+	return m.assortmentItemsFn(ctx, slug, itemIDs, auth)
+}
+
+func (m *mockWolt) AssortmentItemsSearchByVenueSlug(
+	ctx context.Context,
+	slug string,
+	query string,
+	language string,
+	auth woltgateway.AuthContext,
+) (map[string]any, error) {
+	if m.assortmentItemsSearchFn == nil {
+		return nil, errors.New("assortment items search by venue slug not mocked")
+	}
+	return m.assortmentItemsSearchFn(ctx, slug, query, language, auth)
+}
+
+func (m *mockWolt) VenueContentByVenueSlug(
+	ctx context.Context,
+	slug string,
+	nextPageToken string,
+	auth woltgateway.AuthContext,
+) (map[string]any, error) {
+	if m.venueContentBySlugFn == nil {
+		return nil, errors.New("venue content by venue slug not mocked")
+	}
+	return m.venueContentBySlugFn(ctx, slug, nextPageToken, auth)
 }
 
 func (m *mockWolt) VenueItemPage(ctx context.Context, venueID, itemID string) (map[string]any, error) {
@@ -402,7 +456,7 @@ func TestRootHelpIncludesCommandDescriptions(t *testing.T) {
 		"--no-color: Disable ANSI color codes in table output.",
 		"--output: Write the command output to a file.",
 		"--wrtoken: Wolt refresh token for automatic access token rotation (or payload with refreshToken).",
-		"--verbose: Enable verbose output (for example detailed upstream error diagnostics).",
+		"--verbose: Enable verbose output (prints upstream request trace and detailed error diagnostics).",
 	} {
 		if count := strings.Count(out, token); count != 1 {
 			t.Fatalf("expected %q to appear once in root help, got %d\noutput:\n%s", token, count, out)

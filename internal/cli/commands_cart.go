@@ -189,12 +189,22 @@ func newCartAddCommand(deps Dependencies) *cobra.Command {
 					}
 				}
 				for _, candidateSlug := range dedupeStrings(slugCandidates) {
-					assortmentPayload, err := deps.Wolt.AssortmentByVenueSlug(cmd.Context(), candidateSlug)
-					if err != nil {
-						continue
+					assortmentPayload := map[string]any{}
+					if payload, err := deps.Wolt.AssortmentByVenueSlug(cmd.Context(), candidateSlug); err == nil {
+						assortmentPayload = payload
 					}
 					if fallback := buildItemPayloadFromAssortment(assortmentPayload, itemID); fallback != nil {
 						itemPayload = mergeItemPayloadFallback(itemPayload, fallback)
+						break
+					}
+					if !needsVenueContentFallback(assortmentPayload, venueID) {
+						continue
+					}
+					venueContentPayloads, fallbackWarnings := loadVenueContentPayloads(cmd.Context(), deps, candidateSlug, auth, 2)
+					warnings = append(warnings, fallbackWarnings...)
+					if fallback := buildItemPayloadFromMenuPayloads(venueContentPayloads, venueID, itemID); fallback != nil {
+						itemPayload = mergeItemPayloadFallback(itemPayload, fallback)
+						warnings = append(warnings, "used venue content fallback metadata for cart item")
 						break
 					}
 				}
@@ -243,21 +253,69 @@ func newCartAddCommand(deps Dependencies) *cobra.Command {
 				warnings = append(warnings, "option metadata unavailable; provide option IDs or use --venue-slug to resolve option names")
 			}
 			options := buildBasketOptions(itemPayload, selectedOptions)
+			newLineItem := map[string]any{
+				"id":      itemID,
+				"count":   count,
+				"name":    name,
+				"price":   price,
+				"options": options,
+				"substitution_settings": map[string]any{
+					"is_allowed": allowSubstitutions,
+				},
+			}
+
+			mergedItems := []any{newLineItem}
+			venueMutationID := venueID
+			existingPage, preAddAuthWarnings, preAddErr := invokeWithAuthAutoRefresh(
+				cmd.Context(),
+				deps,
+				flags,
+				&auth,
+				func(authCtx woltgateway.AuthContext) (map[string]any, error) {
+					return deps.Wolt.BasketsPage(cmd.Context(), location, authCtx)
+				},
+			)
+			warnings = append(warnings, preAddAuthWarnings...)
+			if preAddErr == nil {
+				selectedBasket, _, _ := selectBasketWithMeta(existingPage, venueID)
+				if selectedBasket != nil {
+					resolvedVenue := asMap(selectedBasket["venue"])
+					if resolvedVenueID := strings.TrimSpace(asString(resolvedVenue["id"])); resolvedVenueID != "" {
+						venueMutationID = resolvedVenueID
+					}
+					existingItems := asSlice(selectedBasket["items"])
+					if len(existingItems) > 0 {
+						mergedItems = make([]any, 0, len(existingItems)+1)
+						mergedCurrentLine := false
+						for _, rawValue := range existingItems {
+							line := asMap(rawValue)
+							if line == nil {
+								continue
+							}
+							lineID := strings.TrimSpace(asString(line["id"]))
+							lineCount := asInt(line["count"])
+							if lineCount <= 0 {
+								lineCount = 1
+							}
+							if lineID != "" && strings.EqualFold(lineID, itemID) {
+								mergedItems = append(mergedItems, buildBasketUpsertItem(line, lineCount+count))
+								mergedCurrentLine = true
+								continue
+							}
+							mergedItems = append(mergedItems, buildBasketUpsertItem(line, lineCount))
+						}
+						if !mergedCurrentLine {
+							mergedItems = append(mergedItems, newLineItem)
+						}
+					}
+				}
+			} else {
+				warnings = append(warnings, "unable to load existing basket snapshot before add; upstream may replace existing lines")
+			}
 
 			addPayload := map[string]any{
-				"items": []any{
-					map[string]any{
-						"id":      itemID,
-						"count":   count,
-						"name":    name,
-						"price":   price,
-						"options": options,
-						"substitution_settings": map[string]any{
-							"is_allowed": allowSubstitutions,
-						},
-					},
-				},
-				"venue_id": venueID,
+				"items":   mergedItems,
+				"venue_id": venueMutationID,
 				"currency": currency,
 			}
 			resultPayload, authWarnings, err := invokeWithAuthAutoRefresh(
@@ -322,6 +380,7 @@ func newCartAddCommand(deps Dependencies) *cobra.Command {
 				return writeTable(cmd, buildCartMutationTable(data), flags.Output)
 			}
 			warnings = append(warnings, authWarnings...)
+			warnings = dedupeStrings(warnings)
 			env := output.BuildEnvelope(profile, flags.Locale, data, warnings, nil)
 			return writeMachinePayload(cmd, env, format, flags.Output)
 		},
@@ -772,6 +831,12 @@ func selectBasketWithMeta(page map[string]any, venueID string) (map[string]any, 
 			meta["selected"] = buildBasketSelectionDetails(basket)
 			return basket, meta, warnings
 		}
+		venueSlug := strings.TrimSpace(asString(coalesceAny(venue["slug"], venue["venue_slug"], venue["public_slug"], venue["url_slug"])))
+		if venueSlug != "" && strings.EqualFold(venueSlug, requestedVenueID) {
+			meta["selection_mode"] = "requested-venue-slug"
+			meta["selected"] = buildBasketSelectionDetails(basket)
+			return basket, meta, warnings
+		}
 	}
 	meta["selection_mode"] = "not-found"
 	return nil, meta, warnings
@@ -1027,6 +1092,15 @@ func findBasketLineByID(basket map[string]any, itemID string) (map[string]any, i
 }
 
 func buildBasketMutationItem(line map[string]any, count int) map[string]any {
+	item := buildBasketUpsertItem(line, count)
+	item["price"] = asInt(item["price"]) * count
+	return item
+}
+
+func buildBasketUpsertItem(line map[string]any, count int) map[string]any {
+	if count <= 0 {
+		count = 1
+	}
 	price := asInt(line["price"])
 	lineOptions := make([]any, 0, len(asSlice(line["options"])))
 	for _, optionValue := range asSlice(line["options"]) {
@@ -1059,7 +1133,7 @@ func buildBasketMutationItem(line map[string]any, count int) map[string]any {
 		"id":      asString(line["id"]),
 		"count":   count,
 		"name":    asString(line["name"]),
-		"price":   price * count,
+		"price":   price,
 		"options": lineOptions,
 		"substitution_settings": map[string]any{
 			"is_allowed": asBool(asMap(line["substitution_settings"])["is_allowed"]),

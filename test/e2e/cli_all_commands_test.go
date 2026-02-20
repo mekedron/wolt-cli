@@ -145,6 +145,45 @@ func TestDiscoverFeedWoltPlusFilterJSON(t *testing.T) {
 	}
 }
 
+func TestDiscoverFeedTableIncludesSlug(t *testing.T) {
+	venue := buildVenue("venue-1", "plus-venue", "Plus Street")
+	sections := []domain.Section{
+		{
+			Name:  "popular",
+			Title: "Popular",
+			Items: []domain.Item{
+				{Title: "Plus Venue", TrackID: "1", Link: domain.Link{Target: "venue-1"}, Venue: venue},
+			},
+		},
+	}
+
+	deps := cli.Dependencies{
+		Wolt: &mockWolt{
+			frontPageFunc: func(context.Context, domain.Location) (map[string]any, error) {
+				return map[string]any{"city_data": map[string]any{"name": "Krakow"}}, nil
+			},
+			sectionsFunc: func(context.Context, domain.Location) ([]domain.Section, error) {
+				return sections, nil
+			},
+		},
+		Profiles: &mockProfiles{profile: domain.Profile{Name: "default", IsDefault: true, Location: domain.Location{Lat: 0, Lon: 0}}},
+		Location: &mockLocation{},
+		Config:   &mockConfig{},
+		Version:  "1.1.1",
+	}
+
+	exitCode, out := runCLIWithDeps(t, deps, "discover", "feed")
+	if exitCode != 0 {
+		t.Fatalf("expected exit 0, got %d\noutput:\n%s", exitCode, out)
+	}
+	if !strings.Contains(out, "Slug") {
+		t.Fatalf("expected table to include Slug column, got:\n%s", out)
+	}
+	if !strings.Contains(out, "plus-venue") {
+		t.Fatalf("expected table to include venue slug value, got:\n%s", out)
+	}
+}
+
 func TestSearchVenuesWithoutQueryListsRestaurants(t *testing.T) {
 	items := []domain.Item{
 		{Title: "Burger Place", TrackID: "1", Link: domain.Link{Target: "venue-1"}, Venue: buildVenue("venue-1", "burger-place", "Burger Street")},
@@ -185,6 +224,34 @@ func TestSearchVenuesWithoutQueryListsRestaurants(t *testing.T) {
 	promotions := asSlicePayload(t, first["promotions"])
 	if len(promotions) != 1 || promotions[0] != "Free delivery" {
 		t.Fatalf("expected promotions [Free delivery], got %v", promotions)
+	}
+}
+
+func TestSearchVenuesTableIncludesSlug(t *testing.T) {
+	items := []domain.Item{
+		{Title: "Groceries One", TrackID: "1", Link: domain.Link{Target: "venue-1"}, Venue: buildVenue("venue-1", "groceries-one", "Grocery Street")},
+	}
+	deps := cli.Dependencies{
+		Wolt: &mockWolt{
+			itemsFunc: func(context.Context, domain.Location) ([]domain.Item, error) {
+				return items, nil
+			},
+		},
+		Profiles: &mockProfiles{profile: domain.Profile{Name: "default", IsDefault: true, Location: domain.Location{Lat: 0, Lon: 0}}},
+		Location: &mockLocation{},
+		Config:   &mockConfig{},
+		Version:  "1.1.1",
+	}
+
+	exitCode, out := runCLIWithDeps(t, deps, "search", "venues", "--open-now", "--query", "groceries")
+	if exitCode != 0 {
+		t.Fatalf("expected exit 0, got %d\noutput:\n%s", exitCode, out)
+	}
+	if !strings.Contains(out, "Slug") {
+		t.Fatalf("expected table to include Slug column, got:\n%s", out)
+	}
+	if !strings.Contains(out, "groceries-one") {
+		t.Fatalf("expected table to include venue slug value, got:\n%s", out)
 	}
 }
 
@@ -256,6 +323,433 @@ func TestVenueMenuJSON(t *testing.T) {
 	}
 	if len(asSlicePayload(t, first["option_group_ids"])) != 1 {
 		t.Fatalf("expected option_group_ids to be present")
+	}
+}
+
+func TestVenueCategoriesJSON(t *testing.T) {
+	staticPayload := map[string]any{
+		"venue": map[string]any{
+			"id": "venue-1",
+		},
+	}
+	assortmentPayload := map[string]any{
+		"loading_strategy": "partial",
+		"categories": []any{
+			map[string]any{
+				"id":       "cat-main",
+				"name":     "Main",
+				"slug":     "main",
+				"item_ids": []any{},
+				"subcategories": []any{
+					map[string]any{
+						"id":       "cat-main-burger",
+						"name":     "Burgers",
+						"slug":     "burgers",
+						"item_ids": []any{"item-1", "item-2"},
+					},
+				},
+			},
+		},
+	}
+
+	deps := cli.Dependencies{
+		Wolt: &mockWolt{
+			venuePageStaticFunc: func(context.Context, string) (map[string]any, error) {
+				return staticPayload, nil
+			},
+			assortmentBySlugFunc: func(context.Context, string) (map[string]any, error) {
+				return assortmentPayload, nil
+			},
+		},
+		Profiles: &mockProfiles{profile: domain.Profile{Name: "default", IsDefault: true, Location: domain.Location{Lat: 0, Lon: 0}}},
+		Location: &mockLocation{},
+		Config:   &mockConfig{},
+		Version:  "1.1.1",
+	}
+
+	exitCode, out := runCLIWithDeps(t, deps, "venue", "categories", "wolt-market-niittari", "--format", "json")
+	if exitCode != 0 {
+		t.Fatalf("expected exit 0, got %d\noutput:\n%s", exitCode, out)
+	}
+	payload := mustJSON(t, out)
+	data := asMapPayload(t, payload["data"])
+	if data["venue_id"] != "venue-1" {
+		t.Fatalf("expected venue_id venue-1, got %v", data["venue_id"])
+	}
+	if data["loading_strategy"] != "partial" {
+		t.Fatalf("expected loading_strategy partial, got %v", data["loading_strategy"])
+	}
+	categories := asSlicePayload(t, data["categories"])
+	if len(categories) != 2 {
+		t.Fatalf("expected 2 categories, got %d", len(categories))
+	}
+	first := asMapPayload(t, categories[0])
+	second := asMapPayload(t, categories[1])
+	if first["slug"] != "main" || second["slug"] != "burgers" {
+		t.Fatalf("expected category slugs [main, burgers], got [%v, %v]", first["slug"], second["slug"])
+	}
+}
+
+func TestVenueMenuPartialRequiresCategoryOrSearch(t *testing.T) {
+	categoryCalls := 0
+	venueContentCalls := 0
+	staticPayload := map[string]any{
+		"venue": map[string]any{
+			"id": "venue-1",
+		},
+	}
+	assortmentPayload := map[string]any{
+		"loading_strategy": "partial",
+		"categories": []any{
+			map[string]any{
+				"id":       "cat-main",
+				"name":     "Main",
+				"slug":     "main",
+				"item_ids": []any{},
+			},
+		},
+	}
+
+	deps := cli.Dependencies{
+		Wolt: &mockWolt{
+			venuePageStaticFunc: func(context.Context, string) (map[string]any, error) {
+				return staticPayload, nil
+			},
+			assortmentBySlugFunc: func(context.Context, string) (map[string]any, error) {
+				return assortmentPayload, nil
+			},
+			assortmentCategoryFn: func(context.Context, string, string, string, woltgateway.AuthContext) (map[string]any, error) {
+				categoryCalls++
+				return map[string]any{}, nil
+			},
+			venueContentBySlugFn: func(context.Context, string, string, woltgateway.AuthContext) (map[string]any, error) {
+				venueContentCalls++
+				return map[string]any{}, nil
+			},
+		},
+		Profiles: &mockProfiles{profile: domain.Profile{Name: "default", IsDefault: true, Location: domain.Location{Lat: 0, Lon: 0}}},
+		Location: &mockLocation{},
+		Config:   &mockConfig{},
+		Version:  "1.1.1",
+	}
+
+	exitCode, out := runCLIWithDeps(t, deps, "venue", "menu", "wolt-market-niittari", "--format", "json")
+	if exitCode != 1 {
+		t.Fatalf("expected exit 1, got %d\noutput:\n%s", exitCode, out)
+	}
+	if categoryCalls != 0 {
+		t.Fatalf("expected no category endpoint calls without --category, got %d", categoryCalls)
+	}
+	if venueContentCalls != 0 {
+		t.Fatalf("expected no venue-content calls without --category, got %d", venueContentCalls)
+	}
+	payload := mustJSON(t, out)
+	errorPayload := asMapPayload(t, payload["error"])
+	if errorPayload["code"] != "WOLT_INVALID_ARGUMENT" {
+		t.Fatalf("expected WOLT_INVALID_ARGUMENT, got %v", errorPayload["code"])
+	}
+	message, _ := errorPayload["message"].(string)
+	if !strings.Contains(message, "wolt venue categories wolt-market-niittari") {
+		t.Fatalf("expected category guidance in error message, got %q", message)
+	}
+	if !strings.Contains(message, "wolt venue search wolt-market-niittari --query <text>") {
+		t.Fatalf("expected venue search guidance in error message, got %q", message)
+	}
+}
+
+func TestVenueSearchScopedByVenue(t *testing.T) {
+	searchCalls := 0
+	searchQuery := ""
+	searchLanguage := ""
+	searchSlug := ""
+
+	staticPayload := map[string]any{
+		"venue": map[string]any{
+			"id": "venue-1",
+		},
+	}
+	searchPayload := map[string]any{
+		"categories": []any{
+			map[string]any{"id": "dairy", "name": "Dairy", "item_ids": []any{"item-1"}},
+			map[string]any{"id": "bakery", "name": "Bakery", "item_ids": []any{"item-2"}},
+		},
+		"items": []any{
+			map[string]any{
+				"id":               "item-1",
+				"name":             "Milk 1L",
+				"price":            map[string]any{"amount": 199, "currency": "EUR"},
+				"category_name":    "Dairy",
+				"is_sold_out":      false,
+				"promotions":       []any{"10% off"},
+				"option_group_ids": []any{"opt-1"},
+			},
+			map[string]any{
+				"id":            "item-2",
+				"name":          "Bread",
+				"price":         map[string]any{"amount": 249, "currency": "EUR"},
+				"category_name": "Bakery",
+				"is_sold_out":   true,
+			},
+		},
+	}
+
+	deps := cli.Dependencies{
+		Wolt: &mockWolt{
+			venuePageStaticFunc: func(context.Context, string) (map[string]any, error) {
+				return staticPayload, nil
+			},
+			assortmentItemsSearchFn: func(
+				_ context.Context,
+				slug string,
+				query string,
+				language string,
+				_ woltgateway.AuthContext,
+			) (map[string]any, error) {
+				searchCalls++
+				searchSlug = slug
+				searchQuery = query
+				searchLanguage = language
+				return searchPayload, nil
+			},
+		},
+		Profiles: &mockProfiles{profile: domain.Profile{Name: "default", IsDefault: true, Location: domain.Location{Lat: 0, Lon: 0}}},
+		Location: &mockLocation{},
+		Config:   &mockConfig{},
+		Version:  "1.1.1",
+	}
+
+	exitCode, out := runCLIWithDeps(
+		t,
+		deps,
+		"venue",
+		"search",
+		"wolt-market-niittari",
+		"--query",
+		"milk",
+		"--category",
+		"dairy",
+		"--include-options",
+		"--format",
+		"json",
+	)
+	if exitCode != 0 {
+		t.Fatalf("expected exit 0, got %d\noutput:\n%s", exitCode, out)
+	}
+	if searchCalls != 1 {
+		t.Fatalf("expected one venue search call, got %d", searchCalls)
+	}
+	if searchSlug != "wolt-market-niittari" {
+		t.Fatalf("unexpected venue slug %q", searchSlug)
+	}
+	if searchQuery != "milk" {
+		t.Fatalf("unexpected search query %q", searchQuery)
+	}
+	if searchLanguage != "en" {
+		t.Fatalf("expected language en, got %q", searchLanguage)
+	}
+
+	payload := mustJSON(t, out)
+	data := asMapPayload(t, payload["data"])
+	if data["venue_id"] != "venue-1" {
+		t.Fatalf("expected venue id venue-1, got %v", data["venue_id"])
+	}
+	if data["query"] != "milk" {
+		t.Fatalf("expected query milk, got %v", data["query"])
+	}
+	if data["total"] != float64(1) {
+		t.Fatalf("expected total 1, got %v", data["total"])
+	}
+	items := asSlicePayload(t, data["items"])
+	if len(items) != 1 {
+		t.Fatalf("expected 1 filtered item, got %d", len(items))
+	}
+	first := asMapPayload(t, items[0])
+	if first["item_id"] != "item-1" {
+		t.Fatalf("expected item-1, got %v", first["item_id"])
+	}
+	if first["category"] != "Dairy" {
+		t.Fatalf("expected Dairy category, got %v", first["category"])
+	}
+	basePrice := asMapPayload(t, first["base_price"])
+	if basePrice["amount"] != float64(199) {
+		t.Fatalf("expected amount 199, got %v", basePrice["amount"])
+	}
+	if basePrice["currency"] != "EUR" {
+		t.Fatalf("expected currency EUR, got %v", basePrice["currency"])
+	}
+	formattedAmount, _ := basePrice["formatted_amount"].(string)
+	if !strings.Contains(formattedAmount, "1.99") {
+		t.Fatalf("expected formatted amount containing 1.99, got %v", basePrice["formatted_amount"])
+	}
+	if len(asSlicePayload(t, first["discounts"])) == 0 {
+		t.Fatalf("expected discounts payload for item, got %v", first["discounts"])
+	}
+	if len(asSlicePayload(t, first["option_group_ids"])) != 1 {
+		t.Fatalf("expected option group ids in output, got %v", first["option_group_ids"])
+	}
+}
+
+func TestVenueSearchFillsCurrencyAndDerivedDiscount(t *testing.T) {
+	staticPayload := map[string]any{
+		"venue": map[string]any{
+			"id":       "venue-1",
+			"currency": "EUR",
+		},
+	}
+	searchPayload := map[string]any{
+		"items": []any{
+			map[string]any{
+				"id":             "3812374682d6e1eb42b3fd3e",
+				"name":           "Coca-Cola Zero 6-pack",
+				"price":          419,
+				"original_price": 529,
+			},
+		},
+	}
+
+	deps := cli.Dependencies{
+		Wolt: &mockWolt{
+			venuePageStaticFunc: func(context.Context, string) (map[string]any, error) {
+				return staticPayload, nil
+			},
+			assortmentItemsSearchFn: func(
+				context.Context,
+				string,
+				string,
+				string,
+				woltgateway.AuthContext,
+			) (map[string]any, error) {
+				return searchPayload, nil
+			},
+		},
+		Profiles: &mockProfiles{profile: domain.Profile{Name: "default", IsDefault: true, Location: domain.Location{Lat: 0, Lon: 0}}},
+		Location: &mockLocation{},
+		Config:   &mockConfig{},
+		Version:  "1.1.1",
+	}
+
+	exitCode, out := runCLIWithDeps(
+		t,
+		deps,
+		"venue",
+		"search",
+		"wolt-market-niittari",
+		"--query",
+		"Coca-Cola Zero 0,33 6-pack",
+		"--format",
+		"json",
+	)
+	if exitCode != 0 {
+		t.Fatalf("expected exit 0, got %d\noutput:\n%s", exitCode, out)
+	}
+	payload := mustJSON(t, out)
+	data := asMapPayload(t, payload["data"])
+	items := asSlicePayload(t, data["items"])
+	if len(items) != 1 {
+		t.Fatalf("expected one item, got %d", len(items))
+	}
+	first := asMapPayload(t, items[0])
+	basePrice := asMapPayload(t, first["base_price"])
+	if basePrice["currency"] != "EUR" {
+		t.Fatalf("expected fallback currency EUR, got %v", basePrice["currency"])
+	}
+	baseFormatted, _ := basePrice["formatted_amount"].(string)
+	if !strings.Contains(baseFormatted, "4.19") {
+		t.Fatalf("expected base formatted amount to contain 4.19, got %v", basePrice["formatted_amount"])
+	}
+	originalPrice := asMapPayload(t, first["original_price"])
+	if originalPrice["currency"] != "EUR" {
+		t.Fatalf("expected original price currency EUR, got %v", originalPrice["currency"])
+	}
+	originalFormatted, _ := originalPrice["formatted_amount"].(string)
+	if !strings.Contains(originalFormatted, "5.29") {
+		t.Fatalf("expected original formatted amount to contain 5.29, got %v", originalPrice["formatted_amount"])
+	}
+	discounts := asSlicePayload(t, first["discounts"])
+	if len(discounts) == 0 || !strings.Contains(strings.ToLower(asStringPayload(discounts[0])), "off") {
+		t.Fatalf("expected derived discount label, got %v", discounts)
+	}
+}
+
+func TestVenueMenuCategoryLoadsSelectedCategory(t *testing.T) {
+	categoryCalls := []string{}
+	staticPayload := map[string]any{
+		"venue": map[string]any{
+			"id": "venue-1",
+		},
+	}
+	assortmentPayload := map[string]any{
+		"loading_strategy": "partial",
+		"categories": []any{
+			map[string]any{
+				"id":       "cat-bakery",
+				"name":     "Bakery",
+				"slug":     "bakery",
+				"item_ids": []any{},
+			},
+		},
+	}
+	categoryPayload := map[string]any{
+		"category": map[string]any{
+			"id":   "cat-bakery",
+			"name": "Bakery",
+			"slug": "bakery",
+		},
+		"categories": []any{
+			map[string]any{
+				"id":       "cat-bakery",
+				"item_ids": []any{"item-1"},
+			},
+		},
+	}
+	itemsPayload := map[string]any{
+		"items": []any{
+			map[string]any{
+				"id":    "item-1",
+				"name":  "Sourdough Bread",
+				"price": 399,
+			},
+		},
+	}
+
+	deps := cli.Dependencies{
+		Wolt: &mockWolt{
+			venuePageStaticFunc: func(context.Context, string) (map[string]any, error) {
+				return staticPayload, nil
+			},
+			assortmentBySlugFunc: func(context.Context, string) (map[string]any, error) {
+				return assortmentPayload, nil
+			},
+			assortmentCategoryFn: func(_ context.Context, _ string, categorySlug string, _ string, _ woltgateway.AuthContext) (map[string]any, error) {
+				categoryCalls = append(categoryCalls, categorySlug)
+				return categoryPayload, nil
+			},
+			assortmentItemsFn: func(context.Context, string, []string, woltgateway.AuthContext) (map[string]any, error) {
+				return itemsPayload, nil
+			},
+		},
+		Profiles: &mockProfiles{profile: domain.Profile{Name: "default", IsDefault: true, Location: domain.Location{Lat: 0, Lon: 0}}},
+		Location: &mockLocation{},
+		Config:   &mockConfig{},
+		Version:  "1.1.1",
+	}
+
+	exitCode, out := runCLIWithDeps(t, deps, "venue", "menu", "wolt-market-niittari", "--category", "bakery", "--format", "json")
+	if exitCode != 0 {
+		t.Fatalf("expected exit 0, got %d\noutput:\n%s", exitCode, out)
+	}
+	if len(categoryCalls) != 1 || categoryCalls[0] != "bakery" {
+		t.Fatalf("expected one category call with bakery, got %v", categoryCalls)
+	}
+	payload := mustJSON(t, out)
+	data := asMapPayload(t, payload["data"])
+	items := asSlicePayload(t, data["items"])
+	if len(items) != 1 {
+		t.Fatalf("expected one category item, got %d", len(items))
+	}
+	first := asMapPayload(t, items[0])
+	if first["item_id"] != "item-1" {
+		t.Fatalf("expected item_id item-1, got %v", first["item_id"])
 	}
 }
 

@@ -12,6 +12,7 @@ func BuildVenueMenu(venueID string, payloads []map[string]any, category string, 
 	warnings := []string{}
 	menuItems := []map[string]any{}
 	isWoltPlus := false
+	fallbackCurrency := resolvePayloadCurrency(payloads)
 
 	for _, payload := range payloads {
 		menuItems = append(menuItems, ExtractMenuItems(payload, venueID, "")...)
@@ -19,6 +20,7 @@ func BuildVenueMenu(venueID string, payloads []map[string]any, category string, 
 			isWoltPlus = true
 		}
 	}
+	menuItems = dedupeMenuItemsByID(menuItems)
 
 	if strings.TrimSpace(category) != "" {
 		loweredCategory := strings.ToLower(strings.TrimSpace(category))
@@ -40,10 +42,11 @@ func BuildVenueMenu(venueID string, payloads []map[string]any, category string, 
 	rows := make([]map[string]any, 0, len(menuItems))
 	for _, item := range menuItems {
 		categorySet[stringFromAny(item["category"])] = struct{}{}
+		basePrice := normalizeBasePrice(toMap(item["base_price"]), fallbackCurrency)
 		row := map[string]any{
 			"item_id":    item["item_id"],
 			"name":       item["name"],
-			"base_price": item["base_price"],
+			"base_price": basePrice,
 			"discounts":  item["discounts"],
 		}
 		if includeOptions {
@@ -64,6 +67,73 @@ func BuildVenueMenu(venueID string, payloads []map[string]any, category string, 
 		"categories": categories,
 		"items":      rows,
 	}, warnings
+}
+
+func dedupeMenuItemsByID(items []map[string]any) []map[string]any {
+	seen := map[string]struct{}{}
+	out := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		itemID := strings.TrimSpace(stringFromAny(item["item_id"]))
+		if itemID == "" {
+			continue
+		}
+		if _, ok := seen[itemID]; ok {
+			continue
+		}
+		seen[itemID] = struct{}{}
+		out = append(out, item)
+	}
+	return out
+}
+
+func resolvePayloadCurrency(payloads []map[string]any) string {
+	for _, payload := range payloads {
+		candidates := []any{
+			payload["currency"],
+			payload["currency_code"],
+			toMap(payload["venue"])["currency"],
+			toMap(toMap(payload["venue"])["price"])["currency"],
+			toMap(payload["venue_raw"])["currency"],
+			toMap(toMap(payload["venue_raw"])["price"])["currency"],
+		}
+		for _, candidate := range candidates {
+			currency := strings.TrimSpace(stringFromAny(candidate))
+			if currency == "" {
+				continue
+			}
+			return currency
+		}
+	}
+	return ""
+}
+
+func normalizeBasePrice(basePrice map[string]any, fallbackCurrency string) map[string]any {
+	if basePrice == nil {
+		basePrice = map[string]any{}
+	}
+	normalized := map[string]any{}
+	for key, value := range basePrice {
+		normalized[key] = value
+	}
+
+	currency := strings.TrimSpace(stringFromAny(normalized["currency"]))
+	if currency == "" {
+		currency = strings.TrimSpace(fallbackCurrency)
+	}
+	if currency != "" {
+		normalized["currency"] = currency
+	}
+
+	hasFormattedAmount := strings.TrimSpace(stringFromAny(normalized["formatted_amount"])) != ""
+	if !hasFormattedAmount && currency != "" {
+		if _, exists := normalized["amount"]; exists {
+			amount := intValue(normalized["amount"])
+			if formatted := formatAmount(&amount, currency); formatted != nil {
+				normalized["formatted_amount"] = *formatted
+			}
+		}
+	}
+	return normalized
 }
 
 func payloadVenueWoltPlus(payload map[string]any) bool {
@@ -128,6 +198,7 @@ func BuildItemSearchResult(
 	menuItems := []map[string]any{}
 	loweredQuery := strings.ToLower(strings.TrimSpace(query))
 	loweredCategory := strings.ToLower(strings.TrimSpace(category))
+	fallbackCurrency := resolvePayloadCurrency(payloads)
 
 	for _, payload := range payloads {
 		menuItems = append(menuItems, ExtractMenuItems(payload, "", "")...)
@@ -201,7 +272,7 @@ func BuildItemSearchResult(
 
 	rows := make([]map[string]any, 0, len(menuItems))
 	for _, item := range menuItems {
-		basePrice := toMap(item["base_price"])
+		basePrice := normalizeBasePrice(toMap(item["base_price"]), fallbackCurrency)
 		rows = append(rows, map[string]any{
 			"item_id":     item["item_id"],
 			"venue_id":    coalesce(item["venue_id"], ""),
@@ -224,6 +295,7 @@ func BuildItemSearchResult(
 func BuildItemDetail(itemID string, venueID string, payload map[string]any, includeUpsell bool) (map[string]any, []string) {
 	warnings := []string{}
 	menuItems := ExtractMenuItems(payload, venueID, "")
+	fallbackCurrency := resolvePayloadCurrency([]map[string]any{payload})
 
 	var sourceItem map[string]any
 	for _, item := range menuItems {
@@ -249,14 +321,18 @@ func BuildItemDetail(itemID string, venueID string, payload map[string]any, incl
 	upsellItems := []map[string]any{}
 	if includeUpsell {
 		upsellItems = extractUpsellItems(payload)
+		for _, upsell := range upsellItems {
+			upsell["price"] = normalizeBasePrice(toMap(upsell["price"]), fallbackCurrency)
+		}
 	}
+	price := normalizeBasePrice(toMap(sourceItem["base_price"]), fallbackCurrency)
 
 	data := map[string]any{
 		"item_id":       itemID,
 		"venue_id":      venueID,
 		"name":          sourceItem["name"],
 		"description":   coalesce(sourceItem["description"], ""),
-		"price":         sourceItem["base_price"],
+		"price":         price,
 		"option_groups": extractOptionGroups(payload),
 		"upsell_items":  upsellItems,
 	}

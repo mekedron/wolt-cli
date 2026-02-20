@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mekedron/wolt-cli/internal/domain"
@@ -22,6 +23,7 @@ const (
 	defaultSearchAPIURL         = "https://restaurant-api.wolt.com/v1/pages/search"
 	defaultVenuePageAPIURL      = "https://restaurant-api.wolt.com/order-xp/web/v1/pages/venue/slug/"
 	defaultAssortmentAPIURL     = "https://consumer-api.wolt.com/consumer-api/consumer-assortment/v1/venues/slug/"
+	defaultVenueContentAPIURL   = "https://consumer-api.wolt.com/consumer-api/venue-content-api/v3/web/venue-content/slug/"
 	defaultVenueItemAPIURL      = "https://restaurant-api.wolt.com/order-xp/web/v1/pages/venue/"
 	defaultRestaurantAPIURL     = "https://restaurant-api.wolt.com/v3/venues/"
 	defaultUserMeAPIURL         = "https://restaurant-api.wolt.com/v1/user/me"
@@ -85,6 +87,7 @@ type Endpoints struct {
 	SearchPage       string
 	VenuePage        string
 	Assortment       string
+	VenueContent     string
 	VenueItem        string
 	Restaurant       string
 	UserMe           string
@@ -105,10 +108,12 @@ type Endpoints struct {
 
 // Client queries Wolt public endpoints.
 type Client struct {
-	httpClient  HTTPClient
-	endpoints   Endpoints
-	locale      string
-	webClientID string
+	httpClient     HTTPClient
+	endpoints      Endpoints
+	locale         string
+	webClientID    string
+	verboseOutput  io.Writer
+	verboseOutputM sync.RWMutex
 }
 
 // Option applies Client options.
@@ -135,6 +140,13 @@ func WithLocale(locale string) Option {
 	}
 }
 
+// WithVerboseOutput enables per-request trace output for upstream HTTP calls.
+func WithVerboseOutput(out io.Writer) Option {
+	return func(c *Client) {
+		c.SetVerboseOutput(out)
+	}
+}
+
 // NewClient creates a production Wolt gateway client.
 func NewClient(opts ...Option) *Client {
 	c := &Client{
@@ -144,6 +156,7 @@ func NewClient(opts ...Option) *Client {
 			SearchPage:       defaultSearchAPIURL,
 			VenuePage:        defaultVenuePageAPIURL,
 			Assortment:       defaultAssortmentAPIURL,
+			VenueContent:     defaultVenueContentAPIURL,
 			VenueItem:        defaultVenueItemAPIURL,
 			Restaurant:       defaultRestaurantAPIURL,
 			UserMe:           defaultUserMeAPIURL,
@@ -168,6 +181,13 @@ func NewClient(opts ...Option) *Client {
 		opt(c)
 	}
 	return c
+}
+
+// SetVerboseOutput sets destination for verbose HTTP request trace lines.
+func (c *Client) SetVerboseOutput(out io.Writer) {
+	c.verboseOutputM.Lock()
+	c.verboseOutput = out
+	c.verboseOutputM.Unlock()
 }
 
 func (c *Client) headers(extra map[string]string, auth *AuthContext) map[string]string {
@@ -212,11 +232,13 @@ func (c *Client) doJSONRequest(ctx context.Context, method, rawURL string, param
 	}
 
 	var bodyReader io.Reader
+	bodyBytes := 0
 	if body != nil {
 		payload, err := json.Marshal(body)
 		if err != nil {
 			return nil, fmt.Errorf("marshal request body: %w", err)
 		}
+		bodyBytes = len(payload)
 		bodyReader = bytes.NewReader(payload)
 	}
 
@@ -228,13 +250,18 @@ func (c *Client) doJSONRequest(ctx context.Context, method, rawURL string, param
 		req.Header.Set(k, v)
 	}
 
+	startedAt := time.Now()
+	c.traceRequestStart(method, rawURL, bodyBytes)
+
 	res, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, &UpstreamRequestError{
+		upstreamErr := &UpstreamRequestError{
 			Method: method,
 			URL:    rawURL,
 			Cause:  err,
 		}
+		c.traceRequestDone(method, rawURL, 0, 0, startedAt, upstreamErr)
+		return nil, upstreamErr
 	}
 	defer func() {
 		_ = res.Body.Close()
@@ -242,37 +269,45 @@ func (c *Client) doJSONRequest(ctx context.Context, method, rawURL string, param
 
 	rawResponse, err := io.ReadAll(res.Body)
 	if err != nil {
-		return nil, &UpstreamRequestError{
+		upstreamErr := &UpstreamRequestError{
 			Method:     method,
 			URL:        rawURL,
 			StatusCode: res.StatusCode,
 			Cause:      fmt.Errorf("read response body: %w", err),
 		}
+		c.traceRequestDone(method, rawURL, res.StatusCode, 0, startedAt, upstreamErr)
+		return nil, upstreamErr
 	}
 
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return nil, &UpstreamRequestError{
+		upstreamErr := &UpstreamRequestError{
 			Method:     method,
 			URL:        rawURL,
 			StatusCode: res.StatusCode,
 			Body:       string(rawResponse),
 		}
+		c.traceRequestDone(method, rawURL, res.StatusCode, len(rawResponse), startedAt, upstreamErr)
+		return nil, upstreamErr
 	}
 	if len(rawResponse) == 0 {
+		c.traceRequestDone(method, rawURL, res.StatusCode, 0, startedAt, nil)
 		return map[string]any{}, nil
 	}
 
 	var payload map[string]any
 	if err := json.Unmarshal(rawResponse, &payload); err != nil {
-		return nil, &UpstreamRequestError{
+		upstreamErr := &UpstreamRequestError{
 			Method:     method,
 			URL:        rawURL,
 			StatusCode: res.StatusCode,
 			Body:       string(rawResponse),
 			Cause:      fmt.Errorf("decode response body: %w", err),
 		}
+		c.traceRequestDone(method, rawURL, res.StatusCode, len(rawResponse), startedAt, upstreamErr)
+		return nil, upstreamErr
 	}
 
+	c.traceRequestDone(method, rawURL, res.StatusCode, len(rawResponse), startedAt, nil)
 	return payload, nil
 }
 
@@ -291,15 +326,59 @@ func (c *Client) doRequest(
 		req.Header.Set(k, v)
 	}
 
+	bodyBytes := 0
+	if sized, ok := body.(interface{ Len() int }); ok {
+		bodyBytes = sized.Len()
+	}
+	startedAt := time.Now()
+	c.traceRequestStart(method, rawURL, bodyBytes)
+
 	res, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, &UpstreamRequestError{
+		upstreamErr := &UpstreamRequestError{
 			Method: method,
 			URL:    rawURL,
 			Cause:  err,
 		}
+		c.traceRequestDone(method, rawURL, 0, 0, startedAt, upstreamErr)
+		return nil, upstreamErr
 	}
+	c.traceRequestDone(method, rawURL, res.StatusCode, 0, startedAt, nil)
 	return res, nil
+}
+
+func (c *Client) traceRequestStart(method, rawURL string, bodyBytes int) {
+	if bodyBytes > 0 {
+		c.tracef("[http] -> %s %s body_bytes=%d", method, rawURL, bodyBytes)
+		return
+	}
+	c.tracef("[http] -> %s %s", method, rawURL)
+}
+
+func (c *Client) traceRequestDone(method, rawURL string, statusCode int, responseBytes int, startedAt time.Time, reqErr error) {
+	duration := time.Since(startedAt).Round(time.Millisecond)
+	if reqErr != nil {
+		c.tracef("[http] <- %s %s error=%v duration=%s", method, rawURL, reqErr, duration)
+		return
+	}
+	c.tracef(
+		"[http] <- %s %s status=%d duration=%s bytes=%d",
+		method,
+		rawURL,
+		statusCode,
+		duration,
+		responseBytes,
+	)
+}
+
+func (c *Client) tracef(format string, args ...any) {
+	c.verboseOutputM.RLock()
+	out := c.verboseOutput
+	c.verboseOutputM.RUnlock()
+	if out == nil {
+		return
+	}
+	_, _ = fmt.Fprintf(out, format+"\n", args...)
 }
 
 func decodeResponsePayload(method string, rawURL string, statusCode int, rawResponse []byte) (map[string]any, error) {
@@ -499,6 +578,90 @@ func (c *Client) VenuePageDynamic(ctx context.Context, slug string) (map[string]
 // AssortmentByVenueSlug returns full assortment payload for one venue slug.
 func (c *Client) AssortmentByVenueSlug(ctx context.Context, slug string) (map[string]any, error) {
 	return c.doJSONRequest(ctx, http.MethodGet, c.endpoints.Assortment+slug+"/assortment", nil, nil, c.headers(nil, nil))
+}
+
+// AssortmentCategoryByVenueSlug returns one category assortment payload by category slug.
+func (c *Client) AssortmentCategoryByVenueSlug(
+	ctx context.Context,
+	slug string,
+	categorySlug string,
+	language string,
+	auth AuthContext,
+) (map[string]any, error) {
+	params := url.Values{}
+	if lang := strings.TrimSpace(language); lang != "" {
+		params.Set("language", lang)
+	} else if lang = strings.TrimSpace(c.locale); lang != "" {
+		params.Set("language", lang)
+	}
+	endpoint := c.endpoints.Assortment + slug + "/assortment/categories/slug/" + url.PathEscape(strings.TrimSpace(categorySlug))
+	return c.doJSONRequest(ctx, http.MethodGet, endpoint, params, nil, c.headers(nil, &auth))
+}
+
+// AssortmentItemsByVenueSlug returns detailed item payload for selected assortment item ids.
+func (c *Client) AssortmentItemsByVenueSlug(
+	ctx context.Context,
+	slug string,
+	itemIDs []string,
+	auth AuthContext,
+) (map[string]any, error) {
+	ids := make([]string, 0, len(itemIDs))
+	for _, itemID := range itemIDs {
+		trimmedID := strings.TrimSpace(itemID)
+		if trimmedID == "" {
+			continue
+		}
+		ids = append(ids, trimmedID)
+	}
+	body := map[string]any{
+		"item_ids": ids,
+	}
+	endpoint := c.endpoints.Assortment + slug + "/assortment/items"
+	return c.doJSONRequest(
+		ctx,
+		http.MethodPost,
+		endpoint,
+		nil,
+		body,
+		c.headers(map[string]string{"Content-Type": "application/json"}, &auth),
+	)
+}
+
+// AssortmentItemsSearchByVenueSlug searches items inside one venue assortment.
+func (c *Client) AssortmentItemsSearchByVenueSlug(
+	ctx context.Context,
+	slug string,
+	query string,
+	language string,
+	auth AuthContext,
+) (map[string]any, error) {
+	params := url.Values{}
+	if lang := strings.TrimSpace(language); lang != "" {
+		params.Set("language", lang)
+	} else if lang = strings.TrimSpace(c.locale); lang != "" {
+		params.Set("language", lang)
+	}
+	body := map[string]any{
+		"q": strings.TrimSpace(query),
+	}
+	endpoint := c.endpoints.Assortment + slug + "/assortment/items/search"
+	return c.doJSONRequest(
+		ctx,
+		http.MethodPost,
+		endpoint,
+		params,
+		body,
+		c.headers(map[string]string{"Content-Type": "application/json"}, &auth),
+	)
+}
+
+// VenueContentByVenueSlug returns venue-content payload by venue slug.
+func (c *Client) VenueContentByVenueSlug(ctx context.Context, slug string, nextPageToken string, auth AuthContext) (map[string]any, error) {
+	params := url.Values{}
+	if token := strings.TrimSpace(nextPageToken); token != "" {
+		params.Set("next_page_token", token)
+	}
+	return c.doJSONRequest(ctx, http.MethodGet, c.endpoints.VenueContent+slug, params, nil, c.headers(nil, &auth))
 }
 
 // VenueItemPage returns single item payload from a venue.

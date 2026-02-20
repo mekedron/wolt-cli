@@ -65,7 +65,7 @@ func addGlobalFlags(cmd *cobra.Command, flags *globalFlags) {
 		cmd.Flags().StringArrayVar(&flags.Cookies, "cookie", nil, "HTTP cookie header value to forward (repeatable).")
 	})
 	addSharedGlobalFlag(cmd, "verbose", func() {
-		cmd.Flags().BoolVar(&flags.Verbose, "verbose", false, "Enable verbose output (for example detailed upstream error diagnostics).")
+		cmd.Flags().BoolVar(&flags.Verbose, "verbose", false, "Enable verbose output (prints upstream request trace and detailed error diagnostics).")
 	})
 }
 

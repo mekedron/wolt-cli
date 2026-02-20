@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -56,6 +57,38 @@ func TestRenderRootHelpIncludesGlobalSection(t *testing.T) {
 	}
 	if !strings.Contains(out, "--wtoken") {
 		t.Fatalf("expected wtoken in help output:\n%s", out)
+	}
+}
+
+type testVerboseTraceSetter struct {
+	output io.Writer
+}
+
+func (s *testVerboseTraceSetter) SetVerboseOutput(out io.Writer) {
+	s.output = out
+}
+
+func TestAttachVerboseHTTPTrace(t *testing.T) {
+	cmd := &cobra.Command{}
+	stderr := &bytes.Buffer{}
+	cmd.SetErr(stderr)
+	cmd.Flags().Bool("verbose", false, "test verbose")
+
+	setter := &testVerboseTraceSetter{}
+	attachVerboseHTTPTrace(cmd, setter)
+	if setter.output != nil {
+		t.Fatal("expected verbose trace sink to stay disabled when --verbose is false")
+	}
+
+	if err := cmd.Flags().Set("verbose", "true"); err != nil {
+		t.Fatalf("set verbose flag: %v", err)
+	}
+	attachVerboseHTTPTrace(cmd, setter)
+	if setter.output == nil {
+		t.Fatal("expected verbose trace sink to be enabled")
+	}
+	if !strings.Contains(stderr.String(), "http trace enabled") {
+		t.Fatalf("expected trace activation message, got %q", stderr.String())
 	}
 }
 

@@ -43,6 +43,22 @@ func (m *testWoltAPI) AssortmentByVenueSlug(context.Context, string) (map[string
 	return map[string]any{}, nil
 }
 
+func (m *testWoltAPI) AssortmentCategoryByVenueSlug(context.Context, string, string, string, woltgateway.AuthContext) (map[string]any, error) {
+	return map[string]any{}, nil
+}
+
+func (m *testWoltAPI) AssortmentItemsByVenueSlug(context.Context, string, []string, woltgateway.AuthContext) (map[string]any, error) {
+	return map[string]any{}, nil
+}
+
+func (m *testWoltAPI) AssortmentItemsSearchByVenueSlug(context.Context, string, string, string, woltgateway.AuthContext) (map[string]any, error) {
+	return map[string]any{}, nil
+}
+
+func (m *testWoltAPI) VenueContentByVenueSlug(context.Context, string, string, woltgateway.AuthContext) (map[string]any, error) {
+	return map[string]any{}, nil
+}
+
 func (m *testWoltAPI) VenueItemPage(context.Context, string, string) (map[string]any, error) {
 	return map[string]any{}, nil
 }

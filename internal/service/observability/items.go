@@ -95,7 +95,7 @@ func extractCurrency(node map[string]any) string {
 			return strings.TrimSpace(value)
 		}
 	}
-	for _, key := range []string{"price", "basePrice"} {
+	for _, key := range []string{"price", "basePrice", "base_price", "original_price", "unit_price"} {
 		if nestedMap := toMap(node[key]); nestedMap != nil {
 			if nested := extractCurrency(nestedMap); nested != "" {
 				return nested
@@ -103,6 +103,57 @@ func extractCurrency(node map[string]any) string {
 		}
 	}
 	return ""
+}
+
+func extractOriginalAmount(node map[string]any) *int {
+	for _, key := range []string{"original_price", "originalPrice", "list_price", "regular_price"} {
+		if value, ok := node[key]; ok {
+			if amount := extractAmountValue(value); amount != nil {
+				return amount
+			}
+		}
+	}
+	for _, key := range []string{"price", "basePrice", "base_price"} {
+		if nestedMap := toMap(node[key]); nestedMap != nil {
+			if amount := extractOriginalAmount(nestedMap); amount != nil {
+				return amount
+			}
+		}
+	}
+	return nil
+}
+
+func extractAmountValue(value any) *int {
+	switch typed := value.(type) {
+	case int:
+		amount := typed
+		return &amount
+	case float64:
+		amount := int(typed)
+		return &amount
+	case map[string]any:
+		return extractAmount(typed)
+	default:
+		return nil
+	}
+}
+
+func buildDerivedPriceDiscountLabel(originalAmount int, currentAmount int, currency string) string {
+	if originalAmount <= 0 || currentAmount < 0 || originalAmount <= currentAmount {
+		return ""
+	}
+	discountAmount := originalAmount - currentAmount
+	discountPercent := int((float64(discountAmount)/float64(originalAmount))*100 + 0.5)
+	if formattedOriginal := formatAmount(&originalAmount, currency); formattedOriginal != nil {
+		if discountPercent > 0 {
+			return fmt.Sprintf("%d%% off (was %s)", discountPercent, *formattedOriginal)
+		}
+		return fmt.Sprintf("discounted from %s", *formattedOriginal)
+	}
+	if discountPercent > 0 {
+		return fmt.Sprintf("%d%% off", discountPercent)
+	}
+	return "discounted"
 }
 
 func extractOptionGroupIDs(node map[string]any) []string {
@@ -372,6 +423,7 @@ func ExtractMenuItems(payload map[string]any, venueID string, venueSlug string) 
 
 		amount := extractAmount(obj)
 		currency := extractCurrency(obj)
+		originalAmount := extractOriginalAmount(obj)
 		categoryName := stringFromAny(coalesce(
 			obj["category_name"],
 			obj["category"],
@@ -389,10 +441,34 @@ func ExtractMenuItems(payload map[string]any, venueID string, venueSlug string) 
 		if amount != nil {
 			amountValue = *amount
 		}
+		var originalAmountValue any
+		var originalFormatted any
+		if originalAmount != nil {
+			originalAmountValue = *originalAmount
+			if value := formatAmount(originalAmount, currency); value != nil {
+				originalFormatted = *value
+			}
+		}
 
 		description := ""
 		if value, ok := obj["description"].(string); ok {
 			description = value
+		}
+
+		discounts := extractDiscountLabels(obj)
+		if amount != nil && originalAmount != nil {
+			if derived := strings.TrimSpace(buildDerivedPriceDiscountLabel(*originalAmount, *amount, currency)); derived != "" {
+				exists := false
+				for _, rawLabel := range discounts {
+					if strings.EqualFold(strings.TrimSpace(stringFromAny(rawLabel)), derived) {
+						exists = true
+						break
+					}
+				}
+				if !exists {
+					discounts = append(discounts, derived)
+				}
+			}
 		}
 
 		items = append(items, map[string]any{
@@ -406,10 +482,15 @@ func ExtractMenuItems(payload map[string]any, venueID string, venueSlug string) 
 				"currency":         emptyToNil(currency),
 				"formatted_amount": formatted,
 			},
+			"original_price": map[string]any{
+				"amount":           originalAmountValue,
+				"currency":         emptyToNil(currency),
+				"formatted_amount": originalFormatted,
+			},
 			"option_group_ids": extractOptionGroupIDs(obj),
 			"category":         categoryName,
 			"is_sold_out":      isSoldOut,
-			"discounts":        extractDiscountLabels(obj),
+			"discounts":        discounts,
 		})
 	}
 

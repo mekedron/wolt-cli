@@ -200,7 +200,7 @@ func newSearchItemsCommand(deps Dependencies) *cobra.Command {
 }
 
 func buildVenueSearchTable(data map[string]any) string {
-	headers := []string{"Venue", "Address", "Rating", "Delivery", "Fee", "Price", "Promotions", "Wolt+"}
+	headers := []string{"Venue", "Slug", "Address", "Rating", "Delivery", "Fee", "Price", "Promotions", "Wolt+"}
 	rows := [][]string{}
 	for _, value := range asSlice(data["items"]) {
 		item := asMap(value)
@@ -222,6 +222,7 @@ func buildVenueSearchTable(data map[string]any) string {
 		}
 		rows = append(rows, []string{
 			asString(item["name"]),
+			fallbackString(asString(item["slug"]), "-"),
 			asString(item["address"]),
 			rating,
 			asString(item["delivery_estimate"]),

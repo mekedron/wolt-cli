@@ -1,6 +1,7 @@
 package observability_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/mekedron/wolt-cli/internal/domain"
@@ -104,6 +105,52 @@ func TestBuildItemSearchResultFallback(t *testing.T) {
 	}
 }
 
+func TestBuildItemSearchResultNormalizesBasePrice(t *testing.T) {
+	payloads := []map[string]any{
+		{
+			"venue": map[string]any{
+				"currency": "EUR",
+			},
+			"items": []any{
+				map[string]any{
+					"id":    "item-1",
+					"name":  "Coca-Cola Zero 6-pack",
+					"price": 419,
+				},
+			},
+		},
+	}
+
+	data, warnings := observability.BuildItemSearchResult(
+		"coca",
+		payloads,
+		observability.ItemSortRelevance,
+		"",
+		nil,
+		0,
+		nil,
+	)
+	if len(warnings) != 0 {
+		t.Fatalf("expected no warnings, got %v", warnings)
+	}
+	items := asSlice(t, data["items"])
+	if len(items) != 1 {
+		t.Fatalf("expected one item, got %d", len(items))
+	}
+	first := asMap(t, items[0])
+	basePrice := asMap(t, first["base_price"])
+	if basePrice["currency"] != "EUR" {
+		t.Fatalf("expected base_price currency EUR, got %v", basePrice["currency"])
+	}
+	formattedAmount, _ := basePrice["formatted_amount"].(string)
+	if !strings.Contains(formattedAmount, "4.19") {
+		t.Fatalf("expected formatted amount containing 4.19, got %v", basePrice["formatted_amount"])
+	}
+	if first["currency"] != "EUR" {
+		t.Fatalf("expected top-level currency EUR, got %v", first["currency"])
+	}
+}
+
 func TestBuildVenueDetailIncludesTags(t *testing.T) {
 	item := &domain.Item{
 		Title: "Burger Place",
@@ -142,6 +189,53 @@ func TestBuildItemDetailIncludesUpsell(t *testing.T) {
 	upsell := asSlice(t, data["upsell_items"])
 	if len(upsell) != 1 {
 		t.Fatalf("expected one upsell item, got %d", len(upsell))
+	}
+}
+
+func TestBuildItemDetailNormalizesPricesWithFallbackCurrency(t *testing.T) {
+	payload := map[string]any{
+		"venue": map[string]any{
+			"currency": "EUR",
+		},
+		"items": []any{
+			map[string]any{
+				"id":    "item-1",
+				"name":  "Coca-Cola Zero 6-pack",
+				"price": 419,
+			},
+		},
+		"upsell_items": []any{
+			map[string]any{
+				"item_id": "item-2",
+				"name":    "Nuggets",
+				"price":   745,
+			},
+		},
+	}
+
+	data, warnings := observability.BuildItemDetail("item-1", "venue-1", payload, true)
+	if len(warnings) != 0 {
+		t.Fatalf("expected no warnings, got %v", warnings)
+	}
+	price := asMap(t, data["price"])
+	if price["currency"] != "EUR" {
+		t.Fatalf("expected item price currency EUR, got %v", price["currency"])
+	}
+	formattedPrice, _ := price["formatted_amount"].(string)
+	if !strings.Contains(formattedPrice, "4.19") {
+		t.Fatalf("expected item price containing 4.19, got %v", price["formatted_amount"])
+	}
+	upsell := asSlice(t, data["upsell_items"])
+	if len(upsell) != 1 {
+		t.Fatalf("expected one upsell item, got %d", len(upsell))
+	}
+	upsellPrice := asMap(t, asMap(t, upsell[0])["price"])
+	if upsellPrice["currency"] != "EUR" {
+		t.Fatalf("expected upsell price currency EUR, got %v", upsellPrice["currency"])
+	}
+	upsellFormatted, _ := upsellPrice["formatted_amount"].(string)
+	if !strings.Contains(upsellFormatted, "7.45") {
+		t.Fatalf("expected upsell formatted amount containing 7.45, got %v", upsellPrice["formatted_amount"])
 	}
 }
 
@@ -214,6 +308,41 @@ func TestBuildVenueMenuIncludesDiscounts(t *testing.T) {
 	discounts := asSlice(t, first["discounts"])
 	if len(discounts) != 1 || discounts[0] != "2 for 1" {
 		t.Fatalf("expected discounts [2 for 1], got %v", discounts)
+	}
+}
+
+func TestExtractMenuItemsDerivesDiscountFromOriginalPrice(t *testing.T) {
+	payload := map[string]any{
+		"items": []any{
+			map[string]any{
+				"id":             "item-1",
+				"name":           "Coca-Cola Zero 6-pack",
+				"price":          419,
+				"original_price": 529,
+			},
+		},
+	}
+
+	items := observability.ExtractMenuItems(payload, "venue-1", "venue-slug")
+	if len(items) != 1 {
+		t.Fatalf("expected one item, got %d", len(items))
+	}
+	first := items[0]
+	basePrice := asMap(t, first["base_price"])
+	if intValue(basePrice["amount"]) != 419 {
+		t.Fatalf("expected base price amount 419, got %v", basePrice["amount"])
+	}
+	originalPrice := asMap(t, first["original_price"])
+	if intValue(originalPrice["amount"]) != 529 {
+		t.Fatalf("expected original price amount 529, got %v", originalPrice["amount"])
+	}
+	discounts := asSlice(t, first["discounts"])
+	if len(discounts) == 0 {
+		t.Fatalf("expected derived discount label, got %v", discounts)
+	}
+	label, _ := discounts[0].(string)
+	if !strings.Contains(strings.ToLower(label), "off") {
+		t.Fatalf("expected derived discount label, got %v", discounts)
 	}
 }
 

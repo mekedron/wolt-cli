@@ -450,8 +450,16 @@ func TestCartAddJSON(t *testing.T) {
 		t.Fatalf("expected exit 0, got %d\noutput:\n%s", exitCode, out)
 	}
 	items := asSlicePayload(t, seenAddPayload["items"])
-	if len(items) != 1 {
-		t.Fatalf("expected one added item, got %d", len(items))
+	if len(items) != 2 {
+		t.Fatalf("expected merged payload with existing + new item, got %d", len(items))
+	}
+	first := asMapPayload(t, items[0])
+	if first["id"] != "line-1" || asIntPayload(first["count"]) != 2 {
+		t.Fatalf("expected first payload line to preserve existing line-1 x2, got %+v", first)
+	}
+	second := asMapPayload(t, items[1])
+	if second["id"] != "item-1" || asIntPayload(second["count"]) != 2 {
+		t.Fatalf("expected second payload line item-1 x2, got %+v", second)
 	}
 	payload := mustJSON(t, out)
 	data := asMapPayload(t, payload["data"])
@@ -543,10 +551,10 @@ func TestCartAddUsesVenueSlugAssortmentFallback(t *testing.T) {
 		t.Fatalf("expected exit 0, got %d\noutput:\n%s", exitCode, out)
 	}
 	items := asSlicePayload(t, seenAddPayload["items"])
-	if len(items) != 1 {
-		t.Fatalf("expected one added item, got %d", len(items))
+	if len(items) != 2 {
+		t.Fatalf("expected merged payload with existing + new item, got %d", len(items))
 	}
-	first := asMapPayload(t, items[0])
+	first := asMapPayload(t, items[1])
 	if first["name"] != "Classics set" {
 		t.Fatalf("expected inferred name Classics set, got %v", first["name"])
 	}
@@ -564,6 +572,75 @@ func TestCartAddUsesVenueSlugAssortmentFallback(t *testing.T) {
 	values := asSlicePayload(t, group["values"])
 	if len(values) != 1 || asMapPayload(t, values[0])["id"] != "value-cola" {
 		t.Fatalf("expected resolved option value value-cola, got %v", values)
+	}
+}
+
+func TestCartAddMergesWhenVenueArgIsSlug(t *testing.T) {
+	seenAddPayload := map[string]any{}
+	deps := cli.Dependencies{
+		Wolt: &mockWolt{
+			venueItemPageFunc: func(context.Context, string, string) (map[string]any, error) {
+				return map[string]any{
+					"name":  "New item",
+					"price": map[string]any{"amount": 500, "currency": "EUR"},
+				}, nil
+			},
+			addToBasketFunc: func(_ context.Context, payload map[string]any, _ woltgateway.AuthContext) (map[string]any, error) {
+				seenAddPayload = payload
+				return map[string]any{"id": "basket-1", "venue_id": "venue-1"}, nil
+			},
+			basketCountFunc: func(context.Context, woltgateway.AuthContext) (map[string]any, error) {
+				return map[string]any{"count": 2}, nil
+			},
+			basketsPageFunc: func(context.Context, domain.Location, woltgateway.AuthContext) (map[string]any, error) {
+				return map[string]any{
+					"baskets": []any{
+						map[string]any{
+							"id":    "basket-1",
+							"total": "€22.00",
+							"venue": map[string]any{"id": "venue-1", "slug": "venue-one"},
+							"items": []any{
+								map[string]any{"id": "item-old", "name": "Old item", "count": 1, "price": 1700, "options": []any{}},
+							},
+							"telemetry": map[string]any{"basket_total": 2200},
+						},
+					},
+				}, nil
+			},
+		},
+		Profiles: &mockProfiles{profile: domain.Profile{Name: "default", IsDefault: true, Location: domain.Location{Lat: 60.1, Lon: 24.9}}},
+		Location: &mockLocation{},
+		Config:   &mockConfig{},
+		Version:  "1.1.1",
+	}
+
+	exitCode, out := runCLIWithDeps(
+		t,
+		deps,
+		"cart",
+		"add",
+		"venue-one",
+		"item-new",
+		"--wtoken",
+		"token",
+		"--format",
+		"json",
+	)
+	if exitCode != 0 {
+		t.Fatalf("expected exit 0, got %d\noutput:\n%s", exitCode, out)
+	}
+	if seenAddPayload["venue_id"] != "venue-1" {
+		t.Fatalf("expected venue_id resolved to venue-1, got %v", seenAddPayload["venue_id"])
+	}
+	items := asSlicePayload(t, seenAddPayload["items"])
+	if len(items) != 2 {
+		t.Fatalf("expected merged payload with 2 items, got %d", len(items))
+	}
+	if asMapPayload(t, items[0])["id"] != "item-old" {
+		t.Fatalf("expected existing item first, got %v", asMapPayload(t, items[0])["id"])
+	}
+	if asMapPayload(t, items[1])["id"] != "item-new" {
+		t.Fatalf("expected new item second, got %v", asMapPayload(t, items[1])["id"])
 	}
 }
 

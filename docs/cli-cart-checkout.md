@@ -50,11 +50,13 @@ Options:
 - `--name` optional item name override
 - `--price` optional item price override in minor units
 - `--currency` optional basket currency override
-- `--venue-slug` optional slug for assortment-based metadata/option enrichment
+- `--venue-slug` optional slug for assortment/venue-content metadata enrichment
 
 Behavior:
 - tries item endpoint for name/price/options
 - falls back to assortment metadata when item endpoint is missing or incomplete
+- if assortment is empty/partial upstream, falls back to venue-content metadata for item resolution
+- venue-content fallback uses auth from profile/global flags when available
 - sends add request to `POST https://consumer-api.wolt.com/order-xp/v1/baskets`
 - refreshes totals from basket/count endpoints
 

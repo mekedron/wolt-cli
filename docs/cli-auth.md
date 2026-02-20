@@ -91,6 +91,6 @@ Behavior:
 - with credentials: calls `GET https://restaurant-api.wolt.com/v1/user/me`
 - includes `wolt_plus_subscriber` flag when account membership signal is present
 - without credentials: returns `authenticated=false` with a warning
-- with `--verbose`: includes token preview/cookie count and detailed upstream error diagnostics
+- with `--verbose`: includes token preview/cookie count, upstream HTTP request trace, and detailed upstream error diagnostics
 
 `wolt profile status` is an alias with the same behavior and output schema.
