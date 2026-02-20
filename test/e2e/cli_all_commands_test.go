@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Valaraucoo/wolt-cli/internal/cli"
-	"github.com/Valaraucoo/wolt-cli/internal/domain"
+	"github.com/mekedron/wolt-cli/internal/cli"
+	"github.com/mekedron/wolt-cli/internal/domain"
 )
 
 type recordingConfig struct {

@@ -4,7 +4,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/Valaraucoo/wolt-cli/internal/domain"
+	"github.com/mekedron/wolt-cli/internal/domain"
 )
 
 // BuildVenueMenu builds normalized venue menu payload.

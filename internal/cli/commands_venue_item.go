@@ -6,8 +6,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/Valaraucoo/wolt-cli/internal/service/observability"
-	"github.com/Valaraucoo/wolt-cli/internal/service/output"
+	"github.com/mekedron/wolt-cli/internal/service/observability"
+	"github.com/mekedron/wolt-cli/internal/service/output"
 	"github.com/spf13/cobra"
 )
 

@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/Valaraucoo/wolt-cli/internal/domain"
+	"github.com/mekedron/wolt-cli/internal/domain"
 )
 
 func limitSlice[T any](in []T, limit *int) []T {

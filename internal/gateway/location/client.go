@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Valaraucoo/wolt-cli/internal/domain"
+	"github.com/mekedron/wolt-cli/internal/domain"
 )
 
 const defaultNominatimURL = "https://nominatim.openstreetmap.org/search"

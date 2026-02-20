@@ -4,11 +4,11 @@ import (
 	"context"
 	"os"
 
-	"github.com/Valaraucoo/wolt-cli/internal/cli"
-	"github.com/Valaraucoo/wolt-cli/internal/config"
-	locationgateway "github.com/Valaraucoo/wolt-cli/internal/gateway/location"
-	woltgateway "github.com/Valaraucoo/wolt-cli/internal/gateway/wolt"
-	"github.com/Valaraucoo/wolt-cli/internal/service/profile"
+	"github.com/mekedron/wolt-cli/internal/cli"
+	"github.com/mekedron/wolt-cli/internal/config"
+	locationgateway "github.com/mekedron/wolt-cli/internal/gateway/location"
+	woltgateway "github.com/mekedron/wolt-cli/internal/gateway/wolt"
+	"github.com/mekedron/wolt-cli/internal/service/profile"
 )
 
 var version = "dev"

@@ -5,7 +5,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/Valaraucoo/wolt-cli/internal/domain"
+	"github.com/mekedron/wolt-cli/internal/domain"
 )
 
 var slugPattern = regexp.MustCompile(`[^a-zA-Z0-9]+`)

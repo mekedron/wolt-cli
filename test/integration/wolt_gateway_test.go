@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Valaraucoo/wolt-cli/internal/domain"
-	woltgateway "github.com/Valaraucoo/wolt-cli/internal/gateway/wolt"
+	"github.com/mekedron/wolt-cli/internal/domain"
+	woltgateway "github.com/mekedron/wolt-cli/internal/gateway/wolt"
 )
 
 type staticHTTPClient struct {

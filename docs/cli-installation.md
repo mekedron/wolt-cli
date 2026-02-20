@@ -8,7 +8,7 @@
 ## Clone
 
 ```bash
-git clone https://github.com/Valaraucoo/wolt-cli.git
+git clone https://github.com/mekedron/wolt-cli.git
 cd wolt-cli
 ```
 

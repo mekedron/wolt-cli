@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/Valaraucoo/wolt-cli/internal/domain"
-	"github.com/Valaraucoo/wolt-cli/internal/service/profile"
+	"github.com/mekedron/wolt-cli/internal/domain"
+	"github.com/mekedron/wolt-cli/internal/service/profile"
 )
 
 type stubLoader struct {

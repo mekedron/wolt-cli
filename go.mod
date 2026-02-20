@@ -1,4 +1,4 @@
-module github.com/Valaraucoo/wolt-cli
+module github.com/mekedron/wolt-cli
 
 go 1.26
 

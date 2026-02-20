@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Valaraucoo/wolt-cli/internal/domain"
+	"github.com/mekedron/wolt-cli/internal/domain"
 )
 
 type captureHTTPClient struct {

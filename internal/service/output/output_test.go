@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Valaraucoo/wolt-cli/internal/service/output"
+	"github.com/mekedron/wolt-cli/internal/service/output"
 )
 
 func TestBuildEnvelope(t *testing.T) {

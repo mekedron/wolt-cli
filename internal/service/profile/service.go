@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Valaraucoo/wolt-cli/internal/config"
-	"github.com/Valaraucoo/wolt-cli/internal/domain"
+	"github.com/mekedron/wolt-cli/internal/config"
+	"github.com/mekedron/wolt-cli/internal/domain"
 )
 
 var (
