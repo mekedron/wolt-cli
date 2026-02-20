@@ -1,15 +1,15 @@
 # Venue and Item Commands
 
-All commands in this document support:
-- `--format json`
-- `--format yaml`
-
 Global flags inherited by each command:
 - `--format [table|json|yaml]`
 - `--profile <name>`
 - `--locale <bcp47>`
 - `--no-color`
 - `--output <path>`
+- `--verbose`
+- `--wtoken <token>`
+- `--wrtoken <token>`
+- `--cookie <name=value>` (repeatable)
 
 ## `wolt venue show <slug>`
 
@@ -23,7 +23,6 @@ Arguments:
 - `<slug>`: venue slug (for example `burger-king-finnoo`)
 
 Options:
-- `--format [json|yaml]`: machine-readable output
 - `--include`: comma-separated optional sections
 
 Output schema:
@@ -100,7 +99,6 @@ Arguments:
 - `<slug>`: venue slug
 
 Options:
-- `--format [json|yaml]`: machine-readable output
 - `--category`: restrict to one category
 - `--include-options`: include option-group IDs per item
 - `--limit`: cap number of menu items returned
@@ -127,7 +125,6 @@ Arguments:
 - `<slug>`: venue slug
 
 Options:
-- `--format [json|yaml]`: machine-readable output
 - `--timezone`: output timezone (for example `Europe/Helsinki`)
 
 Output schema:
@@ -153,7 +150,6 @@ Arguments:
 - `<item-id>`: item identifier
 
 Options:
-- `--format [json|yaml]`: machine-readable output
 - `--include-upsell`: include frequently bought together/upsell items
 
 Output schema:
@@ -239,6 +235,32 @@ data:
         formatted_amount: "€7.45"
 warnings: []
 ```
+
+## `wolt item options <venue-slug> <item-id>`
+
+Synopsis:
+
+```console
+wolt item options <venue-slug> <item-id> [global flags]
+```
+
+Behavior:
+- Fetches item payload from `GET https://restaurant-api.wolt.com/order-xp/web/v1/pages/venue/<venue_id>/item/<item_id>`
+- Falls back to venue dynamic payload when item endpoint is unavailable.
+- Returns normalized option groups with selectable values and ready-to-use `--option` examples for `cart add`.
+
+Output schema:
+- `item_id`
+- `venue_id`
+- `currency`
+- `group_count`
+- `option_groups[]`:
+  - `group_id`
+  - `name`
+  - `required`
+  - `min`
+  - `max`
+  - `values[]` (`value_id`, `name`, `price`, `example_option`)
 
 ## Integration Notes (Current Implementation)
 

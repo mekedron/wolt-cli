@@ -23,6 +23,22 @@ type mockWolt struct {
 	venuePageDynamicFunc func(context.Context, string) (map[string]any, error)
 	venueItemPageFunc    func(context.Context, string, string) (map[string]any, error)
 	itemBySlugFunc       func(context.Context, domain.Location, string) (*domain.Item, error)
+	userMeFunc           func(context.Context, woltgateway.AuthContext) (map[string]any, error)
+	paymentMethodsFunc   func(context.Context, woltgateway.AuthContext) (map[string]any, error)
+	paymentProfileFunc   func(context.Context, woltgateway.AuthContext, woltgateway.PaymentMethodsProfileOptions) (map[string]any, error)
+	addressFieldsFunc    func(context.Context, domain.Location, string, woltgateway.AuthContext) (map[string]any, error)
+	deliveryInfoListFunc func(context.Context, woltgateway.AuthContext) (map[string]any, error)
+	deliveryInfoCreateFn func(context.Context, map[string]any, woltgateway.AuthContext) (map[string]any, error)
+	deliveryInfoDeleteFn func(context.Context, string, woltgateway.AuthContext) (map[string]any, error)
+	favoriteVenuesFunc   func(context.Context, domain.Location, woltgateway.AuthContext) (map[string]any, error)
+	favoriteVenueAddFn   func(context.Context, string, woltgateway.AuthContext) (map[string]any, error)
+	favoriteVenueRemFn   func(context.Context, string, woltgateway.AuthContext) (map[string]any, error)
+	basketCountFunc      func(context.Context, woltgateway.AuthContext) (map[string]any, error)
+	basketsPageFunc      func(context.Context, domain.Location, woltgateway.AuthContext) (map[string]any, error)
+	addToBasketFunc      func(context.Context, map[string]any, woltgateway.AuthContext) (map[string]any, error)
+	deleteBasketsFunc    func(context.Context, []string, woltgateway.AuthContext) (map[string]any, error)
+	checkoutPreviewFunc  func(context.Context, map[string]any, woltgateway.AuthContext) (map[string]any, error)
+	refreshAccessTokenFn func(context.Context, string, woltgateway.AuthContext) (woltgateway.TokenRefreshResult, error)
 }
 
 func (m *mockWolt) FrontPage(ctx context.Context, location domain.Location) (map[string]any, error) {
@@ -86,6 +102,131 @@ func (m *mockWolt) ItemBySlug(ctx context.Context, location domain.Location, slu
 		return nil, errors.New("item by slug not mocked")
 	}
 	return m.itemBySlugFunc(ctx, location, slug)
+}
+
+func (m *mockWolt) UserMe(ctx context.Context, auth woltgateway.AuthContext) (map[string]any, error) {
+	if m.userMeFunc == nil {
+		return nil, errors.New("user me not mocked")
+	}
+	return m.userMeFunc(ctx, auth)
+}
+
+func (m *mockWolt) PaymentMethods(ctx context.Context, auth woltgateway.AuthContext) (map[string]any, error) {
+	if m.paymentMethodsFunc == nil {
+		return nil, errors.New("payment methods not mocked")
+	}
+	return m.paymentMethodsFunc(ctx, auth)
+}
+
+func (m *mockWolt) PaymentMethodsProfile(
+	ctx context.Context,
+	auth woltgateway.AuthContext,
+	options woltgateway.PaymentMethodsProfileOptions,
+) (map[string]any, error) {
+	if m.paymentProfileFunc == nil {
+		return map[string]any{}, nil
+	}
+	return m.paymentProfileFunc(ctx, auth, options)
+}
+
+func (m *mockWolt) AddressFields(
+	ctx context.Context,
+	location domain.Location,
+	language string,
+	auth woltgateway.AuthContext,
+) (map[string]any, error) {
+	if m.addressFieldsFunc == nil {
+		return nil, errors.New("address fields not mocked")
+	}
+	return m.addressFieldsFunc(ctx, location, language, auth)
+}
+
+func (m *mockWolt) DeliveryInfoList(ctx context.Context, auth woltgateway.AuthContext) (map[string]any, error) {
+	if m.deliveryInfoListFunc == nil {
+		return nil, errors.New("delivery info list not mocked")
+	}
+	return m.deliveryInfoListFunc(ctx, auth)
+}
+
+func (m *mockWolt) DeliveryInfoCreate(ctx context.Context, payload map[string]any, auth woltgateway.AuthContext) (map[string]any, error) {
+	if m.deliveryInfoCreateFn == nil {
+		return nil, errors.New("delivery info create not mocked")
+	}
+	return m.deliveryInfoCreateFn(ctx, payload, auth)
+}
+
+func (m *mockWolt) DeliveryInfoDelete(ctx context.Context, addressID string, auth woltgateway.AuthContext) (map[string]any, error) {
+	if m.deliveryInfoDeleteFn == nil {
+		return nil, errors.New("delivery info delete not mocked")
+	}
+	return m.deliveryInfoDeleteFn(ctx, addressID, auth)
+}
+
+func (m *mockWolt) FavoriteVenues(ctx context.Context, location domain.Location, auth woltgateway.AuthContext) (map[string]any, error) {
+	if m.favoriteVenuesFunc == nil {
+		return nil, errors.New("favorite venues not mocked")
+	}
+	return m.favoriteVenuesFunc(ctx, location, auth)
+}
+
+func (m *mockWolt) FavoriteVenueAdd(ctx context.Context, venueID string, auth woltgateway.AuthContext) (map[string]any, error) {
+	if m.favoriteVenueAddFn == nil {
+		return nil, errors.New("favorite venue add not mocked")
+	}
+	return m.favoriteVenueAddFn(ctx, venueID, auth)
+}
+
+func (m *mockWolt) FavoriteVenueRemove(ctx context.Context, venueID string, auth woltgateway.AuthContext) (map[string]any, error) {
+	if m.favoriteVenueRemFn == nil {
+		return nil, errors.New("favorite venue remove not mocked")
+	}
+	return m.favoriteVenueRemFn(ctx, venueID, auth)
+}
+
+func (m *mockWolt) BasketCount(ctx context.Context, auth woltgateway.AuthContext) (map[string]any, error) {
+	if m.basketCountFunc == nil {
+		return nil, errors.New("basket count not mocked")
+	}
+	return m.basketCountFunc(ctx, auth)
+}
+
+func (m *mockWolt) BasketsPage(ctx context.Context, location domain.Location, auth woltgateway.AuthContext) (map[string]any, error) {
+	if m.basketsPageFunc == nil {
+		return nil, errors.New("baskets page not mocked")
+	}
+	return m.basketsPageFunc(ctx, location, auth)
+}
+
+func (m *mockWolt) AddToBasket(ctx context.Context, payload map[string]any, auth woltgateway.AuthContext) (map[string]any, error) {
+	if m.addToBasketFunc == nil {
+		return nil, errors.New("add to basket not mocked")
+	}
+	return m.addToBasketFunc(ctx, payload, auth)
+}
+
+func (m *mockWolt) DeleteBaskets(ctx context.Context, basketIDs []string, auth woltgateway.AuthContext) (map[string]any, error) {
+	if m.deleteBasketsFunc == nil {
+		return nil, errors.New("delete baskets not mocked")
+	}
+	return m.deleteBasketsFunc(ctx, basketIDs, auth)
+}
+
+func (m *mockWolt) CheckoutPreview(ctx context.Context, payload map[string]any, auth woltgateway.AuthContext) (map[string]any, error) {
+	if m.checkoutPreviewFunc == nil {
+		return nil, errors.New("checkout preview not mocked")
+	}
+	return m.checkoutPreviewFunc(ctx, payload, auth)
+}
+
+func (m *mockWolt) RefreshAccessToken(
+	ctx context.Context,
+	refreshToken string,
+	auth woltgateway.AuthContext,
+) (woltgateway.TokenRefreshResult, error) {
+	if m.refreshAccessTokenFn == nil {
+		return woltgateway.TokenRefreshResult{}, errors.New("refresh access token not mocked")
+	}
+	return m.refreshAccessTokenFn(ctx, refreshToken, auth)
 }
 
 type mockProfiles struct {
@@ -215,20 +356,23 @@ func TestRootHelpIncludesCommandDescriptions(t *testing.T) {
 			t.Fatalf("expected output to contain %q\noutput:\n%s", expected, out)
 		}
 	}
-	for _, notExpected := range []string{"╭", "╰", "random"} {
+	for _, notExpected := range []string{"╭", "╰"} {
 		if strings.Contains(out, notExpected) {
 			t.Fatalf("did not expect output to contain %q\noutput:\n%s", notExpected, out)
 		}
 	}
-}
-
-func TestRandomCommandIsRemoved(t *testing.T) {
-	exitCode, out := runCLI(t, "random")
-	if exitCode != 2 {
-		t.Fatalf("expected exit code 2, got %d\noutput:\n%s", exitCode, out)
-	}
-	if !strings.Contains(out, "No such command 'random'") {
-		t.Fatalf("expected unknown command message\noutput:\n%s", out)
+	for _, token := range []string{
+		"--format: Output format: table, json, or yaml.",
+		"--profile: Profile name for saved location. Used when --lat and --lon are not provided.",
+		"--locale: Response locale in BCP-47 format, for example en-FI.",
+		"--no-color: Disable ANSI color codes in table output.",
+		"--output: Write the command output to a file.",
+		"--wrtoken: Wolt refresh token for automatic access token rotation (or payload with refreshToken).",
+		"--verbose: Enable verbose output (for example detailed upstream error diagnostics).",
+	} {
+		if count := strings.Count(out, token); count != 1 {
+			t.Fatalf("expected %q to appear once in root help, got %d\noutput:\n%s", token, count, out)
+		}
 	}
 }
 
@@ -530,7 +674,12 @@ func TestDiscoverFeedJSONReturnsErrorEnvelope(t *testing.T) {
 	deps := cli.Dependencies{
 		Wolt: &mockWolt{
 			frontPageFunc: func(context.Context, domain.Location) (map[string]any, error) {
-				return nil, woltgateway.ErrUpstream
+				return nil, &woltgateway.UpstreamRequestError{
+					Method:     "GET",
+					URL:        "https://consumer-api.wolt.com/v1/pages/front?lat=50&lon=19",
+					StatusCode: 401,
+					Body:       `{"error":"Unauthorized"}`,
+				}
 			},
 		},
 		Profiles: &mockProfiles{profile: domain.Profile{Name: "default", IsDefault: true, Location: domain.Location{Lat: 0, Lon: 0}}},
@@ -553,6 +702,41 @@ func TestDiscoverFeedJSONReturnsErrorEnvelope(t *testing.T) {
 	}
 	if !strings.Contains(strings.ToLower(asStringPayload(errPayload["message"])), "wolt") {
 		t.Fatalf("expected upstream message, got %v", errPayload["message"])
+	}
+	if strings.Contains(asStringPayload(errPayload["message"]), "consumer-api.wolt.com") {
+		t.Fatalf("expected non-verbose error to hide request URL, got %v", errPayload["message"])
+	}
+}
+
+func TestDiscoverFeedVerboseJSONIncludesUpstreamDiagnostics(t *testing.T) {
+	deps := cli.Dependencies{
+		Wolt: &mockWolt{
+			frontPageFunc: func(context.Context, domain.Location) (map[string]any, error) {
+				return nil, &woltgateway.UpstreamRequestError{
+					Method:     "GET",
+					URL:        "https://consumer-api.wolt.com/v1/pages/front?lat=50&lon=19",
+					StatusCode: 401,
+					Body:       `{"error":"Unauthorized"}`,
+				}
+			},
+		},
+		Profiles: &mockProfiles{profile: domain.Profile{Name: "default", IsDefault: true, Location: domain.Location{Lat: 0, Lon: 0}}},
+		Location: &mockLocation{},
+		Config:   &mockConfig{},
+		Version:  "1.1.1",
+	}
+
+	exitCode, out := runCLIWithDeps(t, deps, "discover", "feed", "--lat", "50.0", "--lon", "19.0", "--format", "json", "--verbose")
+	if exitCode != 1 {
+		t.Fatalf("expected exit 1, got %d\noutput:\n%s", exitCode, out)
+	}
+	payload := mustJSON(t, out)
+	errPayload := asMapPayload(t, payload["error"])
+	message := asStringPayload(errPayload["message"])
+	for _, expected := range []string{"status=401", "consumer-api.wolt.com", "Unauthorized"} {
+		if !strings.Contains(message, expected) {
+			t.Fatalf("expected verbose error to contain %q, got %v", expected, message)
+		}
 	}
 }
 

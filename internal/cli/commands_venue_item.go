@@ -2,6 +2,8 @@ package cli
 
 import (
 	"fmt"
+	"sort"
+	"strings"
 
 	"github.com/Valaraucoo/wolt-cli/internal/service/observability"
 	"github.com/Valaraucoo/wolt-cli/internal/service/output"
@@ -25,6 +27,7 @@ func newItemCommand(deps Dependencies) *cobra.Command {
 		Short: "Inspect a single menu item for a venue.",
 	}
 	item.AddCommand(newItemShowCommand(deps))
+	item.AddCommand(newItemOptionsCommand(deps))
 	return item
 }
 
@@ -48,14 +51,14 @@ func newVenueShowCommand(deps Dependencies) *cobra.Command {
 			}
 			item, err := deps.Wolt.ItemBySlug(cmd.Context(), profile.Location, slug)
 			if err != nil {
-				return emitUpstreamError(cmd, format, profile.Name, flags.Locale, flags.Output, err)
+				return emitUpstreamError(cmd, format, profile.Name, flags.Locale, flags.Output, flags.Verbose, err)
 			}
 			if item == nil {
 				return fmt.Errorf("venue slug %q was not found in profile %q catalog", slug, profile.Name)
 			}
 			restaurant, err := deps.Wolt.RestaurantByID(cmd.Context(), item.Link.Target)
 			if err != nil {
-				return emitUpstreamError(cmd, format, profile.Name, flags.Locale, flags.Output, err)
+				return emitUpstreamError(cmd, format, profile.Name, flags.Locale, flags.Output, flags.Verbose, err)
 			}
 
 			data, warnings, err := observability.BuildVenueDetail(item, restaurant, splitCSV(include))
@@ -99,7 +102,7 @@ func newVenueMenuCommand(deps Dependencies) *cobra.Command {
 			}
 			item, err := deps.Wolt.ItemBySlug(cmd.Context(), profile.Location, slug)
 			if err != nil {
-				return emitUpstreamError(cmd, format, profile.Name, flags.Locale, flags.Output, err)
+				return emitUpstreamError(cmd, format, profile.Name, flags.Locale, flags.Output, flags.Verbose, err)
 			}
 			if item == nil {
 				return fmt.Errorf("venue slug %q was not found in profile %q catalog", slug, profile.Name)
@@ -163,14 +166,14 @@ func newVenueHoursCommand(deps Dependencies) *cobra.Command {
 			}
 			item, err := deps.Wolt.ItemBySlug(cmd.Context(), profile.Location, slug)
 			if err != nil {
-				return emitUpstreamError(cmd, format, profile.Name, flags.Locale, flags.Output, err)
+				return emitUpstreamError(cmd, format, profile.Name, flags.Locale, flags.Output, flags.Verbose, err)
 			}
 			if item == nil {
 				return fmt.Errorf("venue slug %q was not found in profile %q catalog", slug, profile.Name)
 			}
 			restaurant, err := deps.Wolt.RestaurantByID(cmd.Context(), item.Link.Target)
 			if err != nil {
-				return emitUpstreamError(cmd, format, profile.Name, flags.Locale, flags.Output, err)
+				return emitUpstreamError(cmd, format, profile.Name, flags.Locale, flags.Output, flags.Verbose, err)
 			}
 
 			data := observability.BuildVenueHours(restaurant, timezone)
@@ -209,7 +212,7 @@ func newItemShowCommand(deps Dependencies) *cobra.Command {
 			}
 			item, err := deps.Wolt.ItemBySlug(cmd.Context(), profile.Location, venueSlug)
 			if err != nil {
-				return emitUpstreamError(cmd, format, profile.Name, flags.Locale, flags.Output, err)
+				return emitUpstreamError(cmd, format, profile.Name, flags.Locale, flags.Output, flags.Verbose, err)
 			}
 			if item == nil {
 				return fmt.Errorf("venue slug %q was not found in profile %q catalog", venueSlug, profile.Name)
@@ -240,6 +243,61 @@ func newItemShowCommand(deps Dependencies) *cobra.Command {
 	}
 
 	cmd.Flags().BoolVar(&includeUpsell, "include-upsell", false, "Include upsell items")
+	addGlobalFlags(cmd, &flags)
+	return cmd
+}
+
+func newItemOptionsCommand(deps Dependencies) *cobra.Command {
+	var flags globalFlags
+
+	cmd := &cobra.Command{
+		Use:   "options <venue-slug> <item-id>",
+		Short: "Show full option groups/values for an item.",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			venueSlug := args[0]
+			itemID := args[1]
+			format, err := parseOutputFormat(flags.Format)
+			if err != nil {
+				return err
+			}
+
+			profile, err := deps.Profiles.Find(cmd.Context(), flags.Profile)
+			if err != nil {
+				return profileError(err, format, flags.Profile, flags.Locale, flags.Output, cmd)
+			}
+			item, err := deps.Wolt.ItemBySlug(cmd.Context(), profile.Location, venueSlug)
+			if err != nil {
+				return emitUpstreamError(cmd, format, profile.Name, flags.Locale, flags.Output, flags.Verbose, err)
+			}
+			if item == nil {
+				return fmt.Errorf("venue slug %q was not found in profile %q catalog", venueSlug, profile.Name)
+			}
+
+			payload := map[string]any{}
+			warnings := []string{}
+			if itemPayload, err := deps.Wolt.VenueItemPage(cmd.Context(), item.Link.Target, itemID); err == nil {
+				payload = itemPayload
+			} else {
+				warnings = append(warnings, "item endpoint unavailable; falling back to venue payloads")
+				if fallback, fallbackErr := deps.Wolt.VenuePageDynamic(cmd.Context(), venueSlug); fallbackErr == nil {
+					payload = fallback
+				} else {
+					warnings = append(warnings, "venue payload fallback unavailable")
+				}
+			}
+
+			data, optionWarnings := buildItemOptionsData(item.Link.Target, itemID, payload)
+			warnings = append(warnings, optionWarnings...)
+
+			if format == output.FormatTable {
+				return writeTable(cmd, buildItemOptionsTable(data), flags.Output)
+			}
+			env := output.BuildEnvelope(profile.Name, flags.Locale, data, warnings, nil)
+			return writeMachinePayload(cmd, env, format, flags.Output)
+		},
+	}
+
 	addGlobalFlags(cmd, &flags)
 	return cmd
 }
@@ -307,6 +365,104 @@ func buildItemDetailTable(data map[string]any) string {
 		{"Upsell items", fmt.Sprintf("%v", data["upsell_items"])},
 	}
 	return output.RenderTable("Item: "+asString(data["name"]), headers, rows)
+}
+
+func buildItemOptionsData(venueID string, itemID string, payload map[string]any) (map[string]any, []string) {
+	warnings := []string{}
+	optionSpecs := extractOptionSpecs(payload)
+	currency := strings.TrimSpace(asString(asMap(payload["price"])["currency"]))
+	if currency == "" {
+		currency = "EUR"
+	}
+	groupIDs := make([]string, 0, len(optionSpecs))
+	for groupID := range optionSpecs {
+		groupIDs = append(groupIDs, groupID)
+	}
+	sort.Strings(groupIDs)
+
+	optionGroups := make([]any, 0, len(groupIDs))
+	for _, groupID := range groupIDs {
+		spec := optionSpecs[groupID]
+		valueIDs := make([]string, 0, len(spec.Values))
+		for valueID := range spec.Values {
+			valueIDs = append(valueIDs, valueID)
+		}
+		sort.Strings(valueIDs)
+
+		values := make([]any, 0, len(valueIDs))
+		for _, valueID := range valueIDs {
+			value := spec.Values[valueID]
+			values = append(values, map[string]any{
+				"value_id": valueID,
+				"name":     emptyToNil(value.Name),
+				"price": map[string]any{
+					"amount":   value.Price,
+					"currency": currency,
+				},
+				"example_option": fmt.Sprintf("%s=%s", groupID, valueID),
+			})
+		}
+
+		optionGroups = append(optionGroups, map[string]any{
+			"group_id": groupID,
+			"name":     emptyToNil(spec.Name),
+			"required": spec.Required || spec.MinSelect > 0,
+			"min":      spec.MinSelect,
+			"max":      spec.MaxSelect,
+			"values":   values,
+		})
+	}
+	if len(optionGroups) == 0 {
+		warnings = append(warnings, "no option groups were discovered in the item payload")
+	}
+
+	return map[string]any{
+		"venue_id":      venueID,
+		"item_id":       itemID,
+		"option_groups": optionGroups,
+		"group_count":   len(optionGroups),
+		"currency":      currency,
+	}, warnings
+}
+
+func buildItemOptionsTable(data map[string]any) string {
+	summary := output.RenderTable("Item option groups", []string{"Field", "Value"}, [][]string{
+		{"Venue ID", fallbackString(asString(data["venue_id"]), "-")},
+		{"Item ID", fallbackString(asString(data["item_id"]), "-")},
+		{"Groups", asString(data["group_count"])},
+		{"Currency", fallbackString(asString(data["currency"]), "-")},
+	})
+
+	headers := []string{"Group", "Value ID", "Value name", "Price", "Example --option"}
+	rows := [][]string{}
+	for _, groupValue := range asSlice(data["option_groups"]) {
+		group := asMap(groupValue)
+		if group == nil {
+			continue
+		}
+		groupLabel := fallbackString(asString(group["group_id"]), "-")
+		if groupName := asString(group["name"]); groupName != "" {
+			groupLabel = fmt.Sprintf("%s (%s)", groupLabel, groupName)
+		}
+		for _, valueNode := range asSlice(group["values"]) {
+			valueMap := asMap(valueNode)
+			if valueMap == nil {
+				continue
+			}
+			currency := asString(asMap(valueMap["price"])["currency"])
+			rows = append(rows, []string{
+				groupLabel,
+				fallbackString(asString(valueMap["value_id"]), "-"),
+				fallbackString(asString(valueMap["name"]), "-"),
+				fallbackString(formatMinorAmount(asInt(asMap(valueMap["price"])["amount"]), currency), "-"),
+				"--option " + asString(valueMap["example_option"]),
+			})
+		}
+	}
+	if len(rows) == 0 {
+		rows = append(rows, []string{"-", "-", "-", "-", "-"})
+	}
+	return summary + "\n\n" + output.RenderTable("Selectable values", headers, rows)
 }
 
 func fallbackString(value string, fallback string) string {

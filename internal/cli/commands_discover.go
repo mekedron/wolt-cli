@@ -60,11 +60,11 @@ func newDiscoverFeedCommand(deps Dependencies) *cobra.Command {
 
 			page, err := deps.Wolt.FrontPage(cmd.Context(), location)
 			if err != nil {
-				return emitUpstreamError(cmd, format, profile, flags.Locale, flags.Output, err)
+				return emitUpstreamError(cmd, format, profile, flags.Locale, flags.Output, flags.Verbose, err)
 			}
 			sections, err := deps.Wolt.Sections(cmd.Context(), location)
 			if err != nil {
-				return emitUpstreamError(cmd, format, profile, flags.Locale, flags.Output, err)
+				return emitUpstreamError(cmd, format, profile, flags.Locale, flags.Output, flags.Verbose, err)
 			}
 
 			city := asString(asMap(page["city_data"])["name"])
@@ -143,7 +143,7 @@ func newDiscoverCategoriesCommand(deps Dependencies) *cobra.Command {
 
 			sections, err := deps.Wolt.Sections(cmd.Context(), location)
 			if err != nil {
-				return emitUpstreamError(cmd, format, profile, flags.Locale, flags.Output, err)
+				return emitUpstreamError(cmd, format, profile, flags.Locale, flags.Output, flags.Verbose, err)
 			}
 			data := observability.BuildCategoryList(sections)
 

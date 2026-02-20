@@ -10,6 +10,26 @@ import (
 	"github.com/spf13/pflag"
 )
 
+var sharedGlobalOptionOrder = []string{
+	"format",
+	"profile",
+	"locale",
+	"no-color",
+	"output",
+	"wtoken",
+	"wrtoken",
+	"cookie",
+	"verbose",
+}
+
+var sharedGlobalOptionIndex = func() map[string]int {
+	index := make(map[string]int, len(sharedGlobalOptionOrder))
+	for i, name := range sharedGlobalOptionOrder {
+		index[name] = i
+	}
+	return index
+}()
+
 // NewRootCommand builds the complete command tree.
 func NewRootCommand(deps Dependencies) *cobra.Command {
 	version := deps.Version
@@ -57,6 +77,10 @@ func NewRootCommand(deps Dependencies) *cobra.Command {
 	root.AddCommand(newSearchCommand(deps))
 	root.AddCommand(newVenueCommand(deps))
 	root.AddCommand(newItemCommand(deps))
+	root.AddCommand(newAuthCommand(deps))
+	root.AddCommand(newCartCommand(deps))
+	root.AddCommand(newCheckoutCommand(deps))
+	root.AddCommand(newProfileCommand(deps))
 	root.AddCommand(newConfigureCommand(deps))
 
 	return root
@@ -122,13 +146,18 @@ type optionDoc struct {
 }
 
 func rootOptions(root *cobra.Command) []optionDoc {
-	return collectOptionDocs(root.Flags(), false)
+	options := collectOptionDocs(root.Flags(), false)
+	options = append(options, discoverSharedGlobalOptions(root)...)
+	return options
 }
 
 func commandOptions(cmd *cobra.Command) []optionDoc {
 	seen := map[string]struct{}{}
 	options := make([]optionDoc, 0)
 	for _, option := range collectOptionDocs(cmd.NonInheritedFlags(), false) {
+		if isSharedGlobalOption(option.name) && cmd.Name() != "configure" {
+			continue
+		}
 		seen[option.name] = struct{}{}
 		options = append(options, option)
 	}
@@ -136,9 +165,53 @@ func commandOptions(cmd *cobra.Command) []optionDoc {
 		if _, ok := seen[option.name]; ok {
 			continue
 		}
+		if isSharedGlobalOption(option.name) && cmd.Name() != "configure" {
+			continue
+		}
 		options = append(options, option)
 	}
 	return options
+}
+
+func discoverSharedGlobalOptions(root *cobra.Command) []optionDoc {
+	discovered := map[string]optionDoc{}
+	var walk func(*cobra.Command)
+	walk = func(parent *cobra.Command) {
+		for _, cmd := range visibleCommands(parent) {
+			cmd.NonInheritedFlags().VisitAll(func(flag *pflag.Flag) {
+				if flag.Hidden || flag.Name == "help" || !isSharedGlobalOption(flag.Name) {
+					return
+				}
+				if _, ok := discovered[flag.Name]; ok {
+					return
+				}
+				discovered[flag.Name] = optionDoc{
+					name:      flag.Name,
+					token:     flagToken(flag),
+					usage:     strings.TrimSpace(flag.Usage),
+					required:  isFlagRequired(flag),
+					inherited: false,
+				}
+			})
+			walk(cmd)
+		}
+	}
+	walk(root)
+
+	options := make([]optionDoc, 0, len(discovered))
+	for _, name := range sharedGlobalOptionOrder {
+		option, ok := discovered[name]
+		if !ok {
+			continue
+		}
+		options = append(options, option)
+	}
+	return options
+}
+
+func isSharedGlobalOption(name string) bool {
+	_, ok := sharedGlobalOptionIndex[name]
+	return ok
 }
 
 func collectOptionDocs(flags *pflag.FlagSet, inherited bool) []optionDoc {

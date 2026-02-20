@@ -218,6 +218,70 @@ func TestVenueHoursJSON(t *testing.T) {
 	}
 }
 
+func TestItemOptionsJSON(t *testing.T) {
+	venueItem := &domain.Item{
+		Title: "Burger Place",
+		Link:  domain.Link{Target: "venue-1"},
+		Venue: buildVenue("venue-1", "burger-place", "Street"),
+	}
+	deps := cli.Dependencies{
+		Wolt: &mockWolt{
+			itemBySlugFunc: func(context.Context, domain.Location, string) (*domain.Item, error) {
+				return venueItem, nil
+			},
+			venueItemPageFunc: func(context.Context, string, string) (map[string]any, error) {
+				return map[string]any{
+					"price": map[string]any{"currency": "EUR"},
+					"option_groups": []any{
+						map[string]any{
+							"id":   "group-drink",
+							"name": "Drink",
+							"min":  1,
+							"max":  1,
+							"values": []any{
+								map[string]any{"id": "value-cola", "name": "Cola", "price": map[string]any{"amount": 100}},
+							},
+						},
+					},
+				}, nil
+			},
+		},
+		Profiles: &mockProfiles{profile: domain.Profile{Name: "default", IsDefault: true, Location: domain.Location{Lat: 0, Lon: 0}}},
+		Location: &mockLocation{},
+		Config:   &mockConfig{},
+		Version:  "1.1.1",
+	}
+
+	exitCode, out := runCLIWithDeps(t, deps, "item", "options", "burger-place", "item-1", "--format", "json")
+	if exitCode != 0 {
+		t.Fatalf("expected exit 0, got %d\noutput:\n%s", exitCode, out)
+	}
+	payload := mustJSON(t, out)
+	data := asMapPayload(t, payload["data"])
+	if data["item_id"] != "item-1" {
+		t.Fatalf("expected item_id item-1, got %v", data["item_id"])
+	}
+	if asIntPayload(data["group_count"]) != 1 {
+		t.Fatalf("expected group_count 1, got %v", data["group_count"])
+	}
+	groups := asSlicePayload(t, data["option_groups"])
+	if len(groups) != 1 {
+		t.Fatalf("expected one option group, got %d", len(groups))
+	}
+	group := asMapPayload(t, groups[0])
+	if group["group_id"] != "group-drink" {
+		t.Fatalf("expected group id group-drink, got %v", group["group_id"])
+	}
+	values := asSlicePayload(t, group["values"])
+	if len(values) != 1 {
+		t.Fatalf("expected one option value, got %d", len(values))
+	}
+	value := asMapPayload(t, values[0])
+	if value["example_option"] != "group-drink=value-cola" {
+		t.Fatalf("expected example option group-drink=value-cola, got %v", value["example_option"])
+	}
+}
+
 func TestConfigureCommandSavesProfile(t *testing.T) {
 	cfg := &recordingConfig{loadErr: errors.New("config not found")}
 	loc := &recordingLocation{location: domain.Location{Lat: 60.1699, Lon: 24.9384}}
@@ -251,6 +315,46 @@ func TestConfigureCommandSavesProfile(t *testing.T) {
 	}
 }
 
+func TestConfigureCommandSavesNormalizedWToken(t *testing.T) {
+	cfg := &recordingConfig{loadErr: errors.New("config not found")}
+	loc := &recordingLocation{location: domain.Location{Lat: 60.1699, Lon: 24.9384}}
+	deps := cli.Dependencies{
+		Wolt:     &mockWolt{},
+		Profiles: &mockProfiles{profile: domain.Profile{Name: "default", IsDefault: true, Location: domain.Location{Lat: 0, Lon: 0}}},
+		Location: loc,
+		Config:   cfg,
+		Version:  "1.1.1",
+	}
+
+	exitCode, out := runCLIWithDeps(
+		t,
+		deps,
+		"configure",
+		"--profile-name",
+		"work",
+		"--address",
+		"Helsinki",
+		"--wtoken",
+		`{%22accessToken%22:%22abc.def.ghi%22%2C%22expirationTime%22:1771540095000}`,
+		"--cookie",
+		"foo=bar",
+		"--cookie",
+		"__wtoken={%22accessToken%22:%22abc.def.ghi%22%2C%22expirationTime%22:1771540095000}",
+	)
+	if exitCode != 0 {
+		t.Fatalf("expected exit 0, got %d\noutput:\n%s", exitCode, out)
+	}
+	if cfg.saved == nil || len(cfg.saved.Profiles) != 1 {
+		t.Fatalf("expected saved config with one profile, got %+v", cfg.saved)
+	}
+	if cfg.saved.Profiles[0].WToken != "abc.def.ghi" {
+		t.Fatalf("expected normalized wtoken abc.def.ghi, got %q", cfg.saved.Profiles[0].WToken)
+	}
+	if len(cfg.saved.Profiles[0].Cookies) != 2 {
+		t.Fatalf("expected two saved cookies, got %v", cfg.saved.Profiles[0].Cookies)
+	}
+}
+
 func TestConfigureCommandRequiresOverwriteWhenConfigExists(t *testing.T) {
 	cfg := &recordingConfig{loadCfg: domain.Config{Profiles: []domain.Profile{{Name: "default", IsDefault: true}}}}
 	deps := cli.Dependencies{
@@ -267,6 +371,66 @@ func TestConfigureCommandRequiresOverwriteWhenConfigExists(t *testing.T) {
 	}
 	if !strings.Contains(out, "config file already exists") {
 		t.Fatalf("expected existing config error, got:\n%s", out)
+	}
+}
+
+func TestConfigureCommandUpdatesAuthWithoutAddress(t *testing.T) {
+	cfg := &recordingConfig{
+		loadCfg: domain.Config{
+			Profiles: []domain.Profile{
+				{
+					Name:          "default",
+					IsDefault:     true,
+					Address:       "Helsinki",
+					Location:      domain.Location{Lat: 60.1699, Lon: 24.9384},
+					WToken:        "old-token",
+					WRefreshToken: "old-refresh",
+					Cookies:       []string{"foo=bar"},
+				},
+			},
+		},
+	}
+	loc := &recordingLocation{location: domain.Location{Lat: 1, Lon: 2}}
+	deps := cli.Dependencies{
+		Wolt:     &mockWolt{},
+		Profiles: &mockProfiles{profile: domain.Profile{Name: "default", IsDefault: true, Location: domain.Location{Lat: 60.1699, Lon: 24.9384}}},
+		Location: loc,
+		Config:   cfg,
+		Version:  "1.1.1",
+	}
+
+	exitCode, out := runCLIWithDeps(
+		t,
+		deps,
+		"configure",
+		"--profile-name",
+		"default",
+		"--wtoken",
+		`{%22accessToken%22:%22abc.def.ghi%22%2C%22expirationTime%22:1771540095000}`,
+		"--wrtoken",
+		"%22refresh-new%22",
+	)
+	if exitCode != 0 {
+		t.Fatalf("expected exit 0, got %d\noutput:\n%s", exitCode, out)
+	}
+	if cfg.saved == nil || len(cfg.saved.Profiles) != 1 {
+		t.Fatalf("expected saved config with one profile, got %+v", cfg.saved)
+	}
+	saved := cfg.saved.Profiles[0]
+	if saved.Address != "Helsinki" {
+		t.Fatalf("expected address to stay unchanged, got %q", saved.Address)
+	}
+	if saved.Location.Lat != 60.1699 || saved.Location.Lon != 24.9384 {
+		t.Fatalf("expected location to stay unchanged, got %+v", saved.Location)
+	}
+	if saved.WToken != "abc.def.ghi" {
+		t.Fatalf("expected updated wtoken abc.def.ghi, got %q", saved.WToken)
+	}
+	if saved.WRefreshToken != "refresh-new" {
+		t.Fatalf("expected updated wrefresh_token refresh-new, got %q", saved.WRefreshToken)
+	}
+	if loc.seenAddress != "" {
+		t.Fatalf("did not expect address geocoding for auth-only update, got %q", loc.seenAddress)
 	}
 }
 

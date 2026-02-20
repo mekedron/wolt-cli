@@ -1,371 +1,165 @@
 # Cart and Checkout Commands
 
+Included commands:
+- `wolt cart count`
+- `wolt cart show`
+- `wolt cart add <venue-id> <item-id>`
+- `wolt cart remove <item-id>`
+- `wolt cart clear`
+- `wolt checkout preview`
+
 All commands in this document support:
-- `--format json`
-- `--format yaml`
+- global flags:
+  - `--format [table|json|yaml]`
+  - `--profile <name>`
+  - `--locale <bcp47>`
+  - `--no-color`
+  - `--output <path>`
+  - `--verbose`
+  - `--wrtoken <token>`
+- auth via one of:
+  - `--wtoken <token>`
+  - `--wrtoken <token>`
+  - `--cookie <name=value>`
+  - `profile.wtoken`, `profile.wrefresh_token`, or `profile.cookies` from selected/default local profile
 
-Global flags inherited by each command:
-- `--format [table|json|yaml]`
-- `--profile <name>`
-- `--locale <bcp47>`
-- `--no-color`
-- `--output <path>`
-
-Safety boundary:
-- v1 checkout commands do **not** place orders.
-- `preview`, `delivery-modes`, and `quote` only return pricing/projection data.
-
-## wolt cart show
+## `wolt cart count`
 
 Synopsis:
 
 ```console
-wolt cart show [--venue-id <id>] [global flags]
+wolt cart count [global flags]
 ```
 
-Arguments:
-- none
+Behavior:
+- Calls `GET https://consumer-api.wolt.com/order-xp/v1/baskets/count`
 
-Options:
-- `--format [json|yaml]`: machine-readable output
-- `--venue-id`: show basket scoped to one venue
+Output:
+- `count` (int)
 
-Output schema:
-- `CartState`
+## `wolt cart show`
 
-Examples:
+Synopsis:
 
 ```console
-wolt cart show --format json
-wolt cart show --venue-id 629f1f18480882d6f02c25f0 --format yaml
+wolt cart show [--venue-id <id>] [--lat <value> --lon <value>] [global flags]
 ```
+
+Behavior:
+- Calls `GET https://consumer-api.wolt.com/order-xp/web/v1/pages/baskets?lat=...&lon=...`
+- When multiple baskets exist and `--venue-id` is omitted, selects the first basket and returns a warning in machine formats.
+- `--details` expands table output with selected option/value details for each line item (for example what is included in a combo/set).
+  - when upstream does not expose option names, IDs are shown instead.
+- Normalizes response into `CartState` shape with:
+  - `basket_id`
+  - `venue_id`
+  - `venue_name`
+  - `venue_slug`
+  - `selection` (`selection_mode`, `basket_count`, selected basket details)
+  - `currency` (best-effort from formatted totals)
+  - `lines[]`
+  - `subtotal`
+  - `fees` (empty list in current implementation)
+  - `total`
 
 ## `wolt cart add <venue-id> <item-id>`
 
 Synopsis:
 
 ```console
-wolt cart add <venue-id> <item-id> [--count <n>] [--option <group=value>...] [--allow-substitutions] [global flags]
+wolt cart add <venue-id> <item-id> [--count <n>] [--option <group-id=value-id[:count]>...] [--allow-substitutions] [global flags]
 ```
-
-Arguments:
-- `<venue-id>`: venue identifier
-- `<item-id>`: menu item identifier
 
 Options:
-- `--format [json|yaml]`: machine-readable output
-- `--count`: quantity, default `1`
-- `--option <group=value>`: repeatable option selector
-- `--allow-substitutions`: allow substitutions for unavailable items
+- `--count` default `1`
+- `--option` repeatable `group-id=value-id` or `group-id=value-id:count` (group/value can be IDs or exact names)
+- `--allow-substitutions`
+- `--name` optional item name override
+- `--price` optional item price override in minor units
+- `--currency` optional basket currency override
 
-Output schema:
-- `CartMutationResult`
+Behavior:
+- Fetches item detail from `GET https://restaurant-api.wolt.com/order-xp/web/v1/pages/venue/<venue_id>/item/<item_id>` to infer name/price/options
+- Sends add request to `POST https://consumer-api.wolt.com/order-xp/v1/baskets`
+- Refreshes totals from basket/count endpoints
 
-Examples:
+Output:
+- `basket_id`
+- `venue_id`
+- `mutation` (`add`)
+- `line_id`
+- `total_items`
+- `total`
 
-```console
-wolt cart add 629f1f18480882d6f02c25f0 676939cb70769df4cec6cc6f --count 1 --option drink=coke --format json
-wolt cart add 629f1f18480882d6f02c25f0 676939cb70769df4cec6cc6f --allow-substitutions --format yaml
-```
-
-JSON example:
-
-```json
-{
-  "meta": {
-    "request_id": "req_cart_add_001",
-    "generated_at": "2026-02-19T21:25:00Z",
-    "profile": "default",
-    "locale": "en-FI"
-  },
-  "data": {
-    "basket_id": "69974cfd285af11962f0f8ab",
-    "venue_id": "629f1f18480882d6f02c25f0",
-    "mutation": "add",
-    "line_id": "line_001",
-    "total_items": 1,
-    "total": {
-      "amount": 1595,
-      "formatted_amount": "€15.95"
-    }
-  },
-  "warnings": []
-}
-```
-
-YAML example:
-
-```yaml
-meta:
-  request_id: req_cart_add_001
-  generated_at: "2026-02-19T21:25:00Z"
-  profile: default
-  locale: en-FI
-data:
-  basket_id: "69974cfd285af11962f0f8ab"
-  venue_id: "629f1f18480882d6f02c25f0"
-  mutation: add
-  line_id: line_001
-  total_items: 1
-  total:
-    amount: 1595
-    formatted_amount: "€15.95"
-warnings: []
-```
-
-## `wolt cart update <line-id>`
+## `wolt checkout preview`
 
 Synopsis:
 
 ```console
-wolt cart update <line-id> [--count <n>] [--option <group=value>...] [global flags]
+wolt checkout preview [--delivery-mode <standard|priority|schedule>] [--tip <minor-units>] [--promo-code <id>] [--venue-id <id>] [global flags]
 ```
 
-Arguments:
-- `<line-id>`: basket line identifier
-
-Options:
-- `--format [json|yaml]`: machine-readable output
-- `--count`: new quantity
-- `--option <group=value>`: replace or amend line selections
+Behavior:
+- Reads current basket (`/order-xp/web/v1/pages/baskets`)
+- Uses the same basket selection rules as `cart show` (`--venue-id` preferred, otherwise first available).
+- Builds a `purchase_plan` payload
+- Calls `POST https://consumer-api.wolt.com/order-xp/web/v2/pages/checkout`
+- Returns projected totals/rows without placing an order
 
 Output schema:
-- `CartMutationResult`
+- `basket_id`
+- `venue_id`
+- `venue_name`
+- `venue_slug`
+- `selection`
+- `payable_amount`
+- `checkout_rows`
+- `delivery_configs`
+- `offers`
+- `tip_config`
 
-Examples:
-
-```console
-wolt cart update line_001 --count 2 --format json
-wolt cart update line_001 --option side=fries --format yaml
-```
-
-## `wolt cart remove <line-id>`
+## `wolt cart remove <item-id>`
 
 Synopsis:
 
 ```console
-wolt cart remove <line-id> [--yes] [global flags]
+wolt cart remove <item-id> [--count <n>] [--all] [--venue-id <id>] [--lat <value> --lon <value>] [global flags]
 ```
 
-Arguments:
-- `<line-id>`: basket line identifier
+Behavior:
+- Loads baskets from `GET https://consumer-api.wolt.com/order-xp/web/v1/pages/baskets?lat=...&lon=...`
+- Resolves selected basket the same way as `cart show` (`--venue-id` preferred, otherwise first basket)
+- For quantity decrement (`count` remains above zero), sends mutation to `POST https://consumer-api.wolt.com/order-xp/v1/baskets`
+- For full basket clear fallback (single-line basket), sends `POST https://consumer-api.wolt.com/order-xp/v1/baskets/bulk/delete`
 
-Options:
-- `--format [json|yaml]`: machine-readable output
-- `--yes`: skip confirmation prompt
+Output:
+- `basket_id`
+- `venue_id`
+- `mutation` (`remove` or `clear`)
+- `line_id`
+- `removed_count`
+- `total_items`
+- `total`
 
-Output schema:
-- `CartMutationResult`
+Notes:
+- Removing an entire line from multi-line baskets is not supported in this command yet.
+- Use `wolt cart clear` to clear the full selected basket.
 
-Examples:
-
-```console
-wolt cart remove line_001 --yes --format json
-wolt cart remove line_001 --format yaml
-```
-
-## wolt cart clear
+## `wolt cart clear`
 
 Synopsis:
 
 ```console
-wolt cart clear [--yes] [--venue-id <id>] [global flags]
+wolt cart clear [--venue-id <id>] [--all] [--lat <value> --lon <value>] [global flags]
 ```
 
-Arguments:
-- none
+Behavior:
+- Loads baskets from `GET https://consumer-api.wolt.com/order-xp/web/v1/pages/baskets?lat=...&lon=...`
+- Clears selected basket (or all baskets with `--all`) using `POST https://consumer-api.wolt.com/order-xp/v1/baskets/bulk/delete`
 
-Options:
-- `--format [json|yaml]`: machine-readable output
-- `--yes`: skip confirmation prompt
-- `--venue-id`: clear specific venue basket only
-
-Output schema:
-- `CartMutationResult`
-
-Examples:
-
-```console
-wolt cart clear --yes --format json
-wolt cart clear --venue-id 629f1f18480882d6f02c25f0 --format yaml
-```
-
-## wolt checkout preview
-
-Synopsis:
-
-```console
-wolt checkout preview [--delivery-mode <standard|priority|schedule>] [--address-id <id>] [--tip <minor-units>] [--promo-code <code>] [global flags]
-```
-
-Arguments:
-- none
-
-Options:
-- `--format [json|yaml]`: machine-readable output
-- `--delivery-mode`: selected checkout mode
-- `--address-id`: delivery address identifier
-- `--tip`: tip amount in minor units
-- `--promo-code`: promo code token
-
-Output schema:
-- `CheckoutPreview`
-
-Examples:
-
-```console
-wolt checkout preview --delivery-mode standard --address-id 6916f0f4cbcd388b5e76b8d7 --format json
-wolt checkout preview --delivery-mode priority --tip 200 --format yaml
-```
-
-JSON example:
-
-```json
-{
-  "meta": {
-    "request_id": "req_checkout_preview_001",
-    "generated_at": "2026-02-19T21:30:00Z",
-    "profile": "default",
-    "locale": "en-FI"
-  },
-  "data": {
-    "payable_amount": {
-      "amount": 1707,
-      "formatted_amount": "€17.07"
-    },
-    "checkout_rows": [
-      {
-        "label": "Item subtotal",
-        "amount": {
-          "amount": 1595,
-          "formatted_amount": "€15.95"
-        }
-      }
-    ],
-    "delivery_configs": [
-      {
-        "label": "Standard",
-        "schedule": "standard",
-        "estimate": "25-35 min",
-        "additional_fee": {
-          "amount": 0,
-          "formatted_amount": "€0.00"
-        }
-      }
-    ],
-    "offers": {
-      "selectable": [],
-      "applied": []
-    },
-    "tip_config": {
-      "min_amount": 50,
-      "max_amount": 2000,
-      "tip_options": [
-        {
-          "amount": 0,
-          "amount_label": "€0"
-        }
-      ]
-    }
-  },
-  "warnings": []
-}
-```
-
-YAML example:
-
-```yaml
-meta:
-  request_id: req_checkout_preview_001
-  generated_at: "2026-02-19T21:30:00Z"
-  profile: default
-  locale: en-FI
-data:
-  payable_amount:
-    amount: 1707
-    formatted_amount: "€17.07"
-  checkout_rows:
-    - label: Item subtotal
-      amount:
-        amount: 1595
-        formatted_amount: "€15.95"
-  delivery_configs:
-    - label: Standard
-      schedule: standard
-      estimate: 25-35 min
-      additional_fee:
-        amount: 0
-        formatted_amount: "€0.00"
-  offers:
-    selectable: []
-    applied: []
-  tip_config:
-    min_amount: 50
-    max_amount: 2000
-    tip_options:
-      - amount: 0
-        amount_label: "€0"
-warnings: []
-```
-
-## wolt checkout delivery-modes
-
-Synopsis:
-
-```console
-wolt checkout delivery-modes [--address-id <id>] [global flags]
-```
-
-Arguments:
-- none
-
-Options:
-- `--format [json|yaml]`: machine-readable output
-- `--address-id`: delivery address identifier
-
-Output schema:
-- `DeliveryModes`
-
-Examples:
-
-```console
-wolt checkout delivery-modes --address-id 6916f0f4cbcd388b5e76b8d7 --format json
-wolt checkout delivery-modes --format yaml
-```
-
-## wolt checkout quote
-
-Synopsis:
-
-```console
-wolt checkout quote [--delivery-mode <standard|priority|schedule>] [--address-id <id>] [--tip <minor-units>] [--promo-code <code>] [--payment-method-id <id>] [global flags]
-```
-
-Arguments:
-- none
-
-Options:
-- `--format [json|yaml]`: machine-readable output
-- `--delivery-mode`: selected checkout mode
-- `--address-id`: delivery address identifier
-- `--tip`: tip in minor units
-- `--promo-code`: promo code
-- `--payment-method-id`: payment method identifier
-
-Output schema:
-- `CheckoutQuote`
-
-Examples:
-
-```console
-wolt checkout quote --delivery-mode standard --address-id 6916f0f4cbcd388b5e76b8d7 --payment-method-id pm_card_01 --format json
-wolt checkout quote --delivery-mode priority --tip 100 --format yaml
-```
-
-## Integration Notes (Current Implementation)
-
-Observed basket/checkout payload families:
-- `POST .../order-xp/v1/baskets`
-- `POST .../order-xp/web/v2/pages/checkout`
-
-Current repository has no cart/checkout command implementation yet; this file is the normative contract for upcoming work.
+Output:
+- `mutation` (`clear`)
+- `basket_ids`
+- `cleared_baskets`
+- `total_items`
+- `total`

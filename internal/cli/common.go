@@ -2,8 +2,10 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/Valaraucoo/wolt-cli/internal/domain"
 	woltgateway "github.com/Valaraucoo/wolt-cli/internal/gateway/wolt"
@@ -20,11 +22,15 @@ func (e *exitError) Error() string {
 }
 
 type globalFlags struct {
-	Format  string
-	Profile string
-	Locale  string
-	NoColor bool
-	Output  string
+	Format        string
+	Profile       string
+	Locale        string
+	NoColor       bool
+	Output        string
+	WToken        string
+	WRefreshToken string
+	Cookies       []string
+	Verbose       bool
 }
 
 func addGlobalFlags(cmd *cobra.Command, flags *globalFlags) {
@@ -33,6 +39,10 @@ func addGlobalFlags(cmd *cobra.Command, flags *globalFlags) {
 	cmd.Flags().StringVar(&flags.Locale, "locale", "en-FI", "Response locale in BCP-47 format, for example en-FI.")
 	cmd.Flags().BoolVar(&flags.NoColor, "no-color", false, "Disable ANSI color codes in table output.")
 	cmd.Flags().StringVar(&flags.Output, "output", "", "Write the command output to a file.")
+	cmd.Flags().StringVar(&flags.WToken, "wtoken", "", "Wolt token for authenticated endpoints (JWT, Bearer value, or payload with accessToken).")
+	cmd.Flags().StringVar(&flags.WRefreshToken, "wrtoken", "", "Wolt refresh token for automatic access token rotation (or payload with refreshToken).")
+	cmd.Flags().StringArrayVar(&flags.Cookies, "cookie", nil, "HTTP cookie header value to forward (repeatable).")
+	cmd.Flags().BoolVar(&flags.Verbose, "verbose", false, "Enable verbose output (for example detailed upstream error diagnostics).")
 }
 
 func parseOutputFormat(format string) (output.Format, error) {
@@ -132,11 +142,28 @@ func profileError(err error, format output.Format, profileName string, locale st
 	return emitError(cmd, format, profileName, locale, outputPath, "WOLT_PROFILE_ERROR", message)
 }
 
-func emitUpstreamError(cmd *cobra.Command, format output.Format, profile string, locale string, outputPath string, err error) error {
+func emitUpstreamError(
+	cmd *cobra.Command,
+	format output.Format,
+	profile string,
+	locale string,
+	outputPath string,
+	verbose bool,
+	err error,
+) error {
 	if err == nil {
 		err = woltgateway.ErrUpstream
 	}
-	return emitError(cmd, format, profile, locale, outputPath, "WOLT_UPSTREAM_ERROR", err.Error())
+	if verbose {
+		return emitError(cmd, format, profile, locale, outputPath, "WOLT_UPSTREAM_ERROR", err.Error())
+	}
+
+	message := woltgateway.ErrUpstream.Error() + " (use --verbose for details)"
+	var upstreamErr *woltgateway.UpstreamRequestError
+	if errors.As(err, &upstreamErr) && upstreamErr.StatusCode > 0 {
+		message = fmt.Sprintf("%s (status %d, use --verbose for details)", woltgateway.ErrUpstream.Error(), upstreamErr.StatusCode)
+	}
+	return emitError(cmd, format, profile, locale, outputPath, "WOLT_UPSTREAM_ERROR", message)
 }
 
 func splitCSV(value string) map[string]struct{} {
@@ -156,4 +183,226 @@ func splitCSV(value string) map[string]struct{} {
 
 func requiredArg(name string) string {
 	return fmt.Sprintf("%s is required", name)
+}
+
+func normalizeCookieInputs(raw []string) []string {
+	cookies := make([]string, 0, len(raw))
+	for _, cookie := range raw {
+		trimmed := strings.TrimSpace(cookie)
+		if trimmed == "" {
+			continue
+		}
+		cookies = append(cookies, trimmed)
+	}
+	return cookies
+}
+
+func buildAuthContext(flags globalFlags) woltgateway.AuthContext {
+	auth := woltgateway.AuthContext{
+		WToken: normalizeWToken(flags.WToken),
+	}
+	auth.RefreshToken = extractRefreshToken(flags.WRefreshToken)
+	if strings.TrimSpace(auth.RefreshToken) == "" {
+		auth.RefreshToken = normalizeRefreshToken(flags.WRefreshToken)
+	}
+	auth.Cookies = normalizeCookieInputs(flags.Cookies)
+	if auth.WToken == "" {
+		auth.WToken = extractWTokenFromCookieInputs(auth.Cookies)
+	}
+	if strings.TrimSpace(auth.RefreshToken) == "" {
+		auth.RefreshToken = extractRefreshToken(flags.WToken)
+	}
+	if strings.TrimSpace(auth.RefreshToken) == "" {
+		auth.RefreshToken = extractRefreshTokenFromCookieInputs(auth.Cookies)
+	}
+	return auth
+}
+
+func buildAuthContextWithProfile(ctx context.Context, deps Dependencies, flags globalFlags) woltgateway.AuthContext {
+	auth := buildAuthContext(flags)
+	if deps.Profiles == nil {
+		return auth
+	}
+	profile, err := deps.Profiles.Find(ctx, flags.Profile)
+	if err != nil {
+		return auth
+	}
+	if len(auth.Cookies) == 0 {
+		auth.Cookies = normalizeCookieInputs(profile.Cookies)
+	}
+	if strings.TrimSpace(auth.WToken) == "" {
+		auth.WToken = normalizeWToken(profile.WToken)
+	}
+	if strings.TrimSpace(auth.WToken) == "" {
+		auth.WToken = extractWTokenFromCookieInputs(auth.Cookies)
+	}
+	if strings.TrimSpace(auth.RefreshToken) == "" {
+		auth.RefreshToken = normalizeRefreshToken(profile.WRefreshToken)
+	}
+	if strings.TrimSpace(auth.RefreshToken) == "" {
+		auth.RefreshToken = extractRefreshToken(profile.WToken)
+	}
+	if strings.TrimSpace(auth.RefreshToken) == "" {
+		auth.RefreshToken = extractRefreshTokenFromCookieInputs(auth.Cookies)
+	}
+	return auth
+}
+
+func requireAuth(
+	cmd *cobra.Command,
+	format output.Format,
+	profile string,
+	locale string,
+	outputPath string,
+	auth woltgateway.AuthContext,
+) error {
+	if auth.HasCredentials() {
+		return nil
+	}
+	return emitError(
+		cmd,
+		format,
+		profile,
+		locale,
+		outputPath,
+		"WOLT_AUTH_REQUIRED",
+		"Authentication is required. Provide --wtoken or at least one --cookie.",
+	)
+}
+
+func defaultProfileName(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "default"
+	}
+	return trimmed
+}
+
+func isUnauthorizedUpstream(err error) bool {
+	var upstreamErr *woltgateway.UpstreamRequestError
+	if !errors.As(err, &upstreamErr) {
+		return false
+	}
+	return upstreamErr.StatusCode == 401
+}
+
+func upsertProfileTokens(
+	ctx context.Context,
+	deps Dependencies,
+	selectedProfile string,
+	accessToken string,
+	refreshToken string,
+) error {
+	if deps.Config == nil {
+		return nil
+	}
+	cfg, err := deps.Config.Load(ctx)
+	if err != nil {
+		return err
+	}
+	index := -1
+	profileName := strings.TrimSpace(selectedProfile)
+	if profileName == "" {
+		for i, profile := range cfg.Profiles {
+			if profile.IsDefault {
+				index = i
+				break
+			}
+		}
+	} else {
+		for i, profile := range cfg.Profiles {
+			if strings.EqualFold(strings.TrimSpace(profile.Name), profileName) {
+				index = i
+				break
+			}
+		}
+	}
+	if index < 0 {
+		if profileName == "" {
+			return fmt.Errorf("default profile not found in config")
+		}
+		return fmt.Errorf("profile %q not found in config", profileName)
+	}
+	if strings.TrimSpace(accessToken) != "" {
+		cfg.Profiles[index].WToken = normalizeWToken(accessToken)
+	}
+	if strings.TrimSpace(refreshToken) != "" {
+		cfg.Profiles[index].WRefreshToken = normalizeRefreshToken(refreshToken)
+	}
+	return deps.Config.Save(ctx, cfg)
+}
+
+func refreshAuthContext(
+	ctx context.Context,
+	deps Dependencies,
+	selectedProfile string,
+	auth *woltgateway.AuthContext,
+) (bool, []string, error) {
+	warnings := []string{}
+	if auth == nil {
+		return false, warnings, fmt.Errorf("auth context is nil")
+	}
+	refreshToken := strings.TrimSpace(auth.RefreshToken)
+	if refreshToken == "" {
+		return false, warnings, nil
+	}
+	result, err := deps.Wolt.RefreshAccessToken(ctx, refreshToken, *auth)
+	if err != nil {
+		return false, warnings, err
+	}
+	accessToken := normalizeWToken(result.AccessToken)
+	if accessToken == "" {
+		return false, warnings, fmt.Errorf("refresh response did not include access token")
+	}
+	auth.WToken = accessToken
+	if candidate := normalizeRefreshToken(result.RefreshToken); candidate != "" {
+		auth.RefreshToken = candidate
+	}
+	warnings = append(warnings, "access token refreshed automatically")
+	if err := upsertProfileTokens(ctx, deps, selectedProfile, auth.WToken, auth.RefreshToken); err != nil {
+		warnings = append(warnings, "failed to persist rotated tokens in profile config")
+	}
+	return true, warnings, nil
+}
+
+func invokeWithAuthAutoRefresh[T any](
+	ctx context.Context,
+	deps Dependencies,
+	flags globalFlags,
+	auth *woltgateway.AuthContext,
+	invoke func(woltgateway.AuthContext) (T, error),
+) (T, []string, error) {
+	var zero T
+	warnings := []string{}
+	if auth == nil {
+		return zero, warnings, fmt.Errorf("auth context is nil")
+	}
+	selectedProfile := strings.TrimSpace(flags.Profile)
+	if tokenExpired(auth.WToken, time.Now().UTC(), 30*time.Second) {
+		_, refreshWarnings, refreshErr := refreshAuthContext(ctx, deps, selectedProfile, auth)
+		warnings = append(warnings, refreshWarnings...)
+		if refreshErr != nil {
+			warnings = append(warnings, "automatic token refresh failed before request")
+		}
+	}
+
+	result, err := invoke(*auth)
+	if err == nil {
+		return result, warnings, nil
+	}
+	if !isUnauthorizedUpstream(err) {
+		return result, warnings, err
+	}
+
+	refreshed, refreshWarnings, refreshErr := refreshAuthContext(ctx, deps, selectedProfile, auth)
+	warnings = append(warnings, refreshWarnings...)
+	if refreshErr != nil {
+		return result, warnings, fmt.Errorf("%w: automatic token refresh failed: %v", err, refreshErr)
+	}
+	if !refreshed {
+		return result, warnings, err
+	}
+
+	retryResult, retryErr := invoke(*auth)
+	return retryResult, warnings, retryErr
 }

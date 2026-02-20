@@ -1,17 +1,17 @@
 # Discovery and Search Commands
 
-All commands in this document support:
-- `--format json`
-- `--format yaml`
-
 Global flags inherited by each command:
 - `--format [table|json|yaml]`
 - `--profile <name>`
 - `--locale <bcp47>`
 - `--no-color`
 - `--output <path>`
+- `--verbose`
+- `--wtoken <token>`
+- `--wrtoken <token>`
+- `--cookie <name=value>` (repeatable)
 
-## wolt discover feed
+## `wolt discover feed`
 
 Synopsis:
 
@@ -23,7 +23,6 @@ Arguments:
 - none
 
 Options:
-- `--format [json|yaml]`: machine-readable output
 - `--lat`: latitude override (optional when profile location is configured)
 - `--lon`: longitude override (optional when profile location is configured)
 - `--limit`: cap returned feed sections/items
@@ -45,7 +44,7 @@ wolt discover feed --lat 60.1484 --lon 24.6913 --limit 5 --format json
 wolt discover feed --lat 60.1484 --lon 24.6913 --format yaml
 ```
 
-## wolt discover categories
+## `wolt discover categories`
 
 Synopsis:
 
@@ -57,7 +56,6 @@ Arguments:
 - none
 
 Options:
-- `--format [json|yaml]`: machine-readable output
 - `--lat`: latitude override (optional when profile location is configured)
 - `--lon`: longitude override (optional when profile location is configured)
 
@@ -78,7 +76,7 @@ wolt discover categories --lat 60.1484 --lon 24.6913 --format json
 wolt discover categories --lat 60.1484 --lon 24.6913 --format yaml
 ```
 
-## wolt search venues
+## `wolt search venues`
 
 Synopsis:
 
@@ -90,7 +88,6 @@ Arguments:
 - none
 
 Options:
-- `--format [json|yaml]`: machine-readable output
 - `--query`: free text query (optional; omit to list venues near profile location)
 - `--sort [recommended|distance|rating|delivery_price|delivery_time]`
 - `--type [restaurant|grocery|pharmacy|retail]`
@@ -169,7 +166,7 @@ data:
 warnings: []
 ```
 
-## wolt search items
+## `wolt search items`
 
 Synopsis:
 
@@ -181,7 +178,6 @@ Arguments:
 - none
 
 Options:
-- `--format [json|yaml]`: machine-readable output
 - `--query`: free text query
 - `--sort [relevance|price|name]`
 - `--category <slug>`
@@ -211,7 +207,6 @@ Observed search request shape from web flow:
 }
 ```
 
-Current `wolt discover feed` and `wolt discover categories` follow the
-same profile-scoped location behavior, with optional `--lat/--lon` overrides.
-
-Future `wolt search venues` should preserve that behavior while adding explicit Wolt filters.
+Current `wolt discover feed`, `wolt discover categories`, `wolt search venues`,
+and `wolt search items` all follow the same profile-scoped location behavior,
+with optional `--lat/--lon` overrides where supported.

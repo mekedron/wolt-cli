@@ -1,10 +1,8 @@
 # wolt (Go)
 
 `wolt` is a production-oriented Go CLI for browsing Wolt discovery data,
-searching venues/items, and inspecting venue/item details.
-
-This repository has been migrated from Python to Go with an idiomatic project
-layout, dependency-injected architecture, and CI-ready test/lint tooling.
+searching venues/items, managing carts, previewing checkout totals, and
+inspecting profile/auth state.
 
 ## Binaries
 
@@ -16,6 +14,11 @@ layout, dependency-injected architecture, and CI-ready test/lint tooling.
 - Venue and item search with filters and fallback behavior
 - Venue details, menu, opening hours
 - Item details with option groups and optional upsell section
+- Item option matrix command for cart-ready option/value selections
+- Cart commands: show/count/add/remove/clear
+- Checkout projection command: `checkout preview` (no order placement)
+- Auth/profile commands with automatic access-token rotation via refresh token
+- Favorite venues commands: list/add/remove for authenticated profiles
 - Profile bootstrap command: `configure`
 - JSON/YAML machine output envelope with warnings and structured errors
 
@@ -28,56 +31,6 @@ layout, dependency-injected architecture, and CI-ready test/lint tooling.
 ```bash
 go build ./...
 go run ./cmd/wolt --help
-```
-
-## Recommended Workflow
-
-1. Sync and branch.
-2. Implement in `internal/...` and wire commands in `internal/cli/...`.
-3. Run fast local checks while iterating.
-4. Run full quality gate before push.
-5. Push and let CI validate build, lint, tests, and race detector.
-
-Suggested command flow:
-
-```bash
-# 1) build + smoke run
-go build ./...
-go run ./cmd/wolt --help
-
-# 2) focused test while iterating
-go test ./test/e2e ./test/integration
-
-# 3) full gate before push
-go test ./...
-go test -race ./...
-go vet ./...
-make lint
-```
-
-## Project Layout
-
-```text
-cmd/
-  wolt/main.go
-internal/
-  cli/                 # command tree and output/error handling
-  config/              # config file loading/saving
-  domain/              # domain models and format helpers
-  gateway/
-    wolt/              # Wolt HTTP client
-    location/          # address -> lat/lon resolver
-  service/
-    observability/     # discovery/search/detail transformations
-    profile/           # profile resolution
-    output/            # envelope and rendering
-configs/
-api/
-migrations/
-scripts/
-test/
-  e2e/
-  integration/
 ```
 
 ## Build
@@ -116,6 +69,21 @@ Create/update config from CLI:
 wolt configure --profile-name default --address "Krakow" --overwrite
 ```
 
+Optional auth storage in profile:
+
+```bash
+wolt configure --profile-name default --address "Krakow" --wtoken "<token>" --overwrite
+wolt configure --profile-name default --address "Krakow" --wrtoken "<refresh-token>" --overwrite
+wolt configure --profile-name default --address "Krakow" --cookie "__wtoken=<token>" --cookie "foo=bar" --overwrite
+wolt configure --profile-name default --address "Krakow" --cookie "__wrtoken=<refresh-token>" --overwrite
+# update auth only on an existing profile (keeps address/location unchanged)
+wolt configure --profile-name default --wtoken "<token>" --wrtoken "<refresh-token>"
+```
+
+Security:
+- profile config may contain `wtoken`, `wrefresh_token`, and `cookies`; keep it local and never commit it.
+- local config patterns are ignored in `.gitignore` (`.wolt/`, `.wolt-config.json`, `*.wolt-config.json`).
+
 ## CLI Examples
 
 ```bash
@@ -135,33 +103,35 @@ wolt venue hours burger-king-finnoo --format json
 
 # Item
 wolt item show burger-king-finnoo 676939cb70769df4cec6cc6f --include-upsell --format json
+wolt item options burger-king-finnoo 676939cb70769df4cec6cc6f --format json
+
+# Cart / Checkout (safe preview only)
+wolt cart show --details --wtoken "<token>" --format json
+wolt cart add <venue-id> <item-id> --count 1 --option "<group-id>=<value-id>" --wtoken "<token>" --format json
+wolt cart remove <item-id> --count 1 --wtoken "<token>" --format json
+wolt cart clear --wtoken "<token>" --format json
+wolt checkout preview --delivery-mode standard --wtoken "<token>" --format json
+
+# Auth/Profile
+wolt auth status --wtoken "<token>" --format json
+wolt auth status --wtoken "<token>" --wrtoken "<refresh-token>" --format json
+wolt profile status --wtoken "<token>" --format json
+wolt profile payments --wtoken "<token>" --format json
+wolt profile favorites --wtoken "<token>" --format json
+wolt profile favorites add rioni-espoo --wtoken "<token>" --format json
+wolt profile favorites remove 5a8426f188b5de000b8857bb --wtoken "<token>" --format json
 
 # Config bootstrap
 wolt configure --profile-name default --address "Krakow" --overwrite
+wolt configure --profile-name default --address "Krakow" --wtoken "<token>" --overwrite
+wolt configure --profile-name default --address "Krakow" --wrtoken "<refresh-token>" --overwrite
+wolt configure --profile-name default --address "Krakow" --cookie "__wtoken=<token>" --overwrite
+wolt configure --profile-name default --wtoken "<token>" --wrtoken "<refresh-token>"
 ```
 
 ## Output Contract
 
-Machine formats (`json`, `yaml`) use this envelope:
-
-```json
-{
-  "meta": {
-    "request_id": "req_...",
-    "generated_at": "2026-02-19T00:00:00Z",
-    "profile": "default",
-    "locale": "en-FI"
-  },
-  "data": {},
-  "warnings": [],
-  "error": {
-    "code": "WOLT_UPSTREAM_ERROR",
-    "message": "..."
-  }
-}
-```
-
-For successful responses, `error` is omitted.
+See `/docs/cli-output-contract.md` for the canonical machine-output schema.
 
 ## Testing
 
@@ -189,14 +159,6 @@ If `golangci-lint` is not installed locally:
 go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
 ```
 
-## Local QA Gate
-
-```bash
-go test ./...
-go test -race ./...
-go vet ./...
-```
-
 ## Docker
 
 ```bash
@@ -209,12 +171,3 @@ Or:
 ```bash
 docker compose up --build
 ```
-
-## CI
-
-GitHub Actions workflow (`.github/workflows/go-ci.yml`) runs:
-
-- Build
-- golangci-lint
-- `go test ./...`
-- `go test -race ./...`

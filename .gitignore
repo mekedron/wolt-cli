@@ -10,3 +10,8 @@ coverage.out
 __pycache__/
 .venv*
 .pytest_cache/
+
+# Local profile/auth configs
+.wolt/
+.wolt-config.json
+*.wolt-config.json

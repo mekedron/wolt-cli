@@ -56,7 +56,7 @@ func newSearchVenuesCommand(deps Dependencies) *cobra.Command {
 			}
 			items, err := deps.Wolt.Items(cmd.Context(), profile.Location)
 			if err != nil {
-				return emitUpstreamError(cmd, format, profile.Name, flags.Locale, flags.Output, err)
+				return emitUpstreamError(cmd, format, profile.Name, flags.Locale, flags.Output, flags.Verbose, err)
 			}
 			var limitPtr *int
 			if limitSet {
@@ -130,7 +130,7 @@ func newSearchItemsCommand(deps Dependencies) *cobra.Command {
 
 			fallbackItems, err := deps.Wolt.Items(cmd.Context(), profile.Location)
 			if err != nil {
-				return emitUpstreamError(cmd, format, profile.Name, flags.Locale, flags.Output, err)
+				return emitUpstreamError(cmd, format, profile.Name, flags.Locale, flags.Output, flags.Verbose, err)
 			}
 
 			payloads := []map[string]any{}

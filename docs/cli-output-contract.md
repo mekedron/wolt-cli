@@ -45,7 +45,7 @@ warnings: []
 
 ## Field Conventions
 
-- IDs: string identifiers from upstream APIs (`venue_id`, `purchase_id`, `item_id`)
+- IDs: string identifiers from upstream APIs (`venue_id`, `item_id`, `basket_id`)
 - Money:
   - `amount` in minor units (for example cents)
   - optional `formatted_amount` string for display
@@ -72,7 +72,7 @@ When a command fails, `data` may be null and `error` must be present:
     "code": "WOLT_AUTH_REQUIRED",
     "message": "Authentication is required for this command.",
     "details": {
-      "hint": "Run wolt auth login"
+      "hint": "Provide --wtoken/--cookie or configure profile credentials"
     }
   }
 }
@@ -83,37 +83,41 @@ Error fields:
 - `message` (human-readable)
 - `details` (object, optional)
 
-## Canonical Schema Types
+## Canonical Schema Types (Implemented Commands)
 
-### AuthStatus
+### AuthStatus (`auth status`, `profile status`)
 Required:
 - `authenticated`
 - `user_id`
 - `country`
 - `session_expires_at`
 
-### DiscoveryFeed
+Optional:
+- `token_preview` (when `--verbose`)
+- `cookie_count` (when `--verbose`)
+
+### DiscoveryFeed (`discover feed`)
 Required:
 - `city`
 - `sections[]`
 
-### CategoryList
+### CategoryList (`discover categories`)
 Required:
 - `categories[]:{id,name,slug}`
 
-### VenueSearchResult
+### VenueSearchResult (`search venues`)
 Required:
 - `query`
 - `total`
 - `items[]:{venue_id,slug,name,address,rating,delivery_estimate,delivery_fee,wolt_plus}`
 
-### ItemSearchResult
+### ItemSearchResult (`search items`)
 Required:
 - `query`
 - `total`
 - `items[]:{item_id,venue_id,venue_slug,name,base_price,currency,is_sold_out}`
 
-### VenueDetail
+### VenueDetail (`venue show`)
 Required:
 - `venue_id`
 - `slug`
@@ -124,20 +128,22 @@ Required:
 - `delivery_methods`
 - `order_minimum`
 
-### VenueMenu
+### VenueMenu (`venue menu`)
 Required:
 - `venue_id`
 - `categories[]`
-- `items[]:{item_id,name,base_price,option_group_ids}`
+- `items[]:{item_id,name,base_price}`
 
-### VenueHours
+Optional:
+- `option_group_ids` (when `--include-options`)
+
+### VenueHours (`venue hours`)
 Required:
 - `venue_id`
 - `timezone`
 - `opening_windows[]`
-- `delivery_windows[]`
 
-### ItemDetail
+### ItemDetail (`item show`)
 Required:
 - `item_id`
 - `venue_id`
@@ -147,62 +153,70 @@ Required:
 - `option_groups[]`
 - `upsell_items[]`
 
-### CartState
+### ItemOptions (`item options`)
+Required:
+- `venue_id`
+- `item_id`
+- `currency`
+- `group_count`
+- `option_groups[]`
+
+Each `option_groups[]` entry contains:
+- `group_id`
+- `name`
+- `required`
+- `min`
+- `max`
+- `values[]:{value_id,name,price,example_option}`
+
+### CartState (`cart show`)
 Required:
 - `basket_id`
 - `venue_id`
+- `venue_name`
+- `venue_slug`
+- `selection`
 - `currency`
+- `total_items`
 - `lines[]`
 - `subtotal`
 - `fees`
 - `total`
 
-### CartMutationResult
-Required:
-- `basket_id`
-- `venue_id`
-- `mutation`
+Each line includes:
 - `line_id`
+- `item_id`
+- `name`
+- `count`
+- `options[]`
+- `price`
+- `line_total`
+
+### CartMutationResult (`cart add`, `cart remove`, `cart clear`)
+Required:
+- `mutation`
 - `total_items`
 - `total`
 
-### CheckoutPreview
+Conditional by mutation:
+- `add`: `basket_id`, `venue_id`, `line_id`
+- `remove`: `basket_id`, `venue_id`, `line_id`, `removed_count`
+- `clear`: `basket_ids[]`, `cleared_baskets`
+
+### CheckoutPreview (`checkout preview`)
 Required:
+- `basket_id`
+- `venue_id`
+- `venue_name`
+- `venue_slug`
+- `selection`
 - `payable_amount`
 - `checkout_rows[]`
 - `delivery_configs[]`
 - `offers`
 - `tip_config`
 
-### DeliveryModes
-Required:
-- `modes[]:{label,schedule,estimate,additional_fee}`
-
-### CheckoutQuote
-Required:
-- `payable_amount`
-- `selected_delivery_mode`
-- `selected_tip`
-- `payment_breakdown`
-- `purchase_validation`
-
-### OrderList
-Required:
-- `next_cursor`
-- `orders[]:{purchase_id,received_at,status,venue_name,total_amount,is_active}`
-
-### OrderDetail
-Required:
-- `order_id`
-- `order_number`
-- `status`
-- `items[]`
-- `fees`
-- `discounts`
-- `payments`
-- `delivery_method`
-
-### ProfileSummary
+### ProfileSummary (`profile show`)
 Required:
 - `user_id`
 - `name`
@@ -210,10 +224,19 @@ Required:
 - `phone_masked`
 - `country`
 
-### AddressList
+### AddressList (`profile addresses`)
 Required:
-- `addresses[]:{address_id,label,street,city,lat,lon,is_default}`
+- `addresses[]:{address_id,label,street,is_default}`
+- `profile_default_address_id`
 
-### PaymentMethodList
+Optional:
+- none
+
+### AddressLinks (`profile addresses links`)
+Required:
+- `address_id`
+- `links:{address_link,entrance_link,coordinates_link}`
+
+### PaymentMethodList (`profile payments`)
 Required:
 - `methods[]:{method_id,type,label,is_default,is_available_for_checkout}`

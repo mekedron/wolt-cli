@@ -5,52 +5,50 @@ import styles from './styles.module.css';
 
 type FeatureItem = {
   title: string;
-  Svg: React.ComponentType<React.ComponentProps<'svg'>>;
+  badge: string;
   description: ReactNode;
 };
 
 const FeatureList: FeatureItem[] = [
   {
-    title: 'Easy to Use',
-    Svg: require('@site/static/img/undraw_docusaurus_mountain.svg').default,
+    title: 'Auth-first workflows',
+    badge: 'AUTH',
     description: (
       <>
-        Docusaurus was designed from the ground up to be easily installed and
-        used to get your website up and running quickly.
+        `--wtoken`, `--wrtoken`, and cookie fallbacks are documented with real
+        request paths and token-rotation behavior.
       </>
     ),
   },
   {
-    title: 'Focus on What Matters',
-    Svg: require('@site/static/img/undraw_docusaurus_tree.svg').default,
+    title: 'Cart and checkout preview',
+    badge: 'CART',
     description: (
       <>
-        Docusaurus lets you focus on your docs, and we&apos;ll do the chores. Go
-        ahead and move your docs into the <code>docs</code> directory.
+        Safe endpoint coverage for basket add/remove/clear and checkout totals
+        preview, without order placement.
       </>
     ),
   },
   {
-    title: 'Powered by React',
-    Svg: require('@site/static/img/undraw_docusaurus_react.svg').default,
+    title: 'Address-book and map validation',
+    badge: 'ADDR',
     description: (
       <>
-        Extend or customize your website layout by reusing React. Docusaurus can
-        be extended while reusing the same header and footer.
+        Profile address CRUD plus `profile addresses links` for direct Google
+        Maps validation of address and entrance details.
       </>
     ),
   },
 ];
 
-function Feature({title, Svg, description}: FeatureItem) {
+function Feature({title, badge, description}: FeatureItem) {
   return (
-    <div className={clsx('col col--4')}>
-      <div className="text--center">
-        <Svg className={styles.featureSvg} role="img" />
-      </div>
-      <div className="text--center padding-horiz--md">
-        <Heading as="h3">{title}</Heading>
-        <p>{description}</p>
+    <div className={clsx('col col--4', styles.cardWrap)}>
+      <div className={styles.card}>
+        <span className={styles.badge}>{badge}</span>
+        <Heading as="h3" className={styles.title}>{title}</Heading>
+        <p className={styles.description}>{description}</p>
       </div>
     </div>
   );
@@ -60,6 +58,13 @@ export default function HomepageFeatures(): ReactNode {
   return (
     <section className={styles.features}>
       <div className="container">
+        <div className={styles.topLine}>
+          <Heading as="h2">Built for practical usage</Heading>
+          <p>
+            Reference-focused docs for the actual command surface. This site is
+            maintained by the community, independently.
+          </p>
+        </div>
         <div className="row">
           {FeatureList.map((props, idx) => (
             <Feature key={idx} {...props} />

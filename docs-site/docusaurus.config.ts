@@ -5,8 +5,8 @@ import type * as Preset from '@docusaurus/preset-classic';
 // This runs in Node.js - Don't use client-side code here (browser APIs, JSX...)
 
 const config: Config = {
-  title: 'wolt-cli docs',
-  tagline: 'Documentation for the wolt-cli project',
+  title: 'wolt-cli',
+  tagline: 'Independent CLI docs for discovery, carts, and checkout preview',
   favicon: 'img/favicon.ico',
 
   // Future flags, see https://docusaurus.io/docs/api/docusaurus-config#future
@@ -15,15 +15,12 @@ const config: Config = {
   },
 
   // Set the production url of your site here
-  url: 'https://your-docusaurus-site.example.com',
-  // Set the /<baseUrl>/ pathname under which your site is served
-  // For GitHub pages deployment, it is often '/<projectName>/'
+  url: 'https://valaraucoo.github.io',
+  // Set the /<baseUrl>/ pathname under which your site is served.
   baseUrl: '/',
 
-  // GitHub pages deployment config.
-  // If you aren't using GitHub pages, you don't need these.
-  organizationName: 'facebook', // Usually your GitHub org/user name.
-  projectName: 'docusaurus', // Usually your repo name.
+  organizationName: 'Valaraucoo',
+  projectName: 'wolt-cli',
 
   onBrokenLinks: 'throw',
 
@@ -57,7 +54,7 @@ const config: Config = {
           // Please change this to your repo.
           // Remove this to remove the "edit this page" links.
           editUrl:
-            'https://github.com/facebook/docusaurus/tree/main/packages/create-docusaurus/templates/shared/',
+            'https://github.com/Valaraucoo/wolt-cli/tree/master/',
           // Useful options to enforce blogging best practices
           onInlineTags: 'warn',
           onInlineAuthors: 'warn',
@@ -71,15 +68,14 @@ const config: Config = {
   ],
 
   themeConfig: {
-    // Replace with your project's social card
     image: 'img/docusaurus-social-card.jpg',
     colorMode: {
       respectPrefersColorScheme: true,
     },
     navbar: {
-      title: 'My Site',
+      title: 'wolt-cli',
       logo: {
-        alt: 'My Site Logo',
+        alt: 'wolt-cli logo',
         src: 'img/logo.svg',
       },
       items: [
@@ -87,60 +83,70 @@ const config: Config = {
           type: 'docSidebar',
           sidebarId: 'tutorialSidebar',
           position: 'left',
-          label: 'Docs',
+          label: 'Documentation',
         },
-        {to: '/blog', label: 'Blog', position: 'left'},
+        {to: '/docs/cli-overview', label: 'Getting started', position: 'left'},
+        {to: '/docs/cli-cart-checkout', label: 'Cart and checkout', position: 'left'},
+        {to: '/docs/cli-orders-profile', label: 'Profile', position: 'left'},
         {
-          href: 'https://github.com/facebook/docusaurus',
+          href: 'https://github.com/Valaraucoo/wolt-cli',
           label: 'GitHub',
           position: 'right',
         },
       ],
     },
     footer: {
-      style: 'dark',
+      style: 'light',
       links: [
         {
-          title: 'Docs',
+          title: 'Documentation',
           items: [
             {
-              label: 'List all restaurants',
-              to: '/docs/list-all-restaurants',
+              label: 'CLI overview',
+              to: '/docs/cli-overview',
+            },
+            {
+              label: 'Auth commands',
+              to: '/docs/cli-auth',
+            },
+            {
+              label: 'Cart and checkout',
+              to: '/docs/cli-cart-checkout',
+            },
+            {
+              label: 'Profile commands',
+              to: '/docs/cli-orders-profile',
+            },
+            {
+              label: 'Address book guide',
+              to: '/docs/cli-profile-addresses',
             },
           ],
         },
         {
-          title: 'Community',
+          title: 'Project',
           items: [
             {
-              label: 'Stack Overflow',
-              href: 'https://stackoverflow.com/questions/tagged/docusaurus',
+              label: 'Repository',
+              href: 'https://github.com/Valaraucoo/wolt-cli',
             },
             {
-              label: 'Discord',
-              href: 'https://discordapp.com/invite/docusaurus',
-            },
-            {
-              label: 'X',
-              href: 'https://x.com/docusaurus',
+              label: 'Security',
+              href: 'https://github.com/Valaraucoo/wolt-cli/blob/master/SECURITY.md',
             },
           ],
         },
         {
-          title: 'More',
+          title: 'Notice',
           items: [
             {
-              label: 'Blog',
-              to: '/blog',
-            },
-            {
-              label: 'GitHub',
-              href: 'https://github.com/facebook/docusaurus',
+              label: 'Unofficial and independent',
+              to: '/',
             },
           ],
         },
       ],
-      copyright: `Copyright © ${new Date().getFullYear()} My Project, Inc. Built with Docusaurus.`,
+      copyright: `Copyright © ${new Date().getFullYear()} wolt-cli contributors. This is an unofficial community tool, not affiliated with Wolt. Use is at your own responsibility.`,
     },
     prism: {
       theme: prismThemes.github,

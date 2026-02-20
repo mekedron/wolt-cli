@@ -38,3 +38,18 @@ func asBool(value any) bool {
 	}
 	return false
 }
+
+func asInt(value any) int {
+	switch v := value.(type) {
+	case int:
+		return v
+	case int64:
+		return int(v)
+	case float64:
+		return int(v)
+	case float32:
+		return int(v)
+	default:
+		return 0
+	}
+}

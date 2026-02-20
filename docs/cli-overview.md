@@ -1,100 +1,73 @@
-# Wolt CLI v1 Documentation (Design)
+# Documentation Overview
 
-## Scope
+Current scope:
+- Binary: `wolt`
+- Implemented command groups: `auth`, `discover`, `search`, `venue`, `item`, `cart`, `checkout`, `profile`, `configure`
 
-This documentation defines the **v1 command interface** for a new `wolt` CLI surface.
-Implementation is intentionally deferred. The goal is a complete command contract that can
-be implemented incrementally.
-
-Status on February 19, 2026:
-- Current shipped binary: `wolt`
-- Current shipped commands: `configure`, `discover`, `search`, `venue`, `item`
-
-## Current Implementation Snapshot
-
-Current code in `cmd/wolt/main.go` supports:
-- `wolt configure`: profile and location configuration
-- `wolt discover`: discovery feed and categories
-- `wolt search`: venue and item search
-- `wolt venue`: venue details, menu, and hours
-- `wolt item`: item details by venue slug and item id
-
-Current docs remain valid for the shipped behavior:
-- `docs/cli-discovery-search.md`
-- `docs/cli-venue-item.md`
-
-## v1 Command Taxonomy
-
-Root interface:
+## Root Interface
 
 ```console
 wolt <group> <command> [flags]
 ```
 
-Command groups in v1:
-- `auth`
-- `discover`
-- `search`
-- `venue`
-- `item`
-- `cart`
-- `checkout`
-- `orders`
-- `profile`
+## Global Flags
 
-## Global Flags (Inherited By Every Command)
-
-All commands inherit these global flags:
+All command leaf nodes support:
 - `--format [table|json|yaml]` (default: `table`)
 - `--profile <name>`
 - `--locale <bcp47>`
 - `--no-color`
 - `--output <path>`
+- `--verbose`
+- `--wtoken <token>` for authenticated upstream calls (raw JWT, `Bearer ...`, or payload containing `accessToken`)
+- `--wrtoken <token>` for automatic bearer token rotation (or payload containing `refreshToken`)
+- `--cookie <name=value>` repeatable cookie forwarding for authenticated upstream calls
 
-Machine-readable formats are mandatory for every command:
-- `--format json`
-- `--format yaml`
+When `--wtoken` and `--cookie` are not provided, authenticated commands also
+attempt to use `wtoken`/`wrefresh_token`/`cookies` from the selected profile in local config.
+When refresh credentials are available, expired/401 access tokens are rotated
+automatically and persisted back into the selected profile.
 
-## Safety Model
+## Implemented Authenticated Flows
 
-v1 safety guarantees:
-- `checkout` commands are **read/projection operations only** (`preview`, `delivery-modes`, `quote`)
-- No `order place` command in this phase
-- Any command that mutates baskets must require explicit target parameters and return mutation summaries
+Implemented against observed web endpoints:
+- `GET /v1/user/me` (`auth status`, `profile status`, `profile show`)
+- `GET /v3/user/me/payment_methods` (`profile payments`)
+- `GET https://payment-service.wolt.com/v1/payment-methods/profile` (`profile payments` full web-style methods)
+- `GET /v2/delivery/info` (`profile addresses`, `profile addresses links`)
+- `POST /v2/delivery/info` (`profile addresses add`, `profile addresses update`)
+- `DELETE /v2/delivery/info/{id}` (`profile addresses remove`)
+- `GET /v1/pages/venue-list/profile/favourites` (`profile favorites`, `profile favorites list`)
+- `PUT /v3/venues/favourites/{venue_id}` (`profile favorites add`)
+- `DELETE /v3/venues/favourites/{venue_id}` (`profile favorites remove`)
+- `GET /v1/consumer-api/address-fields` (still available for country/location metadata lookups)
+- `GET /order-xp/v1/baskets/count` (`cart count`)
+- `GET /order-xp/web/v1/pages/baskets` (`cart show`, cart totals refresh)
+- `POST /order-xp/v1/baskets` (`cart add`)
+- `POST /order-xp/v1/baskets/bulk/delete` (`cart clear`, single-basket clear fallback in `cart remove`)
+- `POST /order-xp/web/v2/pages/checkout` (`checkout preview`)
+- `POST https://authentication.wolt.com/v1/wauth2/access_token` (automatic access-token refresh on expiry/401)
+- `GET /order-xp/web/v1/pages/venue/<venue_id>/item/<item_id>` (`item show`, `item options`, option inference in cart/checkout flows)
 
-## Relationship To Existing CLI
+## Safety
 
-Integration strategy with current implementation:
-- Keep existing shipped commands operational during transition
-- Add compatibility mapping docs so users can migrate gradually
-- Preserve profile-based location behavior from current config model
+- `checkout preview` is projection-only and does not place orders.
+- There is no order placement command in this phase.
 
-Compatibility mapping (planned):
-- `wolt configure` -> `wolt profile setup` (future, not in v1 command set yet)
-- `wolt discover` -> `wolt discover *`
-- `wolt search` -> `wolt search *`
-
-## Observed Wolt Endpoint Families (Design Input)
-
-Observed on February 19, 2026 from authenticated web flows:
-- Search: `POST https://restaurant-api.wolt.com/v1/pages/search`
-- Venue static/dynamic: `.../order-xp/web/v1/pages/venue/slug/<slug>/static`, `.../dynamic`
-- Menu/content: `.../consumer-assortment/...`, `.../venue-content-api/...`
-- Item details: `.../order-xp/web/v1/pages/venue/<venue_id>/item/<item_id>`
-- Basket: `.../order-xp/web/v1/pages/baskets`, `POST .../order-xp/v1/baskets`
-- Checkout projection: `POST .../order-xp/web/v2/pages/checkout`
-- Order history: `GET .../order-tracking-api/v1/order_history`, `.../purchase/<id>`
-- Payment methods context: `POST https://payment-service.wolt.com/v1/payment-methods/checkout`
-
-These endpoints are implementation guidance only and may change without notice.
-
-## Quick Start Examples (Design Target)
+## Quick Start
 
 ```console
-wolt search venues --query burger --format table
-wolt search venues --query burger --format json
-wolt venue menu burger-king-finnoo --include-options --format yaml
-wolt cart add 629f1f18480882d6f02c25f0 676939cb70769df4cec6cc6f --count 1 --option size=large --format json
-wolt checkout quote --delivery-mode standard --address-id 6916f0f4cbcd388b5e76b8d7 --format yaml
-wolt orders list --limit 20 --format json
+wolt auth status --wtoken <token> --format json
+wolt profile status --wtoken <token> --format json
+wolt item options burger-king-finnoo <item-id> --format json
+wolt cart show --wtoken <token> --format json
+wolt cart add <venue-id> <item-id> --count 1 --wtoken <token> --format json
+wolt cart remove <item-id> --count 1 --wtoken <token> --format json
+wolt cart clear --wtoken <token> --format json
+wolt checkout preview --wtoken <token> --delivery-mode standard --format json
+wolt profile payments --wtoken <token> --format json
+wolt profile payments --wtoken <token> --label revolut --format json
+wolt profile favorites --wtoken <token> --format json
+wolt profile favorites add rioni-espoo --wtoken <token> --format json
+wolt profile favorites remove 5a8426f188b5de000b8857bb --wtoken <token> --format json
 ```

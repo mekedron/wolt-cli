@@ -1,116 +1,40 @@
-# Orders and Profile Commands
+# Profile Commands
+
+Included commands:
+- `wolt profile status`
+- `wolt profile show`
+- `wolt profile addresses`
+- `wolt profile payments`
+- `wolt profile favorites`
 
 All commands in this document support:
-- `--format json`
-- `--format yaml`
+- global flags:
+  - `--format [table|json|yaml]`
+  - `--profile <name>`
+  - `--locale <bcp47>`
+  - `--no-color`
+  - `--output <path>`
+  - `--verbose`
+  - `--wrtoken <token>`
+- auth via one of:
+  - `--wtoken <token>`
+  - `--wrtoken <token>`
+  - `--cookie <name=value>`
+  - `profile.wtoken`, `profile.wrefresh_token`, or `profile.cookies` from selected/default local profile
 
-Global flags inherited by each command:
-- `--format [table|json|yaml]`
-- `--profile <name>`
-- `--locale <bcp47>`
-- `--no-color`
-- `--output <path>`
-
-## wolt orders list
-
-Synopsis:
-
-```console
-wolt orders list [--limit <n>] [--cursor <token>] [--status <value>] [global flags]
-```
-
-Arguments:
-- none
-
-Options:
-- `--format [json|yaml]`: machine-readable output
-- `--limit`: max number of orders returned
-- `--cursor`: pagination cursor
-- `--status`: filter by status (`delivered`, `cancelled`, `rejected`, etc.)
-
-Output schema:
-- `OrderList`
-
-Examples:
-
-```console
-wolt orders list --limit 20 --format json
-wolt orders list --status delivered --format yaml
-```
-
-JSON example:
-
-```json
-{
-  "meta": {
-    "request_id": "req_orders_list_001",
-    "generated_at": "2026-02-19T21:40:00Z",
-    "profile": "default",
-    "locale": "en-FI"
-  },
-  "data": {
-    "next_cursor": "2025-12-03T14:40:50.585Z",
-    "orders": [
-      {
-        "purchase_id": "69917e931d9361b2ffcb241c",
-        "received_at": "2026-02-15T10:06:00Z",
-        "status": "delivered",
-        "venue_name": "Burger King Iso Omena",
-        "total_amount": "€15.38",
-        "is_active": false
-      }
-    ]
-  },
-  "warnings": []
-}
-```
-
-YAML example:
-
-```yaml
-meta:
-  request_id: req_orders_list_001
-  generated_at: "2026-02-19T21:40:00Z"
-  profile: default
-  locale: en-FI
-data:
-  next_cursor: "2025-12-03T14:40:50.585Z"
-  orders:
-    - purchase_id: "69917e931d9361b2ffcb241c"
-      received_at: "2026-02-15T10:06:00Z"
-      status: delivered
-      venue_name: Burger King Iso Omena
-      total_amount: "€15.38"
-      is_active: false
-warnings: []
-```
-
-## `wolt orders show <purchase-id>`
+## `wolt profile status`
 
 Synopsis:
 
 ```console
-wolt orders show <purchase-id> [--include payments,fees,items] [global flags]
+wolt profile status [global flags]
 ```
 
-Arguments:
-- `<purchase-id>`: order purchase identifier
+Behavior:
+- Calls `GET https://restaurant-api.wolt.com/v1/user/me`
+- Same auth session probe as `wolt auth status`
 
-Options:
-- `--format [json|yaml]`: machine-readable output
-- `--include`: comma-separated optional detail blocks
-
-Output schema:
-- `OrderDetail`
-
-Examples:
-
-```console
-wolt orders show 69917e931d9361b2ffcb241c --include payments,fees,items --format json
-wolt orders show 69917e931d9361b2ffcb241c --format yaml
-```
-
-## wolt profile show
+## `wolt profile show`
 
 Synopsis:
 
@@ -118,24 +42,19 @@ Synopsis:
 wolt profile show [--include personal,settings] [global flags]
 ```
 
-Arguments:
-- none
+Behavior:
+- Calls `GET https://restaurant-api.wolt.com/v1/user/me`
+- Returns `ProfileSummary` shape:
+  - `user_id`
+  - `name`
+  - `email_masked`
+  - `phone_masked`
+  - `country`
+- Optional include blocks:
+  - `personal`
+  - `settings`
 
-Options:
-- `--format [json|yaml]`: machine-readable output
-- `--include`: include additional profile blocks
-
-Output schema:
-- `ProfileSummary`
-
-Examples:
-
-```console
-wolt profile show --include personal,settings --format json
-wolt profile show --format yaml
-```
-
-## wolt profile addresses
+## `wolt profile addresses`
 
 Synopsis:
 
@@ -143,93 +62,125 @@ Synopsis:
 wolt profile addresses [--active-only] [global flags]
 ```
 
-Arguments:
-- none
+Behavior:
+- Calls `GET https://restaurant-api.wolt.com/v2/delivery/info`
+- Returns Wolt saved address-book entries
+- Output includes:
+  - `addresses[]`
+  - `profile_default_address_id`
 
-Options:
-- `--format [json|yaml]`: machine-readable output
-- `--active-only`: filter to currently active/usable addresses
+Notes:
+- `--active-only` keeps only the profile-selected default Wolt address ID.
 
-Output schema:
-- `AddressList`
+Subcommands:
 
-Examples:
+### `wolt profile addresses add`
 
 ```console
-wolt profile addresses --active-only --format json
-wolt profile addresses --format yaml
+wolt profile addresses add --address "<text>" --lat <value> --lon <value> [--type <apartment|office|house|outdoor|other>] [--label <home|work|other>] [--alias <text>] [--detail key=value ...] [--set-default-profile] [global flags]
 ```
 
-## wolt profile payments
+- Creates a new Wolt address (`POST /v2/delivery/info`)
+- `--label` controls Wolt address label type
+- `--alias` sets custom label text (for example with `--label other`)
+
+### `wolt profile addresses update <address-id>`
+
+```console
+wolt profile addresses update <address-id> --address "<text>" --lat <value> --lon <value> [--type <...>] [--label <home|work|other>] [--alias <text>] [--detail key=value ...] [--set-default-profile] [global flags]
+```
+
+- Updates an existing address by posting a new version with `previous_version`
+- Uses the same payload shape as Wolt web
+
+### `wolt profile addresses remove <address-id>`
+
+```console
+wolt profile addresses remove <address-id> [global flags]
+```
+
+- Deletes an address (`DELETE /v2/delivery/info/{id}`)
+
+### `wolt profile addresses use <address-id>`
+
+```console
+wolt profile addresses use <address-id> [global flags]
+```
+
+- Sets local profile `wolt_address_id` default pointer
+
+### `wolt profile addresses links [address-id]`
+
+```console
+wolt profile addresses links [address-id] [global flags]
+```
+
+- Generates Google Maps validation links:
+  - `address_link`
+  - `entrance_link`
+  - `coordinates_link`
+- If `address-id` is omitted, uses profile default `wolt_address_id`
+
+## `wolt profile payments`
 
 Synopsis:
 
 ```console
-wolt profile payments [--mask-sensitive] [global flags]
+wolt profile payments [--mask-sensitive] [--label <contains>] [global flags]
 ```
 
-Arguments:
-- none
+Behavior:
+- Calls `GET https://restaurant-api.wolt.com/v3/user/me/payment_methods` (saved methods fallback)
+- Calls `GET https://payment-service.wolt.com/v1/payment-methods/profile` (full payment methods as shown in Wolt web UI)
+- Normalizes response into:
+  - `methods[]:{method_id,type,label,is_default,is_available_for_checkout}`
 
-Options:
-- `--format [json|yaml]`: machine-readable output
-- `--mask-sensitive`: hide full labels for sensitive payment metadata
+`--mask-sensitive` masks payment labels in output.
+`--label` filters methods by case-insensitive label match (for example `--label revolut`).
 
-Output schema:
-- `PaymentMethodList`
+## `wolt profile favorites`
 
-Examples:
+Synopsis:
 
 ```console
-wolt profile payments --mask-sensitive --format json
-wolt profile payments --format yaml
+wolt profile favorites [--lat <value> --lon <value>] [global flags]
 ```
 
-JSON example:
+Behavior:
+- Calls `GET https://consumer-api.wolt.com/v1/pages/venue-list/profile/favourites`
+- Returns normalized favorite venues:
+  - `favorites[]:{venue_id,slug,name,address,rating,is_favorite,url,price_range,currency,country,delivery_price_int,estimate}`
+  - `count`
+- Uses profile location by default; `--lat/--lon` can override.
 
-```json
-{
-  "meta": {
-    "request_id": "req_profile_payments_001",
-    "generated_at": "2026-02-19T21:45:00Z",
-    "profile": "default",
-    "locale": "en-FI"
-  },
-  "data": {
-    "methods": [
-      {
-        "method_id": "pm_card_01",
-        "type": "card",
-        "label": "Visa •••• 4242",
-        "is_default": true,
-        "is_available_for_checkout": true
-      }
-    ]
-  },
-  "warnings": []
-}
+Subcommands:
+
+### `wolt profile favorites list`
+
+```console
+wolt profile favorites list [--lat <value> --lon <value>] [global flags]
 ```
 
-YAML example:
+- Explicit list alias for `wolt profile favorites`
 
-```yaml
-meta:
-  request_id: req_profile_payments_001
-  generated_at: "2026-02-19T21:45:00Z"
-  profile: default
-  locale: en-FI
-data:
-  methods:
-    - method_id: pm_card_01
-      type: card
-      label: Visa •••• 4242
-      is_default: true
-      is_available_for_checkout: true
-warnings: []
+### `wolt profile favorites add <venue-id-or-slug>`
+
+```console
+wolt profile favorites add <venue-id-or-slug> [global flags]
 ```
 
-## Integration Notes (Current Implementation)
+- Marks a venue as favorite:
+  - resolves a 24-char Wolt venue ID directly
+  - resolves slug from a Wolt venue URL or slug input (for example `rioni-espoo`)
+- Calls `PUT https://restaurant-api.wolt.com/v3/venues/favourites/{venue_id}`
 
-Current `wolt configure` stores local profiles with address and geocoded
-location in `~/.wolt/.wolt-config.json`. New `wolt profile` commands
-must coexist with this local profile concept.
+### `wolt profile favorites remove <venue-id-or-slug>`
+
+```console
+wolt profile favorites remove <venue-id-or-slug> [global flags]
+```
+
+- Removes a venue from favorites:
+  - resolves a 24-char Wolt venue ID directly
+  - resolves slug from a Wolt venue URL or slug input
+- Calls `DELETE https://restaurant-api.wolt.com/v3/venues/favourites/{venue_id}`

@@ -2,9 +2,25 @@ package wolt
 
 import (
 	"context"
+	"strings"
 
 	"github.com/Valaraucoo/wolt-cli/internal/domain"
 )
+
+// AuthContext stores optional auth credentials for upstream calls.
+type AuthContext struct {
+	WToken       string
+	RefreshToken string
+	Cookies      []string
+}
+
+// HasCredentials reports whether at least one auth method is provided.
+func (a AuthContext) HasCredentials() bool {
+	if strings.TrimSpace(a.WToken) != "" {
+		return true
+	}
+	return len(a.Cookies) > 0
+}
 
 // API describes all Wolt upstream operations used by the CLI.
 type API interface {
@@ -17,4 +33,34 @@ type API interface {
 	VenuePageDynamic(ctx context.Context, slug string) (map[string]any, error)
 	VenueItemPage(ctx context.Context, venueID, itemID string) (map[string]any, error)
 	ItemBySlug(ctx context.Context, location domain.Location, slug string) (*domain.Item, error)
+	UserMe(ctx context.Context, auth AuthContext) (map[string]any, error)
+	PaymentMethods(ctx context.Context, auth AuthContext) (map[string]any, error)
+	PaymentMethodsProfile(ctx context.Context, auth AuthContext, options PaymentMethodsProfileOptions) (map[string]any, error)
+	AddressFields(ctx context.Context, location domain.Location, language string, auth AuthContext) (map[string]any, error)
+	DeliveryInfoList(ctx context.Context, auth AuthContext) (map[string]any, error)
+	DeliveryInfoCreate(ctx context.Context, payload map[string]any, auth AuthContext) (map[string]any, error)
+	DeliveryInfoDelete(ctx context.Context, addressID string, auth AuthContext) (map[string]any, error)
+	FavoriteVenues(ctx context.Context, location domain.Location, auth AuthContext) (map[string]any, error)
+	FavoriteVenueAdd(ctx context.Context, venueID string, auth AuthContext) (map[string]any, error)
+	FavoriteVenueRemove(ctx context.Context, venueID string, auth AuthContext) (map[string]any, error)
+	BasketCount(ctx context.Context, auth AuthContext) (map[string]any, error)
+	BasketsPage(ctx context.Context, location domain.Location, auth AuthContext) (map[string]any, error)
+	AddToBasket(ctx context.Context, payload map[string]any, auth AuthContext) (map[string]any, error)
+	DeleteBaskets(ctx context.Context, basketIDs []string, auth AuthContext) (map[string]any, error)
+	CheckoutPreview(ctx context.Context, payload map[string]any, auth AuthContext) (map[string]any, error)
+	RefreshAccessToken(ctx context.Context, refreshToken string, auth AuthContext) (TokenRefreshResult, error)
+}
+
+// PaymentMethodsProfileOptions controls payment profile endpoint query params.
+type PaymentMethodsProfileOptions struct {
+	Country          string
+	AvailableMethods []string
+	IsFTU            bool
+}
+
+// TokenRefreshResult stores rotated access/refresh credentials.
+type TokenRefreshResult struct {
+	AccessToken  string
+	RefreshToken string
+	ExpiresIn    int
 }
