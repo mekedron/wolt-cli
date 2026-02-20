@@ -18,7 +18,7 @@ const sidebars: SidebarsConfig = {
       type: 'category',
       label: 'Start Here',
       collapsed: false,
-      items: ['cli-overview', 'cli-installation', 'cli-auth'],
+      items: ['cli-installation', 'cli-overview', 'cli-auth'],
     },
     {
       type: 'category',

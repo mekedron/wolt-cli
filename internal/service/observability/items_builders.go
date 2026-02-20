@@ -11,9 +11,13 @@ import (
 func BuildVenueMenu(venueID string, payloads []map[string]any, category string, includeOptions bool, limit *int) (map[string]any, []string) {
 	warnings := []string{}
 	menuItems := []map[string]any{}
+	isWoltPlus := false
 
 	for _, payload := range payloads {
 		menuItems = append(menuItems, ExtractMenuItems(payload, venueID, "")...)
+		if !isWoltPlus && payloadVenueWoltPlus(payload) {
+			isWoltPlus = true
+		}
 	}
 
 	if strings.TrimSpace(category) != "" {
@@ -40,6 +44,7 @@ func BuildVenueMenu(venueID string, payloads []map[string]any, category string, 
 			"item_id":    item["item_id"],
 			"name":       item["name"],
 			"base_price": item["base_price"],
+			"discounts":  item["discounts"],
 		}
 		if includeOptions {
 			row["option_group_ids"] = item["option_group_ids"]
@@ -55,9 +60,58 @@ func BuildVenueMenu(venueID string, payloads []map[string]any, category string, 
 
 	return map[string]any{
 		"venue_id":   venueID,
+		"wolt_plus":  isWoltPlus,
 		"categories": categories,
 		"items":      rows,
 	}, warnings
+}
+
+func payloadVenueWoltPlus(payload map[string]any) bool {
+	venue := toMap(payload["venue"])
+	venueRaw := toMap(payload["venue_raw"])
+	if boolValue(payload["show_wolt_plus"]) || boolValue(payload["wolt_plus"]) ||
+		boolValue(venue["show_wolt_plus"]) || boolValue(venue["wolt_plus"]) ||
+		boolValue(venueRaw["show_wolt_plus"]) || boolValue(venueRaw["wolt_plus"]) {
+		return true
+	}
+	if payloadHasWoltPlusText(payload) || payloadHasWoltPlusText(venue) || payloadHasWoltPlusText(venueRaw) {
+		return true
+	}
+	return false
+}
+
+func payloadHasWoltPlusText(payload map[string]any) bool {
+	if payload == nil {
+		return false
+	}
+	candidates := []string{
+		stringFromAny(payload["icon"]),
+		stringFromAny(payload["badge"]),
+		stringFromAny(payload["badge_text"]),
+	}
+	for _, candidate := range candidates {
+		if isWoltPlusText(candidate) {
+			return true
+		}
+	}
+	for _, key := range []string{"badges", "telemetry_venue_badges", "tags"} {
+		for _, rawValue := range toSlice(payload[key]) {
+			valueMap := toMap(rawValue)
+			if valueMap != nil {
+				if isWoltPlusText(stringFromAny(valueMap["text"])) ||
+					isWoltPlusText(stringFromAny(valueMap["title"])) ||
+					isWoltPlusText(stringFromAny(valueMap["name"])) ||
+					isWoltPlusText(stringFromAny(valueMap["variant"])) {
+					return true
+				}
+				continue
+			}
+			if isWoltPlusText(stringFromAny(rawValue)) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // BuildItemSearchResult normalizes item search and fallback data.

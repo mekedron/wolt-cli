@@ -38,7 +38,7 @@ func deliveryFeeMap(amount *int, currency string) map[string]any {
 }
 
 // BuildDiscoveryFeed normalizes front-page sections.
-func BuildDiscoveryFeed(sections []domain.Section, city string, limit *int) map[string]any {
+func BuildDiscoveryFeed(sections []domain.Section, city string, limit *int, woltPlusOnly bool) map[string]any {
 	resolvedSections := limitSlice(sections, limit)
 	sectionRows := make([]map[string]any, 0, len(resolvedSections))
 
@@ -49,9 +49,17 @@ func BuildDiscoveryFeed(sections []domain.Section, city string, limit *int) map[
 			if item.Venue == nil {
 				continue
 			}
+			isWoltPlus := venueWoltPlus(item.Venue)
+			if woltPlusOnly && !isWoltPlus {
+				continue
+			}
 			var ratingValue any
 			if item.Venue.Rating != nil {
 				ratingValue = item.Venue.Rating.Score
+			}
+			var priceRangeValue any
+			if item.Venue.PriceRange > 0 {
+				priceRangeValue = item.Venue.PriceRange
 			}
 			rows = append(rows, map[string]any{
 				"venue_id":          domain.NormalizeID(coalesce(item.Venue.ID, item.Link.Target)),
@@ -60,7 +68,14 @@ func BuildDiscoveryFeed(sections []domain.Section, city string, limit *int) map[
 				"rating":            ratingValue,
 				"delivery_estimate": item.Venue.FormatEstimateRange(),
 				"delivery_fee":      deliveryFeeMap(item.Venue.DeliveryPriceInt, item.Venue.Currency),
+				"price_range":       priceRangeValue,
+				"price_range_scale": priceRangeScale(item.Venue.PriceRange),
+				"promotions":        venuePromotionTexts(item.Venue),
+				"wolt_plus":         isWoltPlus,
 			})
+		}
+		if woltPlusOnly && len(rows) == 0 {
+			continue
 		}
 		title := section.Title
 		if title == "" {
@@ -78,7 +93,7 @@ func BuildDiscoveryFeed(sections []domain.Section, city string, limit *int) map[
 		resolvedCity = "unknown"
 	}
 
-	return map[string]any{"city": resolvedCity, "sections": sectionRows}
+	return map[string]any{"city": resolvedCity, "wolt_plus_only": woltPlusOnly, "sections": sectionRows}
 }
 
 // BuildCategoryList extracts category slugs from section tags.
@@ -276,6 +291,10 @@ func BuildVenueSearchResult(
 		if item.Venue.Rating != nil {
 			ratingValue = item.Venue.Rating.Score
 		}
+		var priceRangeValue any
+		if item.Venue.PriceRange > 0 {
+			priceRangeValue = item.Venue.PriceRange
+		}
 		rows = append(rows, map[string]any{
 			"venue_id":          domain.NormalizeID(coalesce(item.Venue.ID, item.Link.Target)),
 			"slug":              item.Venue.Slug,
@@ -284,7 +303,10 @@ func BuildVenueSearchResult(
 			"rating":            ratingValue,
 			"delivery_estimate": item.Venue.FormatEstimateRange(),
 			"delivery_fee":      deliveryFeeMap(item.Venue.DeliveryPriceInt, item.Venue.Currency),
-			"wolt_plus":         item.Venue.ShowWoltPlus,
+			"price_range":       priceRangeValue,
+			"price_range_scale": priceRangeScale(item.Venue.PriceRange),
+			"promotions":        venuePromotionTexts(item.Venue),
+			"wolt_plus":         venueWoltPlus(item.Venue),
 		})
 	}
 
@@ -293,6 +315,120 @@ func BuildVenueSearchResult(
 		"total": total,
 		"items": rows,
 	}, warnings
+}
+
+func priceRangeScale(level int) string {
+	if level <= 0 {
+		return "-"
+	}
+	if level > 5 {
+		level = 5
+	}
+	return strings.Repeat("$", level)
+}
+
+func venuePromotionTexts(venue *domain.Venue) []string {
+	if venue == nil {
+		return []string{}
+	}
+	out := []string{}
+	seen := map[string]struct{}{}
+	appendLabel := func(raw string) {
+		normalized := strings.TrimSpace(raw)
+		if normalized == "" {
+			return
+		}
+		if _, exists := seen[normalized]; exists {
+			return
+		}
+		seen[normalized] = struct{}{}
+		out = append(out, normalized)
+	}
+
+	for _, promotionRaw := range venue.Promotions {
+		switch promotion := promotionRaw.(type) {
+		case string:
+			appendLabel(promotion)
+		case map[string]any:
+			appendLabel(firstNonEmptyString(promotion, "text", "title", "name", "label", "description"))
+		case map[string]string:
+			appendLabel(firstNonEmptyStringFromStringMap(promotion, "text", "title", "name", "label", "description"))
+		}
+	}
+
+	for _, badge := range venue.Badges {
+		variant := strings.ToLower(strings.TrimSpace(badge.Variant))
+		if strings.Contains(variant, "discount") || strings.Contains(variant, "promotion") {
+			appendLabel(badge.Text)
+		}
+	}
+
+	return out
+}
+
+func venueWoltPlus(venue *domain.Venue) bool {
+	if venue == nil {
+		return false
+	}
+	if venue.ShowWoltPlus {
+		return true
+	}
+	if isWoltPlusText(venue.Icon) {
+		return true
+	}
+	for _, tag := range venue.Tags {
+		if isWoltPlusText(tag) {
+			return true
+		}
+	}
+	for _, badge := range venue.Badges {
+		if isWoltPlusText(badge.Text) || isWoltPlusText(badge.Variant) {
+			return true
+		}
+	}
+	for _, promotion := range venuePromotionTexts(venue) {
+		if isWoltPlusText(promotion) {
+			return true
+		}
+	}
+	return false
+}
+
+func isWoltPlusText(raw string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(raw))
+	if normalized == "" {
+		return false
+	}
+	switch normalized {
+	case "wolt+", "wolt plus", "wolt-plus", "wolt_plus":
+		return true
+	default:
+		return strings.Contains(normalized, "wolt+") || strings.Contains(normalized, "wolt plus") || strings.Contains(normalized, "wolt-plus") || strings.Contains(normalized, "wolt_plus")
+	}
+}
+
+func firstNonEmptyString(payload map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if value, ok := payload[key]; ok {
+			resolved := strings.TrimSpace(stringValue(value))
+			if resolved != "" {
+				return resolved
+			}
+		}
+	}
+	return ""
+}
+
+func firstNonEmptyStringFromStringMap(payload map[string]string, keys ...string) string {
+	for _, key := range keys {
+		if value, ok := payload[key]; ok {
+			resolved := strings.TrimSpace(value)
+			if resolved != "" {
+				return resolved
+			}
+		}
+	}
+	return ""
 }
 
 // BuildVenueDetail normalizes venue detail payload.

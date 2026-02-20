@@ -30,12 +30,14 @@ type Venue struct {
 	Name             string   `json:"name"`
 	Address          string   `json:"address"`
 	Badges           []Badge  `json:"badges"`
+	Promotions       []any    `json:"promotions"`
 	Country          string   `json:"country"`
 	Currency         string   `json:"currency"`
 	Delivers         bool     `json:"delivers"`
 	DeliveryPriceInt *int     `json:"delivery_price_int"`
 	EstimateRange    string   `json:"estimate_range"`
 	Estimate         float64  `json:"estimate"`
+	Icon             string   `json:"icon"`
 	Online           *bool    `json:"online"`
 	ProductLine      string   `json:"product_line"`
 	ShowWoltPlus     bool     `json:"show_wolt_plus"`

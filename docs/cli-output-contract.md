@@ -91,6 +91,7 @@ Required:
 - `user_id`
 - `country`
 - `session_expires_at`
+- `wolt_plus_subscriber`
 
 Optional:
 - `token_preview` (when `--verbose`)
@@ -99,7 +100,20 @@ Optional:
 ### DiscoveryFeed (`discover feed`)
 Required:
 - `city`
+- `wolt_plus_only`
 - `sections[]`
+
+Each `sections[].items[]` row includes:
+- `venue_id`
+- `slug`
+- `name`
+- `rating`
+- `delivery_estimate`
+- `delivery_fee`
+- `price_range` (integer level, may be null)
+- `price_range_scale` (for example `$`, `$$`, `$$$`)
+- `promotions[]` (active venue promotion labels)
+- `wolt_plus`
 
 ### CategoryList (`discover categories`)
 Required:
@@ -109,7 +123,7 @@ Required:
 Required:
 - `query`
 - `total`
-- `items[]:{venue_id,slug,name,address,rating,delivery_estimate,delivery_fee,wolt_plus}`
+- `items[]:{venue_id,slug,name,address,rating,delivery_estimate,delivery_fee,price_range,price_range_scale,promotions,wolt_plus}`
 
 ### ItemSearchResult (`search items`)
 Required:
@@ -131,8 +145,9 @@ Required:
 ### VenueMenu (`venue menu`)
 Required:
 - `venue_id`
+- `wolt_plus`
 - `categories[]`
-- `items[]:{item_id,name,base_price}`
+- `items[]:{item_id,name,base_price,discounts}`
 
 Optional:
 - `option_group_ids` (when `--include-options`)

@@ -5,14 +5,18 @@ Shared/global flags are documented in `cli-overview`.
 ## `wolt venue show <slug>`
 
 ```console
-wolt venue show <slug> [--include hours,tags,rating,fees] [global flags]
+wolt venue show <slug> [--include hours,tags,rating,fees] [--address "<text>"] [global flags]
 ```
 
 Options:
 - `--include`: comma-separated optional sections
+- `--address`: temporary location override for slug lookup
 
 Output schema:
 - `VenueDetail`
+
+Notes:
+- if the restaurant detail endpoint is unavailable for a venue, CLI falls back to static venue payload and returns basic venue fields with warnings.
 
 ## `wolt venue menu <slug>`
 
@@ -33,17 +37,25 @@ Behavior:
 Output schema:
 - `VenueMenu`
 
+Notes:
+- venue payload includes `wolt_plus` participation flag
+- each menu item includes `discounts[]` when promotion metadata is present upstream
+
 ## `wolt venue hours <slug>`
 
 ```console
-wolt venue hours <slug> [--timezone <iana>] [global flags]
+wolt venue hours <slug> [--timezone <iana>] [--address "<text>"] [global flags]
 ```
 
 Options:
 - `--timezone`: output timezone (for example `Europe/Helsinki`)
+- `--address`: temporary location override for slug lookup
 
 Output schema:
 - `VenueHours`
+
+Notes:
+- if the restaurant detail endpoint is unavailable, CLI returns fallback hours payload with empty opening windows and a warning.
 
 ## `wolt item show <venue-slug> <item-id>`
 

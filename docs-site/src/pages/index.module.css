@@ -17,6 +17,13 @@
   animation: fadeSlideUp 520ms ease-out;
 }
 
+.brandLockup {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  margin: 0 0 0.35rem;
+}
+
 .kicker {
   display: inline-block;
   margin: 0 0 0.8rem;
@@ -39,6 +46,15 @@
   color: #1d2739;
 }
 
+.heroLogo {
+  display: block;
+  width: clamp(72px, 10vw, 108px);
+  height: auto;
+  border-radius: 0;
+  border: 0;
+  box-shadow: none;
+}
+
 .heroSubtitle {
   margin: 1rem 0 1.25rem;
   max-width: 44rem;
@@ -59,6 +75,13 @@
   .heroSubtitle {
     margin-bottom: 1rem;
     font-size: 1rem;
+  }
+
+  .brandLockup {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin-bottom: 0.15rem;
   }
 
   .notice {

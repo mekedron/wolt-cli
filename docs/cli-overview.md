@@ -5,10 +5,25 @@ It is not affiliated with Wolt. Use it at your own responsibility.
 
 ## Start Here
 
+Install via Homebrew tap:
+
+```console
+brew tap mekedron/tap
+brew install wolt-cli
+```
+
+or:
+
+```console
+brew install mekedron/tap/wolt-cli
+```
+
+See `cli-installation` for build-from-source instructions.
+
 First command to run:
 
 ```console
-wolt configure --profile-name default --address "<address>" --overwrite
+wolt configure --profile-name default --wtoken "<token>" --wrtoken "<refresh-token>" --overwrite
 ```
 
 Then validate auth/profile:
@@ -40,6 +55,7 @@ wolt <group> <command> [flags]
 All command leaf nodes support:
 - `--format [table|json|yaml]` (default `table`)
 - `--profile <name>`
+- `--address <text>` (temporary location override; geocoded to coordinates)
 - `--locale <bcp47>`
 - `--no-color`
 - `--output <path>`
@@ -55,25 +71,31 @@ Auth fallback order:
 
 When refresh credentials are available, expired/401 access tokens are rotated automatically and persisted back into the selected profile.
 
-## Shared Location Flags
+## Shared Location Inputs
 
-Location-aware commands support the shared override pair:
+Location-aware commands support:
+- `--address <text>` (temporary address override)
 - `--lat <float>`
 - `--lon <float>`
 
 Rules:
-- provide both flags together
-- if both are omitted, profile location is used
-- if only one is provided, command returns `WOLT_INVALID_ARGUMENT`
+- provide both `--lat` and `--lon` together
+- do not combine `--address` with `--lat/--lon`
+- if all overrides are omitted, profile location is used
+- with only one coordinate flag, command returns `WOLT_INVALID_ARGUMENT`
 
 Used by:
 - `discover feed`, `discover categories`
 - `cart show`, `cart remove`, `cart clear`, `checkout preview`
 - `profile favorites`, `profile favorites list`
+- `search venues`, `search items` (address/profile location only)
+- `venue show`, `venue hours` (address/profile location only)
 
 ## Safety
 
 - `checkout preview` is projection-only and does not place orders.
+- any `--address` / `--lat` / `--lon` override only affects preview/read endpoints.
+- final order placement in Wolt uses the delivery address selected in your Wolt account.
 - There is no order placement command.
 
 ## Quick Reference

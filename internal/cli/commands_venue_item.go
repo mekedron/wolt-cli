@@ -2,10 +2,13 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
 
+	"github.com/mekedron/wolt-cli/internal/domain"
+	woltgateway "github.com/mekedron/wolt-cli/internal/gateway/wolt"
 	"github.com/mekedron/wolt-cli/internal/service/observability"
 	"github.com/mekedron/wolt-cli/internal/service/output"
 	"github.com/spf13/cobra"
@@ -46,31 +49,50 @@ func newVenueShowCommand(deps Dependencies) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			profile, err := deps.Profiles.Find(cmd.Context(), flags.Profile)
+			location, profile, err := resolveProfileLocation(
+				cmd.Context(),
+				deps,
+				flags.Address,
+				flags.Profile,
+				format,
+				flags.Locale,
+				flags.Output,
+				cmd,
+			)
 			if err != nil {
-				return profileError(err, format, flags.Profile, flags.Locale, flags.Output, cmd)
+				return err
 			}
-			item, err := deps.Wolt.ItemBySlug(cmd.Context(), profile.Location, slug)
+			item, venueID, staticPayload, fallbackWarnings, err := resolveVenueBySlug(cmd.Context(), deps, location, slug)
 			if err != nil {
-				return emitUpstreamError(cmd, format, profile.Name, flags.Locale, flags.Output, flags.Verbose, err)
+				return emitUpstreamError(cmd, format, profile, flags.Locale, flags.Output, flags.Verbose, err)
 			}
-			if item == nil {
-				return fmt.Errorf("venue slug %q was not found in profile %q catalog", slug, profile.Name)
+			if item == nil || strings.TrimSpace(venueID) == "" {
+				return fmt.Errorf("venue slug %q was not found in profile %q catalog", slug, profile)
 			}
-			restaurant, err := deps.Wolt.RestaurantByID(cmd.Context(), item.Link.Target)
+			restaurant, err := deps.Wolt.RestaurantByID(cmd.Context(), venueID)
 			if err != nil {
-				return emitUpstreamError(cmd, format, profile.Name, flags.Locale, flags.Output, flags.Verbose, err)
+				if isRecoverableRestaurantError(err) {
+					data, warnings := buildVenueDetailFallback(slug, venueID, item, staticPayload, splitCSV(include))
+					warnings = append(warnings, fallbackWarnings...)
+					if format == output.FormatTable {
+						return writeTable(cmd, buildVenueDetailTable(data), flags.Output)
+					}
+					env := output.BuildEnvelope(profile, flags.Locale, data, warnings, nil)
+					return writeMachinePayload(cmd, env, format, flags.Output)
+				}
+				return emitUpstreamError(cmd, format, profile, flags.Locale, flags.Output, flags.Verbose, err)
 			}
 
 			data, warnings, err := observability.BuildVenueDetail(item, restaurant, splitCSV(include))
 			if err != nil {
 				return err
 			}
+			warnings = append(warnings, fallbackWarnings...)
 
 			if format == output.FormatTable {
 				return writeTable(cmd, buildVenueDetailTable(data), flags.Output)
 			}
-			env := output.BuildEnvelope(profile.Name, flags.Locale, data, warnings, nil)
+			env := output.BuildEnvelope(profile, flags.Locale, data, warnings, nil)
 			return writeMachinePayload(cmd, env, format, flags.Output)
 		},
 	}
@@ -169,27 +191,45 @@ func newVenueHoursCommand(deps Dependencies) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			profile, err := deps.Profiles.Find(cmd.Context(), flags.Profile)
+			location, profile, err := resolveProfileLocation(
+				cmd.Context(),
+				deps,
+				flags.Address,
+				flags.Profile,
+				format,
+				flags.Locale,
+				flags.Output,
+				cmd,
+			)
 			if err != nil {
-				return profileError(err, format, flags.Profile, flags.Locale, flags.Output, cmd)
+				return err
 			}
-			item, err := deps.Wolt.ItemBySlug(cmd.Context(), profile.Location, slug)
+			item, venueID, staticPayload, fallbackWarnings, err := resolveVenueBySlug(cmd.Context(), deps, location, slug)
 			if err != nil {
-				return emitUpstreamError(cmd, format, profile.Name, flags.Locale, flags.Output, flags.Verbose, err)
+				return emitUpstreamError(cmd, format, profile, flags.Locale, flags.Output, flags.Verbose, err)
 			}
-			if item == nil {
-				return fmt.Errorf("venue slug %q was not found in profile %q catalog", slug, profile.Name)
+			if item == nil || strings.TrimSpace(venueID) == "" {
+				return fmt.Errorf("venue slug %q was not found in profile %q catalog", slug, profile)
 			}
-			restaurant, err := deps.Wolt.RestaurantByID(cmd.Context(), item.Link.Target)
+			restaurant, err := deps.Wolt.RestaurantByID(cmd.Context(), venueID)
 			if err != nil {
-				return emitUpstreamError(cmd, format, profile.Name, flags.Locale, flags.Output, flags.Verbose, err)
+				if isRecoverableRestaurantError(err) {
+					data, warnings := buildVenueHoursFallback(venueID, timezone, staticPayload)
+					warnings = append(warnings, fallbackWarnings...)
+					if format == output.FormatTable {
+						return writeTable(cmd, buildVenueHoursTable(data), flags.Output)
+					}
+					env := output.BuildEnvelope(profile, flags.Locale, data, warnings, nil)
+					return writeMachinePayload(cmd, env, format, flags.Output)
+				}
+				return emitUpstreamError(cmd, format, profile, flags.Locale, flags.Output, flags.Verbose, err)
 			}
 
 			data := observability.BuildVenueHours(restaurant, timezone)
 			if format == output.FormatTable {
 				return writeTable(cmd, buildVenueHoursTable(data), flags.Output)
 			}
-			env := output.BuildEnvelope(profile.Name, flags.Locale, data, []string{}, nil)
+			env := output.BuildEnvelope(profile, flags.Locale, data, fallbackWarnings, nil)
 			return writeMachinePayload(cmd, env, format, flags.Output)
 		},
 	}
@@ -197,6 +237,265 @@ func newVenueHoursCommand(deps Dependencies) *cobra.Command {
 	cmd.Flags().StringVar(&timezone, "timezone", "", "Timezone override")
 	addGlobalFlags(cmd, &flags)
 	return cmd
+}
+
+func resolveVenueBySlug(
+	ctx context.Context,
+	deps Dependencies,
+	location domain.Location,
+	slug string,
+) (*domain.Item, string, map[string]any, []string, error) {
+	warnings := []string{}
+	staticPayload := map[string]any{}
+	item, itemErr := deps.Wolt.ItemBySlug(ctx, location, slug)
+	if itemErr == nil && item != nil {
+		venueID := strings.TrimSpace(item.Link.Target)
+		if item.Venue != nil && strings.TrimSpace(asString(item.Venue.ID)) != "" {
+			venueID = strings.TrimSpace(asString(item.Venue.ID))
+		}
+		if venueID != "" {
+			return item, venueID, staticPayload, warnings, nil
+		}
+	}
+	if itemErr != nil {
+		warnings = append(warnings, "venue catalog lookup failed; using static venue payload fallback")
+	}
+
+	staticPayload, staticErr := deps.Wolt.VenuePageStatic(ctx, slug)
+	if staticErr != nil {
+		if itemErr != nil {
+			return nil, "", map[string]any{}, warnings, itemErr
+		}
+		return nil, "", map[string]any{}, warnings, staticErr
+	}
+	venueID := strings.TrimSpace(venueIDFromPayload(staticPayload))
+	if venueID == "" {
+		return nil, "", staticPayload, warnings, nil
+	}
+	if item != nil {
+		if item.Venue == nil {
+			item.Venue = &domain.Venue{}
+		}
+		if strings.TrimSpace(asString(item.Venue.ID)) == "" {
+			item.Venue.ID = venueID
+		}
+		if strings.TrimSpace(item.Venue.Slug) == "" {
+			item.Venue.Slug = strings.TrimSpace(slug)
+		}
+		if strings.TrimSpace(item.Link.Target) == "" {
+			item.Link.Target = venueID
+		}
+		if strings.TrimSpace(item.Title) == "" {
+			item.Title = strings.TrimSpace(asString(coalesceAny(
+				asMap(staticPayload["venue"])["name"],
+				asMap(staticPayload["venue_raw"])["name"],
+				staticPayload["name"],
+				sluggifiedTitle(slug),
+			)))
+		}
+		return item, venueID, staticPayload, warnings, nil
+	}
+
+	return fallbackVenueItemFromStaticPayload(slug, venueID, staticPayload), venueID, staticPayload, warnings, nil
+}
+
+func fallbackVenueItemFromStaticPayload(slug string, venueID string, payload map[string]any) *domain.Item {
+	venuePayload := asMap(payload["venue"])
+	if venuePayload == nil {
+		venuePayload = asMap(payload["venue_raw"])
+	}
+
+	venue := &domain.Venue{
+		ID:       venueID,
+		Slug:     strings.TrimSpace(asString(coalesceAny(venuePayload["slug"], slug))),
+		Name:     strings.TrimSpace(asString(venuePayload["name"])),
+		Address:  strings.TrimSpace(asString(coalesceAny(venuePayload["address"], venuePayload["street_address"]))),
+		Currency: strings.TrimSpace(asString(coalesceAny(venuePayload["currency"], payload["currency"]))),
+	}
+	if venue.Name == "" {
+		venue.Name = sluggifiedTitle(slug)
+	}
+	if deliveryPrice := asInt(coalesceAny(
+		asMap(venuePayload["delivery_fee"])["amount"],
+		venuePayload["delivery_price"],
+		venuePayload["delivery_price_int"],
+	)); deliveryPrice > 0 {
+		venue.DeliveryPriceInt = &deliveryPrice
+	}
+
+	title := venue.Name
+	if title == "" {
+		title = sluggifiedTitle(slug)
+	}
+
+	return &domain.Item{
+		Title: title,
+		Link:  domain.Link{Target: venueID},
+		Venue: venue,
+	}
+}
+
+func sluggifiedTitle(slug string) string {
+	parts := strings.Split(strings.TrimSpace(slug), "-")
+	resolved := make([]string, 0, len(parts))
+	for _, part := range parts {
+		p := strings.TrimSpace(part)
+		if p == "" {
+			continue
+		}
+		resolved = append(resolved, strings.ToUpper(p[:1])+strings.ToLower(p[1:]))
+	}
+	if len(resolved) == 0 {
+		return strings.TrimSpace(slug)
+	}
+	return strings.Join(resolved, " ")
+}
+
+func isRecoverableRestaurantError(err error) bool {
+	var upstreamErr *woltgateway.UpstreamRequestError
+	if !errors.As(err, &upstreamErr) {
+		return false
+	}
+	return upstreamErr.StatusCode == 404 || upstreamErr.StatusCode == 410
+}
+
+func buildVenueDetailFallback(
+	slug string,
+	venueID string,
+	item *domain.Item,
+	staticPayload map[string]any,
+	include map[string]struct{},
+) (map[string]any, []string) {
+	venuePayload := asMap(staticPayload["venue"])
+	if venuePayload == nil {
+		venuePayload = asMap(staticPayload["venue_raw"])
+	}
+
+	name := strings.TrimSpace(asString(coalesceAny(
+		itemTitle(item),
+		venuePayload["name"],
+		staticPayload["name"],
+		sluggifiedTitle(slug),
+	)))
+	address := strings.TrimSpace(asString(coalesceAny(
+		venuePayload["address"],
+		venuePayload["street_address"],
+	)))
+	currency := strings.TrimSpace(asString(coalesceAny(
+		venuePayload["currency"],
+		itemCurrency(item),
+		staticPayload["currency"],
+	)))
+	rating := itemRating(item)
+
+	data := map[string]any{
+		"venue_id":         venueID,
+		"slug":             strings.TrimSpace(asString(coalesceAny(venuePayload["slug"], slug))),
+		"name":             name,
+		"address":          address,
+		"currency":         currency,
+		"rating":           rating,
+		"delivery_methods": []any{},
+		"order_minimum": map[string]any{
+			"amount":           nil,
+			"formatted_amount": nil,
+		},
+	}
+
+	if _, ok := include["hours"]; ok {
+		data["opening_windows"] = []any{}
+	}
+	if _, ok := include["tags"]; ok {
+		tags := asSlice(venuePayload["tags"])
+		if len(tags) == 0 {
+			tags = asSlice(staticPayload["tags"])
+		}
+		resolvedTags := make([]any, 0, len(tags))
+		for _, value := range tags {
+			tag := strings.TrimSpace(asString(value))
+			if tag == "" {
+				continue
+			}
+			resolvedTags = append(resolvedTags, tag)
+		}
+		data["tags"] = resolvedTags
+	}
+	if _, ok := include["rating"]; ok && rating != nil {
+		data["rating_details"] = map[string]any{
+			"score":  rating,
+			"text":   nil,
+			"volume": nil,
+		}
+	}
+	if _, ok := include["fees"]; ok {
+		amount := itemDeliveryFee(item)
+		formatted := any(nil)
+		if amount != nil {
+			formatted = formatMinorAmount(*amount, currency)
+		}
+		data["delivery_fee"] = map[string]any{
+			"amount":           amountValue(amount),
+			"formatted_amount": formatted,
+		}
+	}
+
+	warnings := []string{
+		"restaurant detail endpoint unavailable; showing basic venue details from static payload",
+		"order minimum is unavailable in basic mode and returned as null",
+	}
+	return data, warnings
+}
+
+func buildVenueHoursFallback(venueID string, timezone string, _ map[string]any) (map[string]any, []string) {
+	resolvedTimezone := strings.TrimSpace(timezone)
+	if resolvedTimezone == "" {
+		resolvedTimezone = "UTC"
+	}
+	data := map[string]any{
+		"venue_id":         venueID,
+		"timezone":         resolvedTimezone,
+		"opening_windows":  []any{},
+		"delivery_windows": []any{},
+	}
+	warnings := []string{
+		"restaurant detail endpoint unavailable; opening hours are unavailable in fallback mode",
+	}
+	return data, warnings
+}
+
+func itemTitle(item *domain.Item) string {
+	if item == nil {
+		return ""
+	}
+	return strings.TrimSpace(item.Title)
+}
+
+func itemCurrency(item *domain.Item) string {
+	if item == nil || item.Venue == nil {
+		return ""
+	}
+	return strings.TrimSpace(item.Venue.Currency)
+}
+
+func itemDeliveryFee(item *domain.Item) *int {
+	if item == nil || item.Venue == nil {
+		return nil
+	}
+	return item.Venue.DeliveryPriceInt
+}
+
+func itemRating(item *domain.Item) any {
+	if item == nil || item.Venue == nil || item.Venue.Rating == nil {
+		return nil
+	}
+	return item.Venue.Rating.Score
+}
+
+func amountValue(amount *int) any {
+	if amount == nil {
+		return nil
+	}
+	return *amount
 }
 
 func newItemShowCommand(deps Dependencies) *cobra.Command {
@@ -427,7 +726,7 @@ func hasItemSignals(item map[string]any) bool {
 }
 
 func buildVenueMenuTable(data map[string]any) string {
-	headers := []string{"Item ID", "Name", "Price", "Option groups"}
+	headers := []string{"Item ID", "Name", "Price", "Discounts", "Option groups"}
 	rows := [][]string{}
 	for _, value := range asSlice(data["items"]) {
 		item := asMap(value)
@@ -438,14 +737,23 @@ func buildVenueMenuTable(data map[string]any) string {
 				optionGroups = "-"
 			}
 		}
+		discounts := stringsJoin(asSlice(item["discounts"]), ", ")
+		if discounts == "" {
+			discounts = "-"
+		}
 		rows = append(rows, []string{
 			asString(item["item_id"]),
 			asString(item["name"]),
 			fallbackString(asString(asMap(item["base_price"])["formatted_amount"]), "-"),
+			discounts,
 			optionGroups,
 		})
 	}
-	return output.RenderTable("Venue menu: "+asString(data["venue_id"]), headers, rows)
+	title := "Venue menu: " + asString(data["venue_id"])
+	if asBool(data["wolt_plus"]) {
+		title += " (Wolt+)"
+	}
+	return output.RenderTable(title, headers, rows)
 }
 
 func buildVenueHoursTable(data map[string]any) string {

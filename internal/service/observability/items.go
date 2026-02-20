@@ -409,10 +409,92 @@ func ExtractMenuItems(payload map[string]any, venueID string, venueSlug string) 
 			"option_group_ids": extractOptionGroupIDs(obj),
 			"category":         categoryName,
 			"is_sold_out":      isSoldOut,
+			"discounts":        extractDiscountLabels(obj),
 		})
 	}
 
 	return items
+}
+
+func extractDiscountLabels(node map[string]any) []string {
+	out := []string{}
+	seen := map[string]struct{}{}
+	appendLabel := func(raw string) {
+		normalized := strings.TrimSpace(raw)
+		if normalized == "" {
+			return
+		}
+		if _, exists := seen[normalized]; exists {
+			return
+		}
+		seen[normalized] = struct{}{}
+		out = append(out, normalized)
+	}
+
+	for _, key := range []string{
+		"promotions",
+		"promotion",
+		"discounts",
+		"discount",
+		"offers",
+		"offer",
+		"campaigns",
+	} {
+		appendDiscountLabels(node[key], appendLabel)
+	}
+	for _, key := range []string{"discount_text", "promotion_text", "offer_text"} {
+		appendLabel(stringFromAny(node[key]))
+	}
+
+	for _, rawBadge := range toSlice(node["badges"]) {
+		badge := toMap(rawBadge)
+		if badge == nil {
+			continue
+		}
+		variant := strings.ToLower(strings.TrimSpace(stringFromAny(badge["variant"])))
+		if strings.Contains(variant, "discount") || strings.Contains(variant, "promotion") {
+			appendLabel(firstDiscountText(badge))
+		}
+	}
+	return out
+}
+
+func appendDiscountLabels(value any, appendLabel func(string)) {
+	switch typed := value.(type) {
+	case string:
+		appendLabel(typed)
+	case []any:
+		for _, nested := range typed {
+			appendDiscountLabels(nested, appendLabel)
+		}
+	case map[string]any:
+		appendLabel(firstDiscountText(typed))
+		for _, key := range []string{"items", "values", "promotions", "discounts", "offers", "labels"} {
+			appendDiscountLabels(typed[key], appendLabel)
+		}
+	case map[string]string:
+		appendLabel(firstDiscountTextFromStringMap(typed))
+	}
+}
+
+func firstDiscountText(payload map[string]any) string {
+	for _, key := range []string{"text", "title", "name", "label", "description"} {
+		value := strings.TrimSpace(stringFromAny(payload[key]))
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func firstDiscountTextFromStringMap(payload map[string]string) string {
+	for _, key := range []string{"text", "title", "name", "label", "description"} {
+		value := strings.TrimSpace(payload[key])
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func categoryByItemID(payload map[string]any) map[string]any {

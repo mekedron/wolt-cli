@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/mekedron/wolt-cli/internal/domain"
 	woltgateway "github.com/mekedron/wolt-cli/internal/gateway/wolt"
 	"github.com/mekedron/wolt-cli/internal/service/output"
 	"github.com/spf13/cobra"
@@ -102,6 +103,7 @@ func runProfileFavoritesList(
 		deps,
 		latPtr,
 		lonPtr,
+		flags.Address,
 		flags.Profile,
 		format,
 		flags.Locale,
@@ -184,7 +186,7 @@ func runFavoriteVenueMutation(
 		return err
 	}
 
-	resolution, err := resolveFavoriteVenueReference(cmd.Context(), deps, flags.Profile, venueInput)
+	resolution, err := resolveFavoriteVenueReference(cmd.Context(), deps, flags.Profile, flags.Address, venueInput)
 	if err != nil {
 		return emitError(cmd, format, profileName, flags.Locale, flags.Output, "WOLT_INVALID_ARGUMENT", err.Error())
 	}
@@ -247,6 +249,7 @@ func resolveFavoriteVenueReference(
 	ctx context.Context,
 	deps Dependencies,
 	selectedProfile string,
+	addressOverride string,
 	rawInput string,
 ) (favoriteVenueReference, error) {
 	input := strings.TrimSpace(rawInput)
@@ -288,11 +291,11 @@ func resolveFavoriteVenueReference(
 		}
 	}
 
-	profile, err := deps.Profiles.Find(ctx, selectedProfile)
+	location, err := resolveFavoriteVenueLookupLocation(ctx, deps, selectedProfile, addressOverride)
 	if err != nil {
 		return favoriteVenueReference{}, fmt.Errorf("unable to resolve venue slug %q to venue id", candidate)
 	}
-	item, itemErr := deps.Wolt.ItemBySlug(ctx, profile.Location, candidate)
+	item, itemErr := deps.Wolt.ItemBySlug(ctx, location, candidate)
 	if itemErr != nil {
 		return favoriteVenueReference{}, fmt.Errorf("unable to resolve venue slug %q to venue id", candidate)
 	}
@@ -320,6 +323,25 @@ func resolveFavoriteVenueReference(
 		return favoriteVenueReference{}, fmt.Errorf("unable to resolve venue slug %q to venue id", candidate)
 	}
 	return reference, nil
+}
+
+func resolveFavoriteVenueLookupLocation(
+	ctx context.Context,
+	deps Dependencies,
+	selectedProfile string,
+	addressOverride string,
+) (domain.Location, error) {
+	if trimmed := strings.TrimSpace(addressOverride); trimmed != "" {
+		if deps.Location == nil {
+			return domain.Location{}, fmt.Errorf("location resolver is not available")
+		}
+		return deps.Location.Get(ctx, trimmed)
+	}
+	profile, err := deps.Profiles.Find(ctx, selectedProfile)
+	if err != nil {
+		return domain.Location{}, err
+	}
+	return profile.Location, nil
 }
 
 func extractFavoriteVenues(payload map[string]any) []any {

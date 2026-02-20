@@ -19,6 +19,7 @@ wolt profile status [global flags]
 Behavior:
 - calls `GET https://restaurant-api.wolt.com/v1/user/me`
 - same auth probe as `wolt auth status`
+- includes `wolt_plus_subscriber` when available from user profile payload
 
 ## `wolt profile show`
 
@@ -120,13 +121,13 @@ Behavior:
 ## `wolt profile favorites`
 
 ```console
-wolt profile favorites [--lat <value> --lon <value>] [global flags]
+wolt profile favorites [--address "<text>" | --lat <value> --lon <value>] [global flags]
 ```
 
 Behavior:
 - calls `GET https://consumer-api.wolt.com/v1/pages/venue-list/profile/favourites`
 - returns normalized favorite venues list with `count`
-- supports shared location overrides (`--lat` + `--lon`) from `cli-overview`
+- supports shared location overrides from `cli-overview` (`--address` or `--lat` + `--lon`)
 
 Subcommands:
 
@@ -144,6 +145,7 @@ wolt profile favorites add <venue-id-or-slug> [global flags]
 
 Behavior:
 - resolves venue id directly or from slug/url
+- when slug lookup fallback is needed, location comes from profile by default or global `--address`
 - calls `PUT https://restaurant-api.wolt.com/v3/venues/favourites/{venue_id}`
 
 ### `wolt profile favorites remove <venue-id-or-slug>`
@@ -154,4 +156,5 @@ wolt profile favorites remove <venue-id-or-slug> [global flags]
 
 Behavior:
 - resolves venue id directly or from slug/url
+- when slug lookup fallback is needed, location comes from profile by default or global `--address`
 - calls `DELETE https://restaurant-api.wolt.com/v3/venues/favourites/{venue_id}`

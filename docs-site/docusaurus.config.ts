@@ -7,7 +7,7 @@ import type * as Preset from '@docusaurus/preset-classic';
 const config: Config = {
   title: 'wolt-cli',
   tagline: 'Unofficial CLI tool for interacting with Wolt from terminal',
-  favicon: 'img/favicon.ico',
+  favicon: 'img/favicon.png',
 
   // Future flags, see https://docusaurus.io/docs/api/docusaurus-config#future
   future: {
@@ -76,7 +76,7 @@ const config: Config = {
       title: 'wolt-cli',
       logo: {
         alt: 'wolt-cli logo',
-        src: 'img/logo.svg',
+        src: 'img/logo.png',
       },
       items: [
         {
@@ -85,7 +85,7 @@ const config: Config = {
           position: 'left',
           label: 'Docs',
         },
-        {to: '/docs/cli-overview', label: 'Start Here', position: 'left'},
+        {to: '/docs/cli-installation', label: 'Start Here', position: 'left'},
         {to: '/docs/cli-cart-checkout', label: 'Cart + Checkout', position: 'left'},
         {to: '/docs/cli-orders-profile', label: 'Profile', position: 'left'},
         {
@@ -102,12 +102,12 @@ const config: Config = {
           title: 'Documentation',
           items: [
             {
-              label: 'CLI overview',
-              to: '/docs/cli-overview',
-            },
-            {
               label: 'Installation',
               to: '/docs/cli-installation',
+            },
+            {
+              label: 'CLI overview',
+              to: '/docs/cli-overview',
             },
             {
               label: 'Auth and profiles',

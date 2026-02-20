@@ -10,7 +10,6 @@ import (
 
 func newConfigureCommand(deps Dependencies) *cobra.Command {
 	var profileName string
-	var address string
 	var wtoken string
 	var wrefreshToken string
 	var cookies []string
@@ -18,7 +17,7 @@ func newConfigureCommand(deps Dependencies) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "configure",
-		Short: "Create and manage local profile configuration.",
+		Short: "Create and manage local profile auth configuration.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cookieInputs := normalizeCookieInputs(cookies)
 			refreshCandidate := extractRefreshToken(wrefreshToken)
@@ -34,12 +33,9 @@ func newConfigureCommand(deps Dependencies) *cobra.Command {
 
 			existingCfg, loadErr := deps.Config.Load(cmd.Context())
 			hasExisting := loadErr == nil
-			if strings.TrimSpace(address) == "" {
-				if !hasExisting {
-					return fmt.Errorf("address is required when creating a new config")
-				}
+			if hasExisting && !overwrite {
 				if strings.TrimSpace(wtoken) == "" && strings.TrimSpace(refreshCandidate) == "" && len(cookieInputs) == 0 {
-					return fmt.Errorf("when --address is omitted, provide --wtoken, --wrtoken, or --cookie to update auth fields")
+					return fmt.Errorf("provide --wtoken, --wrtoken, or --cookie to update auth fields")
 				}
 				index := findProfileIndex(existingCfg, profileName)
 				if index < 0 {
@@ -60,21 +56,11 @@ func newConfigureCommand(deps Dependencies) *cobra.Command {
 				return writeTable(cmd, "🏁 Config auth updated successfully!", "")
 			}
 
-			if hasExisting && !overwrite {
-				return fmt.Errorf("config file already exists, rerun with --overwrite")
-			}
-
-			location, err := deps.Location.Get(cmd.Context(), address)
-			if err != nil {
-				return err
-			}
 			cfg := domain.Config{
 				Profiles: []domain.Profile{
 					{
 						Name:          profileName,
 						IsDefault:     true,
-						Address:       address,
-						Location:      location,
 						WToken:        normalizeWToken(wtoken),
 						WRefreshToken: refreshCandidate,
 						Cookies:       cookieInputs,
@@ -89,7 +75,6 @@ func newConfigureCommand(deps Dependencies) *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&profileName, "profile-name", "Default", "Profile name")
-	cmd.Flags().StringVar(&address, "address", "", "Profile address")
 	cmd.Flags().StringVar(&wtoken, "wtoken", "", "Optional auth token saved with the profile for authenticated commands.")
 	cmd.Flags().StringVar(&wrefreshToken, "wrtoken", "", "Optional refresh token saved with the profile for automatic token rotation.")
 	cmd.Flags().StringArrayVar(&cookies, "cookie", nil, "Optional cookie value saved with the profile (repeatable).")

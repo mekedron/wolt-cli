@@ -17,7 +17,7 @@ import (
 	"github.com/spf13/pflag"
 )
 
-func TestCommandOptionsHideSharedGlobalsExceptConfigure(t *testing.T) {
+func TestCommandOptionsHideSharedGlobals(t *testing.T) {
 	root := NewRootCommand(Dependencies{Version: "test"})
 
 	cartAdd, found := findCommand(root, "cart", "add")
@@ -41,8 +41,8 @@ func TestCommandOptionsHideSharedGlobalsExceptConfigure(t *testing.T) {
 			break
 		}
 	}
-	if !hasWToken {
-		t.Fatal("expected configure command to keep wtoken option docs")
+	if hasWToken {
+		t.Fatal("expected configure command to avoid duplicate global wtoken option docs")
 	}
 }
 
@@ -90,12 +90,30 @@ func TestResolveLocationValidation(t *testing.T) {
 		Profiles: &testProfiles{
 			profile: domain.Profile{Name: "default", Location: domain.Location{Lat: 60.1, Lon: 24.9}},
 		},
+		Location: &testLocation{location: domain.Location{Lat: 61.0, Lon: 25.0}},
 	}
 
 	lon := 24.9
-	_, _, err := resolveLocation(context.Background(), deps, nil, &lon, "", output.FormatTable, "en-FI", "", cmd)
+	_, _, err := resolveLocation(context.Background(), deps, nil, &lon, "", "", output.FormatTable, "en-FI", "", cmd)
 	if err == nil {
 		t.Fatal("expected resolveLocation to fail when only lon is provided")
+	}
+
+	lat := 60.1
+	_, _, err = resolveLocation(context.Background(), deps, &lat, &lon, "Kamppi, Helsinki", "", output.FormatTable, "en-FI", "", cmd)
+	if err == nil {
+		t.Fatal("expected resolveLocation to fail when --address and --lat/--lon are combined")
+	}
+
+	location, profile, err := resolveLocation(context.Background(), deps, nil, nil, "Kamppi, Helsinki", "", output.FormatTable, "en-FI", "", cmd)
+	if err != nil {
+		t.Fatalf("expected resolveLocation to resolve --address, got %v", err)
+	}
+	if location.Lat != 61.0 || location.Lon != 25.0 {
+		t.Fatalf("unexpected resolved location: %+v", location)
+	}
+	if profile != "anonymous" {
+		t.Fatalf("expected anonymous profile for address override, got %q", profile)
 	}
 }
 
@@ -242,6 +260,14 @@ func TestInvokeWithExpiredTokenPreRefreshNoRefreshToken(t *testing.T) {
 	if len(warnings) != 0 {
 		t.Fatalf("expected no warnings without refresh token, got %v", warnings)
 	}
+}
+
+type testLocation struct {
+	location domain.Location
+}
+
+func (m *testLocation) Get(context.Context, string) (domain.Location, error) {
+	return m.location, nil
 }
 
 func buildExpiringJWT(exp int64) string {

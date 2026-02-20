@@ -22,6 +22,7 @@ func newDiscoverFeedCommand(deps Dependencies) *cobra.Command {
 	var lon float64
 	var latSet bool
 	var lonSet bool
+	var woltPlus bool
 	var limit int
 	var limitSet bool
 
@@ -48,6 +49,7 @@ func newDiscoverFeedCommand(deps Dependencies) *cobra.Command {
 				deps,
 				latPtr,
 				lonPtr,
+				flags.Address,
 				flags.Profile,
 				format,
 				flags.Locale,
@@ -75,7 +77,7 @@ func newDiscoverFeedCommand(deps Dependencies) *cobra.Command {
 			if limitSet {
 				limitPtr = &limit
 			}
-			data := observability.BuildDiscoveryFeed(sections, city, limitPtr)
+			data := observability.BuildDiscoveryFeed(sections, city, limitPtr, woltPlus)
 
 			if format == output.FormatTable {
 				return writeTable(cmd, buildDiscoveryFeedTable(data), flags.Output)
@@ -89,6 +91,7 @@ func newDiscoverFeedCommand(deps Dependencies) *cobra.Command {
 	cmd.Flags().Lookup("lat").NoOptDefVal = "0"
 	cmd.Flags().Float64Var(&lon, "lon", 0, "Longitude override for location lookup. Provide together with --lat.")
 	cmd.Flags().Lookup("lon").NoOptDefVal = "0"
+	cmd.Flags().BoolVar(&woltPlus, "wolt-plus", false, "Only include Wolt+ venues in the feed.")
 	cmd.Flags().IntVar(&limit, "limit", 0, "Limit sections and items")
 	addGlobalFlags(cmd, &flags)
 
@@ -131,6 +134,7 @@ func newDiscoverCategoriesCommand(deps Dependencies) *cobra.Command {
 				deps,
 				latPtr,
 				lonPtr,
+				flags.Address,
 				flags.Profile,
 				format,
 				flags.Locale,
@@ -166,14 +170,14 @@ func newDiscoverCategoriesCommand(deps Dependencies) *cobra.Command {
 }
 
 func buildDiscoveryFeedTable(data map[string]any) string {
-	headers := []string{"Section", "Venue", "Rating", "Delivery estimate", "Delivery fee"}
+	headers := []string{"Section", "Venue", "Rating", "Delivery estimate", "Delivery fee", "Price", "Promotions", "Wolt+"}
 	rows := [][]string{}
 	for _, sectionValue := range asSlice(data["sections"]) {
 		section := asMap(sectionValue)
 		sectionName := asString(section["title"])
 		items := asSlice(section["items"])
 		if len(items) == 0 {
-			rows = append(rows, []string{sectionName, "-", "-", "-", "-"})
+			rows = append(rows, []string{sectionName, "-", "-", "-", "-", "-", "-", "-"})
 			continue
 		}
 		for idx, itemValue := range items {
@@ -186,14 +190,34 @@ func buildDiscoveryFeedTable(data map[string]any) string {
 			if fee == "" {
 				fee = "-"
 			}
+			priceRange := asString(item["price_range_scale"])
+			if priceRange == "" {
+				priceRange = "-"
+			}
+			promotions := stringsJoin(asSlice(item["promotions"]), ", ")
+			if promotions == "" {
+				promotions = "-"
+			}
 			name := asString(item["name"])
 			if idx > 0 {
 				sectionName = ""
 			}
-			rows = append(rows, []string{sectionName, name, rating, asString(item["delivery_estimate"]), fee})
+			rows = append(rows, []string{
+				sectionName,
+				name,
+				rating,
+				asString(item["delivery_estimate"]),
+				fee,
+				priceRange,
+				promotions,
+				boolToYesNo(asBool(item["wolt_plus"])),
+			})
 		}
 	}
 	title := "Discover feed: " + asString(data["city"])
+	if asBool(data["wolt_plus_only"]) {
+		title += " (Wolt+ only)"
+	}
 	return output.RenderTable(title, headers, rows)
 }
 

@@ -5,27 +5,33 @@ Shared/global flags and shared location override flags are documented in `cli-ov
 ## `wolt discover feed`
 
 ```console
-wolt discover feed [--lat <float> --lon <float>] [--limit <n>] [global flags]
+wolt discover feed [--address "<text>" | --lat <float> --lon <float>] [--limit <n>] [global flags]
 ```
 
 Options:
 - `--limit`: cap returned feed sections/items
+- `--wolt-plus`: include only Wolt+ venues (client-side filter on discovery payload)
 
 Output schema:
 - `DiscoveryFeed`
+
+Notes:
+- feed venue rows include `price_range`, `price_range_scale`, `promotions[]`, and `wolt_plus`
+- location defaults to profile location; use `--address` or `--lat/--lon` for a temporary override
 
 Examples:
 
 ```console
 wolt discover feed --format json
 wolt discover feed --profile work --format yaml
+wolt discover feed --address "Kamppi, Helsinki" --limit 5 --format json
 wolt discover feed --lat <lat> --lon <lon> --limit 5 --format json
 ```
 
 ## `wolt discover categories`
 
 ```console
-wolt discover categories [--lat <float> --lon <float>] [global flags]
+wolt discover categories [--address "<text>" | --lat <float> --lon <float>] [global flags]
 ```
 
 Output schema:
@@ -36,6 +42,7 @@ Examples:
 ```console
 wolt discover categories --format json
 wolt discover categories --profile work --format yaml
+wolt discover categories --address "Kamppi, Helsinki" --format json
 wolt discover categories --lat <lat> --lon <lon> --format json
 ```
 
@@ -58,10 +65,15 @@ Options:
 Output schema:
 - `VenueSearchResult`
 
+Notes:
+- venue rows include `price_range`, `price_range_scale`, and `promotions[]`
+- location defaults to profile location; use global `--address` for a temporary override
+
 Examples:
 
 ```console
 wolt search venues --format json
+wolt search venues --address "Kamppi, Helsinki" --query burger --limit 20 --format json
 wolt search venues --query burger --sort rating --open-now --limit 20 --format json
 wolt search venues --query sushi --wolt-plus --category asian --format yaml
 ```
@@ -82,9 +94,13 @@ Options:
 Output schema:
 - `ItemSearchResult`
 
+Notes:
+- location defaults to profile location; use global `--address` for a temporary override
+
 Examples:
 
 ```console
 wolt search items --query whopper --limit 10 --format json
+wolt search items --address "Kamppi, Helsinki" --query whopper --limit 10 --format json
 wolt search items --query noodles --category lunch --format yaml
 ```

@@ -11,7 +11,7 @@ Shared/global flags are documented in `cli-overview`.
 Before using authenticated commands, configure a profile first.
 
 ```console
-wolt configure --profile-name default --address "<address>" --wtoken "<token>" --wrtoken "<refresh-token>" --overwrite
+wolt configure --profile-name default --wtoken "<token>" --wrtoken "<refresh-token>" --overwrite
 ```
 
 If the profile already exists and you only want to rotate credentials:
@@ -28,14 +28,13 @@ wolt configure --profile-name default --cookie "__wtoken=<token>" --cookie "__wr
 
 ## Profile-Based Auth
 
-Profiles are the default place to keep reusable auth and location settings.
+Profiles are the default place to keep reusable auth settings.
 When `--profile` is not passed, the CLI uses the default profile.
 
 Stored profile fields used by auth-enabled commands:
 - `wtoken`
 - `wrefresh_token`
 - `cookies[]`
-- location/address fields for location-dependent requests
 
 Security:
 - profile config can include sensitive auth values; keep it local only
@@ -90,6 +89,7 @@ wolt auth status [global flags]
 
 Behavior:
 - with credentials: calls `GET https://restaurant-api.wolt.com/v1/user/me`
+- includes `wolt_plus_subscriber` flag when account membership signal is present
 - without credentials: returns `authenticated=false` with a warning
 - with `--verbose`: includes token preview/cookie count and detailed upstream error diagnostics
 

@@ -1,5 +1,7 @@
 # wolt-cli
 
+![wolt-cli logo](assets/logo.png)
+
 `wolt-cli` is an unofficial community Go CLI for interacting with Wolt endpoints from a terminal.
 It is not affiliated with Wolt. Use it at your own responsibility.
 
@@ -17,6 +19,21 @@ It is not affiliated with Wolt. Use it at your own responsibility.
 ## Requirements
 
 - Go `1.26+`
+
+## Recommended Install (Homebrew Tap)
+
+Use the dedicated tap at [mekedron/tap](https://github.com/mekedron/tap):
+
+```bash
+brew tap mekedron/tap
+brew install wolt-cli
+```
+
+Or as a one-liner without adding the tap first:
+
+```bash
+brew install mekedron/tap/wolt-cli
+```
 
 ## Build and Run
 
@@ -37,7 +54,7 @@ go run ./cmd/wolt --help
 Configure a profile first:
 
 ```bash
-wolt configure --profile-name default --address "<address>" --overwrite
+wolt configure --profile-name default --wtoken "<token>" --wrtoken "<refresh-token>" --overwrite
 ```
 
 Configure auth in the same profile:
@@ -65,6 +82,7 @@ Example config: `configs/example.config.json`
 Global flags for all leaf commands:
 - `--format [table|json|yaml]`
 - `--profile <name>`
+- `--address <text>` (temporary location override; geocoded to coordinates)
 - `--locale <bcp47>`
 - `--no-color`
 - `--output <path>`
@@ -77,7 +95,10 @@ Shared location override flags for location-aware commands:
 - `--lat <float>`
 - `--lon <float>`
 
-`--lat` and `--lon` must be provided together.
+Rules:
+- `--lat` and `--lon` must be provided together
+- `--address` cannot be combined with `--lat/--lon`
+- location overrides are preview inputs only; final order placement in Wolt uses the delivery address selected in your Wolt account
 
 ## Example: Find Venue, Inspect Options, Add a Custom WHOPPER Meal
 
@@ -124,6 +145,7 @@ wolt cart add 629f1f18480882d6f02c25f0 676939cb70769df4cec6cc6f \
 # 5) Verify cart details and checkout preview (no order placement)
 wolt cart show --details --venue-id <venue-id> --format json
 wolt checkout preview --delivery-mode standard --venue-id <venue-id> --format json
+# checkout preview uses current inputs only; final checkout in Wolt uses your Wolt-saved address
 
 # Optional cleanup
 wolt cart clear --venue-id <venue-id> --format json

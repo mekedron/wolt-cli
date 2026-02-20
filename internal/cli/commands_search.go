@@ -50,13 +50,22 @@ func newSearchVenuesCommand(deps Dependencies) *cobra.Command {
 				}
 				venueType = &parsedType
 			}
-			profile, err := deps.Profiles.Find(cmd.Context(), flags.Profile)
+			location, profile, err := resolveProfileLocation(
+				cmd.Context(),
+				deps,
+				flags.Address,
+				flags.Profile,
+				format,
+				flags.Locale,
+				flags.Output,
+				cmd,
+			)
 			if err != nil {
-				return profileError(err, format, flags.Profile, flags.Locale, flags.Output, cmd)
+				return err
 			}
-			items, err := deps.Wolt.Items(cmd.Context(), profile.Location)
+			items, err := deps.Wolt.Items(cmd.Context(), location)
 			if err != nil {
-				return emitUpstreamError(cmd, format, profile.Name, flags.Locale, flags.Output, flags.Verbose, err)
+				return emitUpstreamError(cmd, format, profile, flags.Locale, flags.Output, flags.Verbose, err)
 			}
 			var limitPtr *int
 			if limitSet {
@@ -77,7 +86,7 @@ func newSearchVenuesCommand(deps Dependencies) *cobra.Command {
 			if format == output.FormatTable {
 				return writeTable(cmd, buildVenueSearchTable(data), flags.Output)
 			}
-			env := output.BuildEnvelope(profile.Name, flags.Locale, data, warnings, nil)
+			env := output.BuildEnvelope(profile, flags.Locale, data, warnings, nil)
 			return writeMachinePayload(cmd, env, format, flags.Output)
 		},
 	}
@@ -123,19 +132,28 @@ func newSearchItemsCommand(deps Dependencies) *cobra.Command {
 				return err
 			}
 
-			profile, err := deps.Profiles.Find(cmd.Context(), flags.Profile)
+			location, profile, err := resolveProfileLocation(
+				cmd.Context(),
+				deps,
+				flags.Address,
+				flags.Profile,
+				format,
+				flags.Locale,
+				flags.Output,
+				cmd,
+			)
 			if err != nil {
-				return profileError(err, format, flags.Profile, flags.Locale, flags.Output, cmd)
+				return err
 			}
 
-			fallbackItems, err := deps.Wolt.Items(cmd.Context(), profile.Location)
+			fallbackItems, err := deps.Wolt.Items(cmd.Context(), location)
 			if err != nil {
-				return emitUpstreamError(cmd, format, profile.Name, flags.Locale, flags.Output, flags.Verbose, err)
+				return emitUpstreamError(cmd, format, profile, flags.Locale, flags.Output, flags.Verbose, err)
 			}
 
 			payloads := []map[string]any{}
 			warnings := []string{}
-			if payload, err := deps.Wolt.Search(cmd.Context(), profile.Location, query); err == nil {
+			if payload, err := deps.Wolt.Search(cmd.Context(), location, query); err == nil {
 				payloads = append(payloads, payload)
 			} else {
 				warnings = append(warnings, "search endpoint unavailable; using basic fallback data")
@@ -160,7 +178,7 @@ func newSearchItemsCommand(deps Dependencies) *cobra.Command {
 			if format == output.FormatTable {
 				return writeTable(cmd, buildItemSearchTable(data), flags.Output)
 			}
-			env := output.BuildEnvelope(profile.Name, flags.Locale, data, warnings, nil)
+			env := output.BuildEnvelope(profile, flags.Locale, data, warnings, nil)
 			return writeMachinePayload(cmd, env, format, flags.Output)
 		},
 	}
@@ -182,7 +200,7 @@ func newSearchItemsCommand(deps Dependencies) *cobra.Command {
 }
 
 func buildVenueSearchTable(data map[string]any) string {
-	headers := []string{"Venue", "Address", "Rating", "Delivery", "Fee", "Wolt+"}
+	headers := []string{"Venue", "Address", "Rating", "Delivery", "Fee", "Price", "Promotions", "Wolt+"}
 	rows := [][]string{}
 	for _, value := range asSlice(data["items"]) {
 		item := asMap(value)
@@ -194,12 +212,22 @@ func buildVenueSearchTable(data map[string]any) string {
 		if fee == "" {
 			fee = "-"
 		}
+		priceRange := asString(item["price_range_scale"])
+		if priceRange == "" {
+			priceRange = "-"
+		}
+		promotions := stringsJoin(asSlice(item["promotions"]), ", ")
+		if promotions == "" {
+			promotions = "-"
+		}
 		rows = append(rows, []string{
 			asString(item["name"]),
 			asString(item["address"]),
 			rating,
 			asString(item["delivery_estimate"]),
 			fee,
+			priceRange,
+			promotions,
 			boolToYesNo(asBool(item["wolt_plus"])),
 		})
 	}

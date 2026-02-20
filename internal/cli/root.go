@@ -13,6 +13,7 @@ import (
 var sharedGlobalOptionOrder = []string{
 	"format",
 	"profile",
+	"address",
 	"locale",
 	"no-color",
 	"output",
@@ -104,6 +105,7 @@ func renderRootHelp(out io.Writer, root *cobra.Command) {
 	_, _ = fmt.Fprintln(out)
 	_, _ = fmt.Fprintln(out, "notes:")
 	_, _ = fmt.Fprintln(out, "  - options are optional unless marked [required].")
+	_, _ = fmt.Fprintln(out, "  - checkout is preview-only in this CLI; final order placement happens in Wolt using your account-selected delivery address.")
 	_, _ = fmt.Fprintln(out)
 	_, _ = fmt.Fprintln(out, "full reference:")
 	emitReference(out, root, root.Name())
@@ -143,6 +145,7 @@ type optionDoc struct {
 	usage     string
 	required  bool
 	inherited bool
+	shared    bool
 }
 
 func rootOptions(root *cobra.Command) []optionDoc {
@@ -155,7 +158,7 @@ func commandOptions(cmd *cobra.Command) []optionDoc {
 	seen := map[string]struct{}{}
 	options := make([]optionDoc, 0)
 	for _, option := range collectOptionDocs(cmd.NonInheritedFlags(), false) {
-		if isSharedGlobalOption(option.name) && cmd.Name() != "configure" {
+		if option.shared || (cmd.Name() == "configure" && isSharedGlobalOption(option.name)) {
 			continue
 		}
 		seen[option.name] = struct{}{}
@@ -165,7 +168,7 @@ func commandOptions(cmd *cobra.Command) []optionDoc {
 		if _, ok := seen[option.name]; ok {
 			continue
 		}
-		if isSharedGlobalOption(option.name) && cmd.Name() != "configure" {
+		if option.shared || (cmd.Name() == "configure" && isSharedGlobalOption(option.name)) {
 			continue
 		}
 		options = append(options, option)
@@ -179,7 +182,7 @@ func discoverSharedGlobalOptions(root *cobra.Command) []optionDoc {
 	walk = func(parent *cobra.Command) {
 		for _, cmd := range visibleCommands(parent) {
 			cmd.NonInheritedFlags().VisitAll(func(flag *pflag.Flag) {
-				if flag.Hidden || flag.Name == "help" || !isSharedGlobalOption(flag.Name) {
+				if flag.Hidden || flag.Name == "help" || !isSharedGlobalFlag(flag) || !isSharedGlobalOption(flag.Name) {
 					return
 				}
 				if _, ok := discovered[flag.Name]; ok {
@@ -226,12 +229,24 @@ func collectOptionDocs(flags *pflag.FlagSet, inherited bool) []optionDoc {
 			usage:     strings.TrimSpace(flag.Usage),
 			required:  isFlagRequired(flag),
 			inherited: inherited,
+			shared:    isSharedGlobalFlag(flag),
 		})
 	})
 	sort.Slice(options, func(i, j int) bool {
 		return options[i].name < options[j].name
 	})
 	return options
+}
+
+func isSharedGlobalFlag(flag *pflag.Flag) bool {
+	if flag == nil || flag.Annotations == nil {
+		return false
+	}
+	values, ok := flag.Annotations[sharedGlobalFlagAnnotation]
+	if !ok || len(values) == 0 {
+		return false
+	}
+	return strings.EqualFold(values[0], "true") || values[0] == "1"
 }
 
 func flagToken(flag *pflag.Flag) string {

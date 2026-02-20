@@ -25,13 +25,14 @@ Output:
 ## `wolt cart show`
 
 ```console
-wolt cart show [--venue-id <id>] [--lat <value> --lon <value>] [--details] [global flags]
+wolt cart show [--venue-id <id>] [--address "<text>" | --lat <value> --lon <value>] [--details] [global flags]
 ```
 
 Behavior:
 - calls `GET https://consumer-api.wolt.com/order-xp/web/v1/pages/baskets?lat=...&lon=...`
 - if multiple baskets exist and `--venue-id` is omitted, first basket is selected by default
 - `--details` expands line options in table output (names when available, otherwise IDs)
+- location defaults to profile location; use `--address` or `--lat/--lon` for a temporary override
 
 Output schema:
 - `CartState`
@@ -68,7 +69,7 @@ Output:
 ## `wolt cart remove <item-id>`
 
 ```console
-wolt cart remove <item-id> [--count <n>] [--all] [--venue-id <id>] [--lat <value> --lon <value>] [global flags]
+wolt cart remove <item-id> [--count <n>] [--all] [--venue-id <id>] [--address "<text>" | --lat <value> --lon <value>] [global flags]
 ```
 
 Behavior:
@@ -76,6 +77,7 @@ Behavior:
 - selects basket by `--venue-id` or first available basket
 - decrements quantity via `POST /order-xp/v1/baskets`
 - clears full basket via `POST /order-xp/v1/baskets/bulk/delete` when needed
+- location defaults to profile location; use `--address` or `--lat/--lon` for a temporary override
 
 Output:
 - `basket_id`
@@ -89,12 +91,13 @@ Output:
 ## `wolt cart clear`
 
 ```console
-wolt cart clear [--venue-id <id>] [--all] [--lat <value> --lon <value>] [global flags]
+wolt cart clear [--venue-id <id>] [--all] [--address "<text>" | --lat <value> --lon <value>] [global flags]
 ```
 
 Behavior:
 - loads baskets
 - clears selected basket (or all baskets with `--all`) using `POST /order-xp/v1/baskets/bulk/delete`
+- location defaults to profile location; use `--address` or `--lat/--lon` for a temporary override
 
 Output:
 - `mutation` (`clear`)
@@ -106,7 +109,7 @@ Output:
 ## `wolt checkout preview`
 
 ```console
-wolt checkout preview [--delivery-mode <standard|priority|schedule>] [--tip <minor-units>] [--promo-code <id>] [--venue-id <id>] [--lat <value> --lon <value>] [global flags]
+wolt checkout preview [--delivery-mode <standard|priority|schedule>] [--tip <minor-units>] [--promo-code <id>] [--venue-id <id>] [--address "<text>" | --lat <value> --lon <value>] [global flags]
 ```
 
 Behavior:
@@ -115,6 +118,8 @@ Behavior:
 - builds `purchase_plan` payload with assortment/item fallback data for category/options
 - calls `POST https://consumer-api.wolt.com/order-xp/web/v2/pages/checkout`
 - returns projected totals without placing an order
+- location overrides (`--address` / `--lat` / `--lon`) affect preview only
+- actual order placement in Wolt uses the delivery address selected in your Wolt account
 
 Output schema:
 - `CheckoutPreview`

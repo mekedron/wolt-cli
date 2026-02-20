@@ -355,6 +355,7 @@ func buildVenue(id, slug, address string) *domain.Venue {
 		Tags:             []string{"burger"},
 		Rating:           &domain.Rating{Rating: 3, Score: 9.1},
 		PriceRange:       2,
+		Promotions:       []any{map[string]any{"text": "Free delivery", "variant": "discount"}},
 	}
 }
 
@@ -395,7 +396,8 @@ func TestRootHelpIncludesCommandDescriptions(t *testing.T) {
 	}
 	for _, token := range []string{
 		"--format: Output format: table, json, or yaml.",
-		"--profile: Profile name for saved location. Used when --lat and --lon are not provided.",
+		"--profile: Profile name for saved local defaults.",
+		"--address: Temporary address override for this command. Geocoded to coordinates. Cannot be combined with --lat/--lon.",
 		"--locale: Response locale in BCP-47 format, for example en-FI.",
 		"--no-color: Disable ANSI color codes in table output.",
 		"--output: Write the command output to a file.",
@@ -484,6 +486,19 @@ func TestDiscoverFeedJSON(t *testing.T) {
 	if deliveryFee["formatted_amount"] != "PLN 10.00" {
 		t.Fatalf("expected formatted fee PLN 10.00, got %v", deliveryFee["formatted_amount"])
 	}
+	if firstItem["price_range"] != float64(2) {
+		t.Fatalf("expected price_range 2, got %v", firstItem["price_range"])
+	}
+	if firstItem["price_range_scale"] != "$$" {
+		t.Fatalf("expected price_range_scale $$, got %v", firstItem["price_range_scale"])
+	}
+	promotions := asSlicePayload(t, firstItem["promotions"])
+	if len(promotions) != 1 || promotions[0] != "Free delivery" {
+		t.Fatalf("expected promotions [Free delivery], got %v", promotions)
+	}
+	if firstItem["wolt_plus"] != true {
+		t.Fatalf("expected wolt_plus true, got %v", firstItem["wolt_plus"])
+	}
 }
 
 func TestDiscoverFeedUsesDefaultProfileLocation(t *testing.T) {
@@ -529,6 +544,54 @@ func TestDiscoverFeedRequiresLatAndLonTogether(t *testing.T) {
 	}
 	if !strings.Contains(strings.ToLower(asStringPayload(errPayload["message"])), "both --lat and --lon") {
 		t.Fatalf("expected lat/lon validation message, got %v", errPayload["message"])
+	}
+}
+
+func TestDiscoverFeedRejectsAddressWithLatLon(t *testing.T) {
+	exitCode, out := runCLI(t, "discover", "feed", "--address", "Helsinki", "--lat", "50.0", "--lon", "19.0", "--format", "json")
+	if exitCode != 1 {
+		t.Fatalf("expected exit 1, got %d\noutput:\n%s", exitCode, out)
+	}
+	payload := mustJSON(t, out)
+	errPayload := asMapPayload(t, payload["error"])
+	if errPayload["code"] != "WOLT_INVALID_ARGUMENT" {
+		t.Fatalf("expected WOLT_INVALID_ARGUMENT, got %v", errPayload["code"])
+	}
+	if !strings.Contains(strings.ToLower(asStringPayload(errPayload["message"])), "do not combine --address") {
+		t.Fatalf("expected address/lat/lon conflict message, got %v", errPayload["message"])
+	}
+}
+
+func TestDiscoverFeedUsesAddressOverride(t *testing.T) {
+	seenLocation := domain.Location{}
+	locationResolver := &recordingLocation{
+		location: domain.Location{Lat: 60.1699, Lon: 24.9384},
+	}
+	deps := cli.Dependencies{
+		Wolt: &mockWolt{
+			frontPageFunc: func(_ context.Context, location domain.Location) (map[string]any, error) {
+				seenLocation = location
+				return map[string]any{"city_data": map[string]any{"name": "Helsinki"}}, nil
+			},
+			sectionsFunc: func(context.Context, domain.Location) ([]domain.Section, error) {
+				return []domain.Section{}, nil
+			},
+		},
+		Profiles: &mockProfiles{profile: domain.Profile{Name: "default", IsDefault: true, Location: domain.Location{Lat: 0, Lon: 0}}},
+		Location: locationResolver,
+		Config:   &mockConfig{},
+		Version:  "1.1.1",
+	}
+
+	exitCode, out := runCLIWithDeps(t, deps, "discover", "feed", "--address", "Kamppi, Helsinki", "--format", "json")
+	if exitCode != 0 {
+		t.Fatalf("expected exit 0, got %d\noutput:\n%s", exitCode, out)
+	}
+	if locationResolver.seenAddress != "Kamppi, Helsinki" {
+		t.Fatalf("expected geocoding with requested address, got %q", locationResolver.seenAddress)
+	}
+	if seenLocation.Lat != 60.1699 || seenLocation.Lon != 24.9384 {
+		t.Fatalf("expected geocoded location to be used, got %+v", seenLocation)
 	}
 }
 
@@ -655,6 +718,101 @@ func TestVenueShowJSON(t *testing.T) {
 	tags := asSlicePayload(t, data["tags"])
 	if len(tags) != 1 || tags[0] != "burger" {
 		t.Fatalf("expected tags [burger], got %v", tags)
+	}
+}
+
+func TestVenueShowFallbackStaticWhenItemLookupFails(t *testing.T) {
+	restaurant := &domain.Restaurant{
+		ID:              "venue-1",
+		Slug:            "burger-place",
+		Address:         "Street 1",
+		Currency:        "PLN",
+		DeliveryMethods: []string{"homedelivery"},
+	}
+	deps := cli.Dependencies{
+		Wolt: &mockWolt{
+			itemBySlugFunc: func(context.Context, domain.Location, string) (*domain.Item, error) {
+				return nil, &woltgateway.UpstreamRequestError{StatusCode: 404}
+			},
+			venuePageStaticFunc: func(context.Context, string) (map[string]any, error) {
+				return map[string]any{
+					"venue": map[string]any{
+						"id":             "venue-1",
+						"slug":           "burger-place",
+						"name":           "Burger Place",
+						"address":        "Street 1",
+						"currency":       "PLN",
+						"delivery_price": 500,
+					},
+				}, nil
+			},
+			restaurantByIDFunc: func(context.Context, string) (*domain.Restaurant, error) {
+				return restaurant, nil
+			},
+		},
+		Profiles: &mockProfiles{profile: domain.Profile{Name: "default", IsDefault: true, Location: domain.Location{Lat: 0, Lon: 0}}},
+		Location: &mockLocation{},
+		Config:   &mockConfig{},
+		Version:  "1.1.1",
+	}
+
+	exitCode, out := runCLIWithDeps(t, deps, "venue", "show", "burger-place", "--format", "json")
+	if exitCode != 0 {
+		t.Fatalf("expected exit 0, got %d\noutput:\n%s", exitCode, out)
+	}
+	payload := mustJSON(t, out)
+	data := asMapPayload(t, payload["data"])
+	if data["venue_id"] != "venue-1" {
+		t.Fatalf("expected venue_id venue-1, got %v", data["venue_id"])
+	}
+	if data["slug"] != "burger-place" {
+		t.Fatalf("expected slug burger-place, got %v", data["slug"])
+	}
+}
+
+func TestVenueShowFallbackWhenRestaurantEndpointGone(t *testing.T) {
+	venueItem := &domain.Item{
+		Title: "Burger Place",
+		Link:  domain.Link{Target: "venue-1"},
+		Venue: buildVenue("venue-1", "burger-place", "Street 1"),
+	}
+	deps := cli.Dependencies{
+		Wolt: &mockWolt{
+			itemBySlugFunc: func(context.Context, domain.Location, string) (*domain.Item, error) {
+				return venueItem, nil
+			},
+			venuePageStaticFunc: func(context.Context, string) (map[string]any, error) {
+				return map[string]any{
+					"venue": map[string]any{
+						"id":       "venue-1",
+						"slug":     "burger-place",
+						"name":     "Burger Place",
+						"address":  "Street 1",
+						"currency": "PLN",
+					},
+				}, nil
+			},
+			restaurantByIDFunc: func(context.Context, string) (*domain.Restaurant, error) {
+				return nil, &woltgateway.UpstreamRequestError{StatusCode: 410}
+			},
+		},
+		Profiles: &mockProfiles{profile: domain.Profile{Name: "default", IsDefault: true, Location: domain.Location{Lat: 0, Lon: 0}}},
+		Location: &mockLocation{},
+		Config:   &mockConfig{},
+		Version:  "1.1.1",
+	}
+
+	exitCode, out := runCLIWithDeps(t, deps, "venue", "show", "burger-place", "--include", "fees", "--format", "json")
+	if exitCode != 0 {
+		t.Fatalf("expected exit 0, got %d\noutput:\n%s", exitCode, out)
+	}
+	payload := mustJSON(t, out)
+	data := asMapPayload(t, payload["data"])
+	if data["venue_id"] != "venue-1" {
+		t.Fatalf("expected venue_id venue-1, got %v", data["venue_id"])
+	}
+	if asMapPayload(t, data["delivery_fee"])["amount"] == nil {
+		t.Fatalf("expected delivery fee in fallback output, got %v", data["delivery_fee"])
 	}
 }
 

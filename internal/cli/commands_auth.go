@@ -36,10 +36,11 @@ func newAuthStatusCommand(deps Dependencies) *cobra.Command {
 			auth := buildAuthContextWithProfile(cmd.Context(), deps, flags)
 			if !auth.HasCredentials() {
 				data := map[string]any{
-					"authenticated":      false,
-					"user_id":            "",
-					"country":            "",
-					"session_expires_at": nil,
+					"authenticated":        false,
+					"user_id":              "",
+					"country":              "",
+					"session_expires_at":   nil,
+					"wolt_plus_subscriber": false,
 				}
 				warnings := []string{"no auth credentials provided"}
 				if format == output.FormatTable {
@@ -66,11 +67,13 @@ func newAuthStatusCommand(deps Dependencies) *cobra.Command {
 			userID := domain.NormalizeID(coalesceAny(user["_id"], user["id"]))
 			country := asString(coalesceAny(user["country"], payload["country"]))
 			expiresAt := tokenExpiryRFC3339(auth.WToken)
+			woltPlusSubscriber, _ := extractWoltPlusSubscriber(payload)
 			data := map[string]any{
-				"authenticated":      true,
-				"user_id":            userID,
-				"country":            country,
-				"session_expires_at": emptyToNil(expiresAt),
+				"authenticated":        true,
+				"user_id":              userID,
+				"country":              country,
+				"session_expires_at":   emptyToNil(expiresAt),
+				"wolt_plus_subscriber": woltPlusSubscriber,
 			}
 			if flags.Verbose {
 				data["token_preview"] = tokenPreview(auth.WToken)
@@ -93,6 +96,7 @@ func buildAuthStatusTable(data map[string]any) string {
 	headers := []string{"Field", "Value"}
 	rows := [][]string{
 		{"Authenticated", boolToYesNo(asBool(data["authenticated"]))},
+		{"Wolt+ subscriber", boolToYesNo(asBool(data["wolt_plus_subscriber"]))},
 		{"User ID", fallbackString(asString(data["user_id"]), "-")},
 		{"Country", fallbackString(asString(data["country"]), "-")},
 		{"Session expires", fallbackString(asString(data["session_expires_at"]), "-")},
@@ -143,4 +147,101 @@ func coalesceAny(values ...any) any {
 		return value
 	}
 	return nil
+}
+
+func extractWoltPlusSubscriber(payload map[string]any) (bool, bool) {
+	user := asMap(payload["user"])
+	primaryCandidates := []map[string]any{user, payload}
+
+	primaryKeys := []string{
+		"is_wolt_plus_subscriber",
+		"wolt_plus_subscriber",
+		"is_wolt_plus_member",
+		"wolt_plus_member",
+		"wolt_plus_active",
+		"wolt_plus",
+		"has_wolt_plus",
+		"is_wolt_plus",
+		"is_plus_subscriber",
+		"plus_subscriber",
+	}
+	for _, candidate := range primaryCandidates {
+		if candidate == nil {
+			continue
+		}
+		for _, key := range primaryKeys {
+			parsed, ok := parseWoltPlusState(candidate[key])
+			if ok {
+				return parsed, true
+			}
+		}
+	}
+
+	nestedKeys := []string{
+		"wolt_plus",
+		"wolt_plus_subscription",
+		"wolt_plus_membership",
+		"plus_subscription",
+		"subscription",
+		"membership",
+	}
+	nestedCandidates := make([]map[string]any, 0, len(primaryCandidates)*len(nestedKeys))
+	for _, candidate := range primaryCandidates {
+		if candidate == nil {
+			continue
+		}
+		for _, key := range nestedKeys {
+			if nested := asMap(candidate[key]); nested != nil {
+				nestedCandidates = append(nestedCandidates, nested)
+			}
+		}
+	}
+
+	nestedValueKeys := []string{
+		"is_subscriber",
+		"subscriber",
+		"is_member",
+		"member",
+		"is_active",
+		"active",
+		"enabled",
+		"is_enabled",
+		"has_subscription",
+		"status",
+		"state",
+		"membership_status",
+		"subscription_status",
+	}
+	for _, candidate := range nestedCandidates {
+		for _, key := range nestedValueKeys {
+			parsed, ok := parseWoltPlusState(candidate[key])
+			if ok {
+				return parsed, true
+			}
+		}
+	}
+
+	return false, false
+}
+
+func parseWoltPlusState(value any) (bool, bool) {
+	switch typed := value.(type) {
+	case bool:
+		return typed, true
+	case int:
+		return typed != 0, true
+	case int64:
+		return typed != 0, true
+	case float64:
+		return typed != 0, true
+	case string:
+		normalized := strings.ToLower(strings.TrimSpace(typed))
+		switch normalized {
+		case "true", "yes", "1", "active", "enabled", "subscribed", "member", "trial", "in_trial", "premium":
+			return true, true
+		case "false", "no", "0", "inactive", "disabled", "unsubscribed", "not_subscribed", "none", "cancelled", "canceled", "expired":
+			return false, true
+		}
+	}
+	return false, false
 }

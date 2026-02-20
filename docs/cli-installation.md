@@ -5,6 +5,21 @@
 - Go `1.26+`
 - Git
 
+## Recommended: Homebrew Tap
+
+Use the tap at [mekedron/tap](https://github.com/mekedron/tap):
+
+```bash
+brew tap mekedron/tap
+brew install wolt-cli
+```
+
+Or install directly:
+
+```bash
+brew install mekedron/tap/wolt-cli
+```
+
 ## Clone
 
 ```bash

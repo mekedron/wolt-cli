@@ -24,6 +24,7 @@ func (e *exitError) Error() string {
 type globalFlags struct {
 	Format        string
 	Profile       string
+	Address       string
 	Locale        string
 	NoColor       bool
 	Output        string
@@ -33,16 +34,75 @@ type globalFlags struct {
 	Verbose       bool
 }
 
+const sharedGlobalFlagAnnotation = "wolt_cli_shared_global"
+
 func addGlobalFlags(cmd *cobra.Command, flags *globalFlags) {
-	cmd.Flags().StringVar(&flags.Format, "format", "table", "Output format: table, json, or yaml.")
-	cmd.Flags().StringVar(&flags.Profile, "profile", "", "Profile name for saved location. Used when --lat and --lon are not provided.")
-	cmd.Flags().StringVar(&flags.Locale, "locale", "en-FI", "Response locale in BCP-47 format, for example en-FI.")
-	cmd.Flags().BoolVar(&flags.NoColor, "no-color", false, "Disable ANSI color codes in table output.")
-	cmd.Flags().StringVar(&flags.Output, "output", "", "Write the command output to a file.")
-	cmd.Flags().StringVar(&flags.WToken, "wtoken", "", "Wolt token for authenticated endpoints (JWT, Bearer value, or payload with accessToken).")
-	cmd.Flags().StringVar(&flags.WRefreshToken, "wrtoken", "", "Wolt refresh token for automatic access token rotation (or payload with refreshToken).")
-	cmd.Flags().StringArrayVar(&flags.Cookies, "cookie", nil, "HTTP cookie header value to forward (repeatable).")
-	cmd.Flags().BoolVar(&flags.Verbose, "verbose", false, "Enable verbose output (for example detailed upstream error diagnostics).")
+	addSharedGlobalFlag(cmd, "format", func() {
+		cmd.Flags().StringVar(&flags.Format, "format", "table", "Output format: table, json, or yaml.")
+	})
+	addSharedGlobalFlag(cmd, "profile", func() {
+		cmd.Flags().StringVar(&flags.Profile, "profile", "", "Profile name for saved local defaults.")
+	})
+	addSharedGlobalFlag(cmd, "address", func() {
+		cmd.Flags().StringVar(&flags.Address, "address", "", "Temporary address override for this command. Geocoded to coordinates. Cannot be combined with --lat/--lon.")
+	})
+	addSharedGlobalFlag(cmd, "locale", func() {
+		cmd.Flags().StringVar(&flags.Locale, "locale", "en-FI", "Response locale in BCP-47 format, for example en-FI.")
+	})
+	addSharedGlobalFlag(cmd, "no-color", func() {
+		cmd.Flags().BoolVar(&flags.NoColor, "no-color", false, "Disable ANSI color codes in table output.")
+	})
+	addSharedGlobalFlag(cmd, "output", func() {
+		cmd.Flags().StringVar(&flags.Output, "output", "", "Write the command output to a file.")
+	})
+	addSharedGlobalFlag(cmd, "wtoken", func() {
+		cmd.Flags().StringVar(&flags.WToken, "wtoken", "", "Wolt token for authenticated endpoints (JWT, Bearer value, or payload with accessToken).")
+	})
+	addSharedGlobalFlag(cmd, "wrtoken", func() {
+		cmd.Flags().StringVar(&flags.WRefreshToken, "wrtoken", "", "Wolt refresh token for automatic access token rotation (or payload with refreshToken).")
+	})
+	addSharedGlobalFlag(cmd, "cookie", func() {
+		cmd.Flags().StringArrayVar(&flags.Cookies, "cookie", nil, "HTTP cookie header value to forward (repeatable).")
+	})
+	addSharedGlobalFlag(cmd, "verbose", func() {
+		cmd.Flags().BoolVar(&flags.Verbose, "verbose", false, "Enable verbose output (for example detailed upstream error diagnostics).")
+	})
+}
+
+func addSharedGlobalFlag(cmd *cobra.Command, name string, register func()) {
+	if cmd.Flags().Lookup(name) != nil {
+		return
+	}
+	register()
+	flag := cmd.Flags().Lookup(name)
+	if flag == nil {
+		return
+	}
+	if flag.Annotations == nil {
+		flag.Annotations = map[string][]string{}
+	}
+	flag.Annotations[sharedGlobalFlagAnnotation] = []string{"true"}
+}
+
+func resolveProfileLabel(profileName string) string {
+	profile := strings.TrimSpace(profileName)
+	if profile == "" {
+		return "anonymous"
+	}
+	return profile
+}
+
+func resolveProfileLocation(
+	ctx context.Context,
+	deps Dependencies,
+	address string,
+	profileName string,
+	format output.Format,
+	locale string,
+	outputPath string,
+	cmd *cobra.Command,
+) (domain.Location, string, error) {
+	return resolveLocation(ctx, deps, nil, nil, address, profileName, format, locale, outputPath, cmd)
 }
 
 func parseOutputFormat(format string) (output.Format, error) {
@@ -97,12 +157,52 @@ func resolveLocation(
 	deps Dependencies,
 	lat *float64,
 	lon *float64,
+	address string,
 	profileName string,
 	format output.Format,
 	locale string,
 	outputPath string,
 	cmd *cobra.Command,
 ) (domain.Location, string, error) {
+	resolvedAddress := strings.TrimSpace(address)
+	if resolvedAddress != "" {
+		if lat != nil || lon != nil {
+			return domain.Location{}, "", emitError(
+				cmd,
+				format,
+				resolveProfileLabel(profileName),
+				locale,
+				outputPath,
+				"WOLT_INVALID_ARGUMENT",
+				"Do not combine --address with --lat/--lon. Use either --address or both --lat and --lon.",
+			)
+		}
+		if deps.Location == nil {
+			return domain.Location{}, "", emitError(
+				cmd,
+				format,
+				resolveProfileLabel(profileName),
+				locale,
+				outputPath,
+				"WOLT_LOCATION_RESOLVE_ERROR",
+				"Location resolver is not available.",
+			)
+		}
+		location, err := deps.Location.Get(ctx, resolvedAddress)
+		if err != nil {
+			return domain.Location{}, "", emitError(
+				cmd,
+				format,
+				resolveProfileLabel(profileName),
+				locale,
+				outputPath,
+				"WOLT_LOCATION_RESOLVE_ERROR",
+				err.Error(),
+			)
+		}
+		return location, resolveProfileLabel(profileName), nil
+	}
+
 	if lat == nil && lon == nil {
 		profile, err := deps.Profiles.Find(ctx, profileName)
 		if err != nil {
@@ -112,14 +212,10 @@ func resolveLocation(
 	}
 
 	if lat == nil || lon == nil {
-		profile := profileName
-		if strings.TrimSpace(profile) == "" {
-			profile = "anonymous"
-		}
 		return domain.Location{}, "", emitError(
 			cmd,
 			format,
-			profile,
+			resolveProfileLabel(profileName),
 			locale,
 			outputPath,
 			"WOLT_INVALID_ARGUMENT",
@@ -127,11 +223,7 @@ func resolveLocation(
 		)
 	}
 
-	profile := profileName
-	if strings.TrimSpace(profile) == "" {
-		profile = "anonymous"
-	}
-	return domain.Location{Lat: *lat, Lon: *lon}, profile, nil
+	return domain.Location{Lat: *lat, Lon: *lon}, resolveProfileLabel(profileName), nil
 }
 
 func profileError(err error, format output.Format, profileName string, locale string, outputPath string, cmd *cobra.Command) error {

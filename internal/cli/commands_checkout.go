@@ -17,7 +17,7 @@ var objectIDPattern = regexp.MustCompile(`^[a-f0-9]{24}$`)
 func newCheckoutCommand(deps Dependencies) *cobra.Command {
 	checkout := &cobra.Command{
 		Use:   "checkout",
-		Short: "Inspect checkout pricing projections.",
+		Short: "Inspect checkout pricing projections (preview only).",
 	}
 	checkout.AddCommand(newCheckoutPreviewCommand(deps))
 	return checkout
@@ -36,7 +36,9 @@ func newCheckoutPreviewCommand(deps Dependencies) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "preview",
-		Short: "Preview checkout rows and payable total for the current basket.",
+		Short: "Preview checkout rows and payable total (no order placement).",
+		Long: "Preview-only checkout estimation.\n\n" +
+			"This command does not place orders. Location overrides affect the quote preview only; actual order placement in Wolt uses the delivery address selected in your Wolt account.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			format, err := parseOutputFormat(flags.Format)
 			if err != nil {
@@ -62,6 +64,7 @@ func newCheckoutPreviewCommand(deps Dependencies) *cobra.Command {
 				deps,
 				latPtr,
 				lonPtr,
+				flags.Address,
 				flags.Profile,
 				format,
 				flags.Locale,

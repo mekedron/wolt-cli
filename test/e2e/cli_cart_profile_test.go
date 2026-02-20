@@ -19,8 +19,9 @@ func TestAuthStatusJSONWithToken(t *testing.T) {
 				seenToken = auth.WToken
 				return map[string]any{
 					"user": map[string]any{
-						"_id":     map[string]any{"$oid": "user-1"},
-						"country": "FIN",
+						"_id":                     map[string]any{"$oid": "user-1"},
+						"country":                 "FIN",
+						"is_wolt_plus_subscriber": true,
 					},
 				}, nil
 			},
@@ -46,6 +47,9 @@ func TestAuthStatusJSONWithToken(t *testing.T) {
 	if data["user_id"] != "user-1" {
 		t.Fatalf("expected user_id user-1, got %v", data["user_id"])
 	}
+	if !asBoolPayload(data["wolt_plus_subscriber"]) {
+		t.Fatalf("expected wolt_plus_subscriber=true, got %v", data["wolt_plus_subscriber"])
+	}
 }
 
 func TestProfileStatusJSONWithToken(t *testing.T) {
@@ -58,6 +62,9 @@ func TestProfileStatusJSONWithToken(t *testing.T) {
 					"user": map[string]any{
 						"_id":     map[string]any{"$oid": "user-1"},
 						"country": "FIN",
+						"wolt_plus": map[string]any{
+							"status": "active",
+						},
 					},
 				}, nil
 			},
@@ -82,6 +89,9 @@ func TestProfileStatusJSONWithToken(t *testing.T) {
 	}
 	if data["user_id"] != "user-1" {
 		t.Fatalf("expected user_id user-1, got %v", data["user_id"])
+	}
+	if !asBoolPayload(data["wolt_plus_subscriber"]) {
+		t.Fatalf("expected wolt_plus_subscriber=true, got %v", data["wolt_plus_subscriber"])
 	}
 }
 
