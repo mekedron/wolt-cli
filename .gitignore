@@ -16,3 +16,13 @@ __pycache__/
 .wolt-config.json
 *.wolt-config.json
 .chrome-profile/
+
+.scratches
+.codex
+.claude
+.agents
+
+skills-lock.json
+
+skills/*
+!skills/wolt-cli/
