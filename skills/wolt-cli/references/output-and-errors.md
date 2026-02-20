@@ -52,8 +52,6 @@ Rerun with `--verbose` when debugging:
 - preserves machine envelope in stdout
 - returns richer upstream error details
 
-Use `--output <path>` to save stdout payload for later processing.
-
 ## Exit Codes
 
 - `0`: success

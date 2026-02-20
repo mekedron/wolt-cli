@@ -16,3 +16,15 @@
 
 - Commit subjects must describe real code/content changes.
 - Do not use placeholder subjects like `feat: release vX.Y.Z` without change context.
+
+## Pre-Push Validation Rule
+
+- Before every `git push`, run local CI-equivalent checks and tests.
+- Minimum required commands:
+  - `go mod download`
+  - `go build ./...`
+  - `BUILD_VERSION="$(git describe --tags --always --dirty)" && go build -trimpath -ldflags "-s -w -X main.version=${BUILD_VERSION}" -o bin/wolt ./cmd/wolt`
+  - `test "$(./bin/wolt --version | tr -d '\r\n')" = "${BUILD_VERSION}"`
+  - `golangci-lint run`
+  - `go test ./...`
+  - `go test -race ./...`

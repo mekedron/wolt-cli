@@ -17,7 +17,6 @@ Leaf commands share global flags unless noted:
 - `--address "<text>"`
 - `--locale <bcp47>`
 - `--no-color`
-- `--output <path>`
 - `--wtoken <token>`
 - `--wrtoken <refresh-token>`
 - `--cookie <name=value>` (repeatable)

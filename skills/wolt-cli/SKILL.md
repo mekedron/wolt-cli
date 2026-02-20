@@ -81,7 +81,6 @@ instead of unrestricted full-catalog menu crawl.
 
 - `--format json|yaml` returns envelope keys: `meta`, `data`, `warnings`, optional `error`.
 - On upstream failures, rerun with `--verbose` to capture request trace and detailed diagnostics.
-- Use `--output <path>` when output must be reused by later steps.
 
 ## References
 

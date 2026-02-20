@@ -454,7 +454,6 @@ func TestRootHelpIncludesCommandDescriptions(t *testing.T) {
 		"--address: Temporary address override for this command. Geocoded to coordinates. Cannot be combined with --lat/--lon.",
 		"--locale: Response locale in BCP-47 format, for example en-FI.",
 		"--no-color: Disable ANSI color codes in table output.",
-		"--output: Write the command output to a file.",
 		"--wrtoken: Wolt refresh token for automatic access token rotation (or payload with refreshToken).",
 		"--verbose: Enable verbose output (prints upstream request trace and detailed error diagnostics).",
 	} {

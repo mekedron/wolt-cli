@@ -52,9 +52,6 @@ func addGlobalFlags(cmd *cobra.Command, flags *globalFlags) {
 	addSharedGlobalFlag(cmd, "no-color", func() {
 		cmd.Flags().BoolVar(&flags.NoColor, "no-color", false, "Disable ANSI color codes in table output.")
 	})
-	addSharedGlobalFlag(cmd, "output", func() {
-		cmd.Flags().StringVar(&flags.Output, "output", "", "Write the command output to a file.")
-	})
 	addSharedGlobalFlag(cmd, "wtoken", func() {
 		cmd.Flags().StringVar(&flags.WToken, "wtoken", "", "Wolt token for authenticated endpoints (JWT, Bearer value, or payload with accessToken).")
 	})

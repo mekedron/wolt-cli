@@ -16,7 +16,6 @@ var sharedGlobalOptionOrder = []string{
 	"address",
 	"locale",
 	"no-color",
-	"output",
 	"wtoken",
 	"wrtoken",
 	"cookie",

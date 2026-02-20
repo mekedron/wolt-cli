@@ -58,7 +58,6 @@ All command leaf nodes support:
 - `--address <text>` (temporary location override; geocoded to coordinates)
 - `--locale <bcp47>`
 - `--no-color`
-- `--output <path>`
 - `--verbose` (prints upstream HTTP request trace and detailed error diagnostics)
 - `--wtoken <token>`
 - `--wrtoken <token>`
