@@ -9,6 +9,5 @@
 
 ## Release Tag Rule
 
-- GitHub release workflow must support both tag styles:
+- Release tags must use `v` prefix only:
   - `vX.Y.Z` (for example `v0.2.0`)
-  - `X.Y.Z` (for example `0.2.0`)
