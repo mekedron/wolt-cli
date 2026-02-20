@@ -27,6 +27,26 @@ jobs:
       - name: Build
         run: go build ./...
 
+      - name: Resolve build version
+        run: echo "BUILD_VERSION=$(git describe --tags --always --dirty)" >> "$GITHUB_ENV"
+
+      - name: Build versioned CLI binary
+        run: |
+          mkdir -p bin
+          go build -trimpath -ldflags "-s -w -X main.version=${BUILD_VERSION}" -o bin/wolt ./cmd/wolt
+
+      - name: Verify CLI version output
+        run: |
+          actual_version="$(./bin/wolt --version | tr -d '\r\n')"
+          if [ -z "${actual_version}" ] || [ "${actual_version}" = "dev" ]; then
+            echo "wolt --version returned invalid value: '${actual_version}'"
+            exit 1
+          fi
+          if [ "${actual_version}" != "${BUILD_VERSION}" ]; then
+            echo "wolt --version mismatch: expected '${BUILD_VERSION}', got '${actual_version}'"
+            exit 1
+          fi
+
       - name: Lint
         uses: golangci/golangci-lint-action@v9
         with:

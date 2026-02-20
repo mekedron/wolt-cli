@@ -1,9 +1,10 @@
 APP_NAME := wolt
+VERSION ?= $(shell git describe --tags --always --dirty)
 
 .PHONY: build run test race lint cover clean
 
 build:
-	go build -o bin/$(APP_NAME) ./cmd/wolt
+	go build -trimpath -ldflags "-s -w -X main.version=$(VERSION)" -o bin/$(APP_NAME) ./cmd/wolt
 
 run:
 	go run ./cmd/wolt --help

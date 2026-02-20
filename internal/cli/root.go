@@ -33,10 +33,7 @@ var sharedGlobalOptionIndex = func() map[string]int {
 
 // NewRootCommand builds the complete command tree.
 func NewRootCommand(deps Dependencies) *cobra.Command {
-	version := deps.Version
-	if strings.TrimSpace(version) == "" {
-		version = "dev"
-	}
+	version := resolvedVersion(deps.Version)
 
 	root := &cobra.Command{
 		Use:           "wolt",
