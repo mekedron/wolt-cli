@@ -89,6 +89,28 @@ jobs:
             exit 1
           fi
 
+      - name: Package skill archive
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if ! command -v zip >/dev/null 2>&1; then
+            echo "zip command is required but not available."
+            exit 1
+          fi
+
+          skill_dir="skills/wolt-cli"
+          if [ ! -d "${skill_dir}" ]; then
+            echo "Skill directory not found: ${skill_dir}"
+            exit 1
+          fi
+
+          skill_archive="wolt-cli_skill_${GITHUB_REF_NAME}.zip"
+          (
+            cd skills/wolt-cli
+            zip -r "../../dist/${skill_archive}" .
+          )
+
       - name: Generate checksums
         shell: bash
         run: |
@@ -96,7 +118,13 @@ jobs:
 
           (
             cd dist
-            sha256sum ./*.tar.gz > SHA256SUMS
+            shopt -s nullglob
+            archives=(./*.tar.gz ./*.zip)
+            if [ "${#archives[@]}" -eq 0 ]; then
+              echo "No archives found for checksum generation."
+              exit 1
+            fi
+            sha256sum "${archives[@]}" > SHA256SUMS
           )
 
       - name: Generate release notes
@@ -128,6 +156,7 @@ jobs:
             echo "## Artifacts"
             echo
             echo "- \`SHA256SUMS\` contains checksums for all release archives."
+            echo "- \`wolt-cli_skill_${CURRENT_TAG}.zip\` contains the AI agent skill bundle."
           } > RELEASE_NOTES.md
 
       - name: Publish release
@@ -140,6 +169,7 @@ jobs:
           overwrite_files: true
           files: |
             dist/*.tar.gz
+            dist/*.zip
             dist/SHA256SUMS
 
   sync_tap:
