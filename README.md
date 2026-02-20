@@ -156,6 +156,10 @@ Profile config may contain `wtoken`, `wrtoken`, and cookies.
 Keep config local and do not commit it.
 Local config patterns are ignored by `.gitignore` (`.wolt/`, `.wolt-config.json`, `*.wolt-config.json`).
 
+## Acknowledgements
+
+Inspired by the original work of Kamil Woźniak: https://github.com/Valaraucoo/what-to-eat
+
 ## Copyright
 
 Copyright (c) 2026 Nikita Rabykin.

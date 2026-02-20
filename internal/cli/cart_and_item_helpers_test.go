@@ -153,6 +153,40 @@ func TestBuildItemOptionsDataAndTable(t *testing.T) {
 	}
 }
 
+func TestBuildItemDetailTableFormatsGroups(t *testing.T) {
+	data := map[string]any{
+		"name":        "Combo",
+		"item_id":     "item-1",
+		"venue_id":    "venue-1",
+		"description": "Test item",
+		"price": map[string]any{
+			"formatted_amount": "€10.00",
+		},
+		"option_groups": []any{
+			map[string]any{
+				"group_id": "group-drink",
+				"name":     "Drink",
+				"required": true,
+				"min":      1,
+				"max":      1,
+			},
+		},
+		"upsell_items": []any{},
+	}
+
+	rendered := buildItemDetailTable(data)
+	for _, expected := range []string{
+		"Option groups\t1",
+		"Upsell items\t0",
+		"Option groups\nGroup ID\tName\tRequired\tMin\tMax",
+		"group-drink\tDrink\tyes\t1\t1",
+	} {
+		if !strings.Contains(rendered, expected) {
+			t.Fatalf("expected output to contain %q, got:\n%s", expected, rendered)
+		}
+	}
+}
+
 func TestTokenPreviewAndExpiryFormatting(t *testing.T) {
 	if got := tokenPreview("abcdefghijklmnop"); got != "abcdef...klmnop" {
 		t.Fatalf("unexpected token preview: %q", got)

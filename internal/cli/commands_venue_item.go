@@ -459,16 +459,69 @@ func buildVenueHoursTable(data map[string]any) string {
 }
 
 func buildItemDetailTable(data map[string]any) string {
+	optionGroups := asSlice(data["option_groups"])
+	upsellItems := asSlice(data["upsell_items"])
 	headers := []string{"Field", "Value"}
 	rows := [][]string{
 		{"Item ID", asString(data["item_id"])},
 		{"Venue ID", asString(data["venue_id"])},
 		{"Description", fallbackString(asString(data["description"]), "-")},
 		{"Price", fallbackString(asString(asMap(data["price"])["formatted_amount"]), "-")},
-		{"Option groups", fmt.Sprintf("%v", data["option_groups"])},
-		{"Upsell items", fmt.Sprintf("%v", data["upsell_items"])},
+		{"Option groups", fmt.Sprintf("%d", len(optionGroups))},
+		{"Upsell items", fmt.Sprintf("%d", len(upsellItems))},
 	}
-	return output.RenderTable("Item: "+asString(data["name"]), headers, rows)
+	sections := []string{
+		output.RenderTable("Item: "+asString(data["name"]), headers, rows),
+		output.RenderTable("Option groups", []string{"Group ID", "Name", "Required", "Min", "Max"}, buildItemGroupRows(optionGroups)),
+	}
+	if len(upsellItems) > 0 {
+		sections = append(sections, output.RenderTable("Upsell items", []string{"Item ID", "Name", "Price"}, buildUpsellRows(upsellItems)))
+	}
+	return strings.Join(sections, "\n\n")
+}
+
+func buildItemGroupRows(optionGroups []any) [][]string {
+	rows := make([][]string, 0, len(optionGroups))
+	for _, optionGroup := range optionGroups {
+		group := asMap(optionGroup)
+		if group == nil {
+			continue
+		}
+		required := "no"
+		if asBool(group["required"]) {
+			required = "yes"
+		}
+		rows = append(rows, []string{
+			fallbackString(asString(group["group_id"]), "-"),
+			fallbackString(asString(group["name"]), "-"),
+			required,
+			asString(group["min"]),
+			asString(group["max"]),
+		})
+	}
+	if len(rows) == 0 {
+		rows = append(rows, []string{"-", "-", "-", "-", "-"})
+	}
+	return rows
+}
+
+func buildUpsellRows(upsellItems []any) [][]string {
+	rows := make([][]string, 0, len(upsellItems))
+	for _, upsellItem := range upsellItems {
+		item := asMap(upsellItem)
+		if item == nil {
+			continue
+		}
+		rows = append(rows, []string{
+			fallbackString(asString(item["item_id"]), "-"),
+			fallbackString(asString(item["name"]), "-"),
+			fallbackString(asString(asMap(item["price"])["formatted_amount"]), "-"),
+		})
+	}
+	if len(rows) == 0 {
+		rows = append(rows, []string{"-", "-", "-"})
+	}
+	return rows
 }
 
 func buildItemOptionsData(venueID string, itemID string, payload map[string]any, preferredGroupIDs []string) (map[string]any, []string) {
