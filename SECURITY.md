@@ -11,7 +11,7 @@ Older snapshots may not receive security fixes.
 
 If you believe you found a vulnerability, report it privately to:
 
-- `jestem.kamil.wozniak@gmail.com`
+- `nikita.rabykin@gmail.com`
 
 Please include:
 

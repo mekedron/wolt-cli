@@ -79,37 +79,63 @@ Shared location override flags for location-aware commands:
 
 `--lat` and `--lon` must be provided together.
 
-## Typical Flows
+## Example: Find Venue, Inspect Options, Add a Custom WHOPPER Meal
+
+`jq` lines are optional convenience helpers for extracting IDs.
 
 ```bash
-# Validate auth/profile
+# 0) Validate auth/profile
 wolt profile status --verbose
 wolt profile show --format json
 
-# Menu -> item options -> cart -> checkout preview
-wolt venue menu burger-king-finnoo --include-options --format json
-wolt item options burger-king-finnoo <item-id> --format json
-wolt cart add <venue-id> <item-id> --option "<group-id>=<value-id>" --format json
-wolt cart show --details --format json
-wolt checkout preview --delivery-mode standard --format json
+# 1) Find a venue (copy slug + venue_id from output)
+wolt search venues --query "burger king" --limit 10 --format json
+wolt search venues --query "burger king" --limit 10 --format json \
+  | jq -r '.data.items[] | "\(.slug)\t\(.venue_id)\t\(.name)"'
 
-# Profile workflows
+# 2) Inspect venue products/menu
+wolt venue menu burger-king-finnoo --include-options --format json
+wolt venue menu burger-king-finnoo --include-options --format json \
+  | jq -r '.data.items[] | select(.name|test("whopper"; "i")) | "\(.item_id)\t\(.name)\t\(.base_price.amount)"'
+
+# 3) Inspect a single WHOPPER meal item in detail (item_id from step 2)
+wolt item show burger-king-finnoo <item-id> --format json
+wolt item options burger-king-finnoo <item-id> --format json
+wolt item options burger-king-finnoo <item-id> --format json \
+  | jq -r '.data.option_groups[] | .name as $g | .values[] | "\($g)\t\(.name)\t\(.example_option)"'
+
+# 4) Add custom WHOPPER meal with selected options (IDs from step 3)
+wolt cart add <venue-id> <item-id> \
+  --venue-slug burger-king-finnoo \
+  --option "<drink-group-id>=<drink-value-id>" \
+  --option "<side-group-id>=<side-value-id>" \
+  --option "<addons-group-id>=<addons-value-id>" \
+  --count 1 \
+  --format json
+
+# Real-world example captured on 2026-02-20 in en-FI locale:
+wolt cart add 629f1f18480882d6f02c25f0 676939cb70769df4cec6cc6f \
+  --venue-slug burger-king-finnoo \
+  --option "69958f7a0ccf540d98667a70=69958f777cb002552fad3d3d" \
+  --option "6995b941621e894833915306=6995b93d45f708d8b1ad1345" \
+  --option "69958f7a0ccf540d98667a73=69958f777cb002552fad3d51" \
+  --format json
+
+# 5) Verify cart details and checkout preview (no order placement)
+wolt cart show --details --venue-id <venue-id> --format json
+wolt checkout preview --delivery-mode standard --venue-id <venue-id> --format json
+
+# Optional cleanup
+wolt cart clear --venue-id <venue-id> --format json
+```
+
+## Other Common Flows
+
+```bash
 wolt profile addresses --format json
 wolt profile payments --format json
 wolt profile favorites --format json
 ```
-
-## Docs
-
-- `docs/cli-overview.md`
-- `docs/cli-installation.md`
-- `docs/cli-auth.md`
-- `docs/cli-discovery-search.md`
-- `docs/cli-venue-item.md`
-- `docs/cli-cart-checkout.md`
-- `docs/cli-orders-profile.md`
-- `docs/cli-profile-addresses.md`
-- `docs/cli-output-contract.md`
 
 ## Test and Lint
 
@@ -126,6 +152,10 @@ go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
 
 ## Security
 
-Profile config may contain `wtoken`, `wrefresh_token`, and cookies.
+Profile config may contain `wtoken`, `wrtoken`, and cookies.
 Keep config local and do not commit it.
 Local config patterns are ignored by `.gitignore` (`.wolt/`, `.wolt-config.json`, `*.wolt-config.json`).
+
+## Copyright
+
+Copyright (c) 2026 Nikita Rabykin.
