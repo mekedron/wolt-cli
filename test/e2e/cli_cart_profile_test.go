@@ -1163,7 +1163,6 @@ func TestProfileAddressesJSON(t *testing.T) {
 				{
 					Name:      "default",
 					IsDefault: true,
-					Address:   "Iivisniemenkatu 2",
 					Location:  domain.Location{Lat: 60.1484, Lon: 24.6913},
 					WToken:    "token",
 				},

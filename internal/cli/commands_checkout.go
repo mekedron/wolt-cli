@@ -69,6 +69,7 @@ func newCheckoutPreviewCommand(deps Dependencies) *cobra.Command {
 				format,
 				flags.Locale,
 				flags.Output,
+				&auth,
 				cmd,
 			)
 			if err != nil {

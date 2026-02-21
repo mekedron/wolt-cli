@@ -248,6 +248,330 @@ func TestDiscoverFeedMergesDynamicPromotions(t *testing.T) {
 	}
 }
 
+func TestDiscoverFeedEnrichesWoltPlusFromStaticVenue(t *testing.T) {
+	venue := buildVenue("venue-1", "plus-venue", "Plus Street")
+	venue.ShowWoltPlus = false
+	sections := []domain.Section{
+		{
+			Name:  "popular",
+			Title: "Popular",
+			Items: []domain.Item{
+				{Title: "Plus Venue", TrackID: "1", Link: domain.Link{Target: "venue-1"}, Venue: venue},
+			},
+		},
+	}
+
+	deps := cli.Dependencies{
+		Wolt: &mockWolt{
+			frontPageFunc: func(context.Context, domain.Location) (map[string]any, error) {
+				return map[string]any{"city_data": map[string]any{"name": "Krakow"}}, nil
+			},
+			sectionsFunc: func(context.Context, domain.Location) ([]domain.Section, error) {
+				return sections, nil
+			},
+			venuePageStaticFunc: func(context.Context, string) (map[string]any, error) {
+				return map[string]any{
+					"venue_raw": map[string]any{
+						"is_wolt_plus": true,
+					},
+				}, nil
+			},
+		},
+		Profiles: &mockProfiles{profile: domain.Profile{Name: "default", IsDefault: true, Location: domain.Location{Lat: 0, Lon: 0}}},
+		Location: &mockLocation{},
+		Config:   &mockConfig{},
+		Version:  "1.1.1",
+	}
+
+	exitCode, out := runCLIWithDeps(t, deps, "discover", "feed", "--format", "json")
+	if exitCode != 0 {
+		t.Fatalf("expected exit 0, got %d\noutput:\n%s", exitCode, out)
+	}
+	payload := mustJSON(t, out)
+	data := asMapPayload(t, payload["data"])
+	sectionRows := asSlicePayload(t, data["sections"])
+	if len(sectionRows) != 1 {
+		t.Fatalf("expected one section, got %d", len(sectionRows))
+	}
+	items := asSlicePayload(t, asMapPayload(t, sectionRows[0])["items"])
+	if len(items) != 1 {
+		t.Fatalf("expected one item, got %d", len(items))
+	}
+	first := asMapPayload(t, items[0])
+	if first["wolt_plus"] != true {
+		t.Fatalf("expected wolt_plus true from static payload, got %v", first["wolt_plus"])
+	}
+}
+
+func TestDiscoverFeedPaginationUsesGlobalLimitOffset(t *testing.T) {
+	sections := []domain.Section{
+		{
+			Name:  "popular",
+			Title: "Popular",
+			Items: []domain.Item{
+				{Title: "Venue A", TrackID: "1", Link: domain.Link{Target: "venue-a"}, Venue: buildVenue("venue-a", "venue-a", "Street A")},
+				{Title: "Venue B", TrackID: "2", Link: domain.Link{Target: "venue-b"}, Venue: buildVenue("venue-b", "venue-b", "Street B")},
+			},
+		},
+		{
+			Name:  "nearby",
+			Title: "Nearby",
+			Items: []domain.Item{
+				{Title: "Venue C", TrackID: "3", Link: domain.Link{Target: "venue-c"}, Venue: buildVenue("venue-c", "venue-c", "Street C")},
+				{Title: "Venue D", TrackID: "4", Link: domain.Link{Target: "venue-d"}, Venue: buildVenue("venue-d", "venue-d", "Street D")},
+			},
+		},
+	}
+
+	deps := cli.Dependencies{
+		Wolt: &mockWolt{
+			frontPageFunc: func(context.Context, domain.Location) (map[string]any, error) {
+				return map[string]any{"city_data": map[string]any{"name": "Krakow"}}, nil
+			},
+			sectionsFunc: func(context.Context, domain.Location) ([]domain.Section, error) {
+				return sections, nil
+			},
+		},
+		Profiles: &mockProfiles{profile: domain.Profile{Name: "default", IsDefault: true, Location: domain.Location{Lat: 0, Lon: 0}}},
+		Location: &mockLocation{},
+		Config:   &mockConfig{},
+		Version:  "1.1.1",
+	}
+
+	exitCode, out := runCLIWithDeps(t, deps, "discover", "feed", "--limit", "2", "--offset", "1", "--format", "json")
+	if exitCode != 0 {
+		t.Fatalf("expected exit 0, got %d\noutput:\n%s", exitCode, out)
+	}
+	payload := mustJSON(t, out)
+	data := asMapPayload(t, payload["data"])
+	if asIntPayload(data["total"]) != 4 {
+		t.Fatalf("expected total 4, got %v", data["total"])
+	}
+	if asIntPayload(data["count"]) != 2 {
+		t.Fatalf("expected count 2, got %v", data["count"])
+	}
+	if asIntPayload(data["offset"]) != 1 {
+		t.Fatalf("expected offset 1, got %v", data["offset"])
+	}
+	if asIntPayload(data["next_offset"]) != 3 {
+		t.Fatalf("expected next_offset 3, got %v", data["next_offset"])
+	}
+	if asIntPayload(data["total_pages"]) != 2 {
+		t.Fatalf("expected total_pages 2, got %v", data["total_pages"])
+	}
+
+	names := []string{}
+	for _, sectionValue := range asSlicePayload(t, data["sections"]) {
+		section := asMapPayload(t, sectionValue)
+		for _, itemValue := range asSlicePayload(t, section["items"]) {
+			item := asMapPayload(t, itemValue)
+			names = append(names, asStringPayload(item["name"]))
+		}
+	}
+	if len(names) != 2 || names[0] != "Venue B" || names[1] != "Venue C" {
+		t.Fatalf("expected paginated names [Venue B Venue C], got %v", names)
+	}
+}
+
+func TestDiscoverFeedFastSkipsVenueEnrichment(t *testing.T) {
+	venue := buildVenue("venue-1", "plus-venue", "Plus Street")
+	sections := []domain.Section{
+		{
+			Name:  "popular",
+			Title: "Popular",
+			Items: []domain.Item{
+				{Title: "Plus Venue", TrackID: "1", Link: domain.Link{Target: "venue-1"}, Venue: venue},
+			},
+		},
+	}
+	dynamicCalls := 0
+	staticCalls := 0
+
+	deps := cli.Dependencies{
+		Wolt: &mockWolt{
+			frontPageFunc: func(context.Context, domain.Location) (map[string]any, error) {
+				return map[string]any{"city_data": map[string]any{"name": "Krakow"}}, nil
+			},
+			sectionsFunc: func(context.Context, domain.Location) ([]domain.Section, error) {
+				return sections, nil
+			},
+			venuePageDynamicFunc: func(context.Context, string, woltgateway.VenuePageDynamicOptions) (map[string]any, error) {
+				dynamicCalls++
+				return map[string]any{
+					"venue_raw": map[string]any{
+						"discounts": []any{
+							map[string]any{
+								"description": map[string]any{"title": "40% off selected items"},
+							},
+						},
+					},
+				}, nil
+			},
+			venuePageStaticFunc: func(context.Context, string) (map[string]any, error) {
+				staticCalls++
+				return map[string]any{
+					"venue_raw": map[string]any{
+						"is_wolt_plus": true,
+					},
+				}, nil
+			},
+		},
+		Profiles: &mockProfiles{profile: domain.Profile{Name: "default", IsDefault: true, Location: domain.Location{Lat: 0, Lon: 0}}},
+		Location: &mockLocation{},
+		Config:   &mockConfig{},
+		Version:  "1.1.1",
+	}
+
+	exitCode, out := runCLIWithDeps(t, deps, "discover", "feed", "--fast", "--format", "json")
+	if exitCode != 0 {
+		t.Fatalf("expected exit 0, got %d\noutput:\n%s", exitCode, out)
+	}
+	if dynamicCalls != 0 {
+		t.Fatalf("expected no dynamic calls in fast mode, got %d", dynamicCalls)
+	}
+	if staticCalls != 0 {
+		t.Fatalf("expected no static calls in fast mode, got %d", staticCalls)
+	}
+	payload := mustJSON(t, out)
+	data := asMapPayload(t, payload["data"])
+	if data["enrichment_mode"] != "fast" {
+		t.Fatalf("expected enrichment_mode fast, got %v", data["enrichment_mode"])
+	}
+	sectionRows := asSlicePayload(t, data["sections"])
+	items := asSlicePayload(t, asMapPayload(t, sectionRows[0])["items"])
+	promotions := asSlicePayload(t, asMapPayload(t, items[0])["promotions"])
+	if containsStringPayload(promotions, "40% off selected items") {
+		t.Fatalf("expected fast mode to skip campaign enrichment, got %v", promotions)
+	}
+}
+
+func TestDiscoverFeedUsesFrontPayloadSectionsWithoutFallbackCall(t *testing.T) {
+	sectionsCalls := 0
+
+	deps := cli.Dependencies{
+		Wolt: &mockWolt{
+			frontPageFunc: func(context.Context, domain.Location) (map[string]any, error) {
+				return map[string]any{
+					"city_data": map[string]any{"name": "Krakow"},
+					"sections": []any{
+						map[string]any{
+							"name":  "popular",
+							"title": "Popular",
+							"items": []any{
+								map[string]any{
+									"title":    "Front Venue",
+									"track_id": "track-1",
+									"link":     map[string]any{"target": "venue-1"},
+									"venue": map[string]any{
+										"id":             "venue-1",
+										"slug":           "front-venue",
+										"estimate_range": "20-30",
+										"currency":       "EUR",
+									},
+								},
+							},
+						},
+					},
+				}, nil
+			},
+			sectionsFunc: func(context.Context, domain.Location) ([]domain.Section, error) {
+				sectionsCalls++
+				return nil, errors.New("should not be called when front payload includes sections")
+			},
+		},
+		Profiles: &mockProfiles{profile: domain.Profile{Name: "default", IsDefault: true, Location: domain.Location{Lat: 0, Lon: 0}}},
+		Location: &mockLocation{},
+		Config:   &mockConfig{},
+		Version:  "1.1.1",
+	}
+
+	exitCode, out := runCLIWithDeps(t, deps, "discover", "feed", "--format", "json")
+	if exitCode != 0 {
+		t.Fatalf("expected exit 0, got %d\noutput:\n%s", exitCode, out)
+	}
+	if sectionsCalls != 0 {
+		t.Fatalf("expected zero fallback sections calls, got %d", sectionsCalls)
+	}
+	payload := mustJSON(t, out)
+	data := asMapPayload(t, payload["data"])
+	sectionRows := asSlicePayload(t, data["sections"])
+	items := asSlicePayload(t, asMapPayload(t, sectionRows[0])["items"])
+	first := asMapPayload(t, items[0])
+	if first["name"] != "Front Venue" {
+		t.Fatalf("expected Front Venue row from front payload, got %v", first["name"])
+	}
+}
+
+func TestDiscoverFeedSupportsQuerySortAndPage(t *testing.T) {
+	venueA := buildVenue("venue-a", "venue-a", "Street A")
+	venueA.Rating = &domain.Rating{Score: 8.5}
+	venueB := buildVenue("venue-b", "venue-b", "Street B")
+	venueB.Rating = &domain.Rating{Score: 9.1}
+	sections := []domain.Section{
+		{
+			Name:  "popular",
+			Title: "Popular",
+			Items: []domain.Item{
+				{Title: "Alpha Burger", TrackID: "1", Link: domain.Link{Target: "venue-a"}, Venue: venueA},
+				{Title: "Beta Burger", TrackID: "2", Link: domain.Link{Target: "venue-b"}, Venue: venueB},
+			},
+		},
+	}
+
+	deps := cli.Dependencies{
+		Wolt: &mockWolt{
+			frontPageFunc: func(context.Context, domain.Location) (map[string]any, error) {
+				return map[string]any{"city_data": map[string]any{"name": "Krakow"}}, nil
+			},
+			sectionsFunc: func(context.Context, domain.Location) ([]domain.Section, error) {
+				return sections, nil
+			},
+		},
+		Profiles: &mockProfiles{profile: domain.Profile{Name: "default", IsDefault: true, Location: domain.Location{Lat: 0, Lon: 0}}},
+		Location: &mockLocation{},
+		Config:   &mockConfig{},
+		Version:  "1.1.1",
+	}
+
+	exitCode, out := runCLIWithDeps(
+		t,
+		deps,
+		"discover",
+		"feed",
+		"--query",
+		"burger",
+		"--sort",
+		"rating",
+		"--limit",
+		"1",
+		"--page",
+		"2",
+		"--fast",
+		"--format",
+		"json",
+	)
+	if exitCode != 0 {
+		t.Fatalf("expected exit 0, got %d\noutput:\n%s", exitCode, out)
+	}
+	payload := mustJSON(t, out)
+	data := asMapPayload(t, payload["data"])
+	if data["sort"] != "rating" {
+		t.Fatalf("expected sort rating, got %v", data["sort"])
+	}
+	if asIntPayload(data["page"]) != 2 {
+		t.Fatalf("expected page 2, got %v", data["page"])
+	}
+	if asIntPayload(data["count"]) != 1 {
+		t.Fatalf("expected count 1, got %v", data["count"])
+	}
+	sectionsRows := asSlicePayload(t, data["sections"])
+	items := asSlicePayload(t, asMapPayload(t, sectionsRows[0])["items"])
+	first := asMapPayload(t, items[0])
+	if first["name"] != "Alpha Burger" {
+		t.Fatalf("expected second page to return Alpha Burger, got %v", first["name"])
+	}
+}
+
 func TestSearchVenuesWithoutQueryListsRestaurants(t *testing.T) {
 	items := []domain.Item{
 		{Title: "Burger Place", TrackID: "1", Link: domain.Link{Target: "venue-1"}, Venue: buildVenue("venue-1", "burger-place", "Burger Street")},
@@ -288,6 +612,67 @@ func TestSearchVenuesWithoutQueryListsRestaurants(t *testing.T) {
 	promotions := asSlicePayload(t, first["promotions"])
 	if len(promotions) != 1 || promotions[0] != "Free delivery" {
 		t.Fatalf("expected promotions [Free delivery], got %v", promotions)
+	}
+}
+
+func TestSearchVenuesSupportsPageAndFilters(t *testing.T) {
+	venueA := buildVenue("venue-a", "venue-a", "Street A")
+	venueA.Rating = &domain.Rating{Score: 8.6}
+	venueA.DeliveryPriceInt = intPtr(500)
+	venueB := buildVenue("venue-b", "venue-b", "Street B")
+	venueB.Rating = &domain.Rating{Score: 9.3}
+	venueB.DeliveryPriceInt = intPtr(100)
+	items := []domain.Item{
+		{Title: "Alpha Burger", TrackID: "1", Link: domain.Link{Target: "venue-a"}, Venue: venueA},
+		{Title: "Beta Burger", TrackID: "2", Link: domain.Link{Target: "venue-b"}, Venue: venueB},
+	}
+
+	deps := cli.Dependencies{
+		Wolt: &mockWolt{
+			itemsFunc: func(context.Context, domain.Location) ([]domain.Item, error) {
+				return items, nil
+			},
+		},
+		Profiles: &mockProfiles{profile: domain.Profile{Name: "default", IsDefault: true, Location: domain.Location{Lat: 0, Lon: 0}}},
+		Location: &mockLocation{},
+		Config:   &mockConfig{},
+		Version:  "1.1.1",
+	}
+
+	exitCode, out := runCLIWithDeps(
+		t,
+		deps,
+		"search",
+		"venues",
+		"--query",
+		"burger",
+		"--sort",
+		"rating",
+		"--min-rating",
+		"8.5",
+		"--max-delivery-fee",
+		"500",
+		"--limit",
+		"1",
+		"--page",
+		"2",
+		"--format",
+		"json",
+	)
+	if exitCode != 0 {
+		t.Fatalf("expected exit 0, got %d\noutput:\n%s", exitCode, out)
+	}
+	payload := mustJSON(t, out)
+	data := asMapPayload(t, payload["data"])
+	if asIntPayload(data["count"]) != 1 {
+		t.Fatalf("expected count 1, got %v", data["count"])
+	}
+	rows := asSlicePayload(t, data["items"])
+	if len(rows) != 1 {
+		t.Fatalf("expected one row, got %d", len(rows))
+	}
+	if asMapPayload(t, rows[0])["name"] != "Alpha Burger" {
+		t.Fatalf("expected second page venue Alpha Burger, got %v", asMapPayload(t, rows[0])["name"])
 	}
 }
 
@@ -368,6 +753,81 @@ func TestSearchVenuesTableIncludesSlug(t *testing.T) {
 	}
 }
 
+func TestSearchItemsSupportsPageAndFilters(t *testing.T) {
+	searchPayload := map[string]any{
+		"venue": map[string]any{
+			"currency": "EUR",
+		},
+		"items": []any{
+			map[string]any{
+				"id":          "item-a",
+				"name":        "Alpha Burger",
+				"price":       700,
+				"is_sold_out": false,
+				"discounts":   []any{"20% off"},
+			},
+			map[string]any{
+				"id":          "item-b",
+				"name":        "Beta Burger",
+				"price":       900,
+				"is_sold_out": false,
+				"discounts":   []any{"10% off"},
+			},
+		},
+	}
+	deps := cli.Dependencies{
+		Wolt: &mockWolt{
+			itemsFunc: func(context.Context, domain.Location) ([]domain.Item, error) {
+				return []domain.Item{}, nil
+			},
+			searchFunc: func(context.Context, domain.Location, string) (map[string]any, error) {
+				return searchPayload, nil
+			},
+		},
+		Profiles: &mockProfiles{profile: domain.Profile{Name: "default", IsDefault: true, Location: domain.Location{Lat: 0, Lon: 0}}},
+		Location: &mockLocation{},
+		Config:   &mockConfig{},
+		Version:  "1.1.1",
+	}
+
+	exitCode, out := runCLIWithDeps(
+		t,
+		deps,
+		"search",
+		"items",
+		"--query",
+		"burger",
+		"--sort",
+		"price",
+		"--min-price",
+		"700",
+		"--max-price",
+		"900",
+		"--discounts-only",
+		"--limit",
+		"1",
+		"--page",
+		"2",
+		"--format",
+		"json",
+	)
+	if exitCode != 0 {
+		t.Fatalf("expected exit 0, got %d\noutput:\n%s", exitCode, out)
+	}
+	payload := mustJSON(t, out)
+	data := asMapPayload(t, payload["data"])
+	if asIntPayload(data["count"]) != 1 {
+		t.Fatalf("expected count 1, got %v", data["count"])
+	}
+	items := asSlicePayload(t, data["items"])
+	if len(items) != 1 {
+		t.Fatalf("expected one row, got %d", len(items))
+	}
+	if asMapPayload(t, items[0])["name"] != "Beta Burger" {
+		t.Fatalf("expected second page to return Beta Burger, got %v", asMapPayload(t, items[0])["name"])
+	}
+}
+
 func TestVenueMenuJSON(t *testing.T) {
 	staticPayload := map[string]any{
 		"venue": map[string]any{
@@ -436,6 +896,67 @@ func TestVenueMenuJSON(t *testing.T) {
 	}
 	if len(asSlicePayload(t, first["option_group_ids"])) != 1 {
 		t.Fatalf("expected option_group_ids to be present")
+	}
+}
+
+func TestVenueMenuSupportsPageSortAndFilters(t *testing.T) {
+	staticPayload := map[string]any{
+		"venue": map[string]any{
+			"id": "venue-1",
+		},
+	}
+	assortmentPayload := map[string]any{
+		"items": []any{
+			map[string]any{"id": "item-a", "name": "Alpha", "price": 700, "is_sold_out": false, "promotions": []any{"20% off"}},
+			map[string]any{"id": "item-b", "name": "Beta", "price": 900, "is_sold_out": false, "promotions": []any{"10% off"}},
+		},
+	}
+
+	deps := cli.Dependencies{
+		Wolt: &mockWolt{
+			venuePageStaticFunc: func(context.Context, string) (map[string]any, error) {
+				return staticPayload, nil
+			},
+			assortmentBySlugFunc: func(context.Context, string) (map[string]any, error) {
+				return assortmentPayload, nil
+			},
+		},
+		Profiles: &mockProfiles{profile: domain.Profile{Name: "default", IsDefault: true, Location: domain.Location{Lat: 0, Lon: 0}}},
+		Location: &mockLocation{},
+		Config:   &mockConfig{},
+		Version:  "1.1.1",
+	}
+
+	exitCode, out := runCLIWithDeps(
+		t,
+		deps,
+		"venue",
+		"menu",
+		"burger-place",
+		"--sort",
+		"price",
+		"--discounts-only",
+		"--limit",
+		"1",
+		"--page",
+		"2",
+		"--format",
+		"json",
+	)
+	if exitCode != 0 {
+		t.Fatalf("expected exit 0, got %d\noutput:\n%s", exitCode, out)
+	}
+	payload := mustJSON(t, out)
+	data := asMapPayload(t, payload["data"])
+	if asIntPayload(data["count"]) != 1 {
+		t.Fatalf("expected count 1, got %v", data["count"])
+	}
+	items := asSlicePayload(t, data["items"])
+	if len(items) != 1 {
+		t.Fatalf("expected one row, got %d", len(items))
+	}
+	if asMapPayload(t, items[0])["name"] != "Beta" {
+		t.Fatalf("expected second page to return Beta, got %v", asMapPayload(t, items[0])["name"])
 	}
 }
 
@@ -514,6 +1035,75 @@ func TestVenueMenuMergesDynamicCampaignDiscounts(t *testing.T) {
 	discounts := asSlicePayload(t, first["discounts"])
 	if len(discounts) != 1 || discounts[0] != "40% off selected items" {
 		t.Fatalf("expected discounts [40%% off selected items], got %v", discounts)
+	}
+}
+
+func TestVenueMenuForwardsAuthToDynamicRequest(t *testing.T) {
+	staticPayload := map[string]any{
+		"venue": map[string]any{
+			"id": "venue-1",
+		},
+	}
+	assortmentPayload := map[string]any{
+		"items": []any{
+			map[string]any{
+				"id":    "item-1",
+				"name":  "Steakhouse",
+				"price": 1075,
+			},
+		},
+	}
+	dynamicPayload := map[string]any{
+		"venue_raw": map[string]any{
+			"discounts": []any{
+				map[string]any{
+					"effects": map[string]any{
+						"item_discount": map[string]any{
+							"fraction": 0.4,
+							"include": map[string]any{
+								"items": []any{"item-1"},
+							},
+						},
+					},
+					"effect_item_badge": map[string]any{
+						"text": "40% off selected items",
+					},
+				},
+			},
+		},
+	}
+	seenToken := ""
+
+	deps := cli.Dependencies{
+		Wolt: &mockWolt{
+			venuePageStaticFunc: func(context.Context, string) (map[string]any, error) {
+				return staticPayload, nil
+			},
+			venuePageDynamicFunc: func(_ context.Context, _ string, options woltgateway.VenuePageDynamicOptions) (map[string]any, error) {
+				seenToken = options.Auth.WToken
+				return dynamicPayload, nil
+			},
+			assortmentBySlugFunc: func(context.Context, string) (map[string]any, error) {
+				return assortmentPayload, nil
+			},
+		},
+		Profiles: &mockProfiles{profile: domain.Profile{
+			Name:      "default",
+			IsDefault: true,
+			Location:  domain.Location{Lat: 60.14889, Lon: 24.6911577},
+			WToken:    "profile-token",
+		}},
+		Location: &mockLocation{},
+		Config:   &mockConfig{},
+		Version:  "1.1.1",
+	}
+
+	exitCode, out := runCLIWithDeps(t, deps, "venue", "menu", "burger-place", "--format", "json")
+	if exitCode != 0 {
+		t.Fatalf("expected exit 0, got %d\noutput:\n%s", exitCode, out)
+	}
+	if seenToken != "profile-token" {
+		t.Fatalf("expected dynamic request auth token profile-token, got %q", seenToken)
 	}
 }
 
@@ -1274,9 +1864,6 @@ func TestConfigureCommandSavesProfile(t *testing.T) {
 	if profile.Name != "work" || !profile.IsDefault {
 		t.Fatalf("unexpected saved profile: %+v", profile)
 	}
-	if profile.Address != "" {
-		t.Fatalf("expected no saved profile address, got %q", profile.Address)
-	}
 }
 
 func TestConfigureCommandSavesNormalizedWToken(t *testing.T) {
@@ -1343,7 +1930,6 @@ func TestConfigureCommandUpdatesAuthWithoutAddress(t *testing.T) {
 				{
 					Name:          "default",
 					IsDefault:     true,
-					Address:       "Helsinki",
 					Location:      domain.Location{Lat: 60.1699, Lon: 24.9384},
 					WToken:        "old-token",
 					WRefreshToken: "old-refresh",
@@ -1379,9 +1965,6 @@ func TestConfigureCommandUpdatesAuthWithoutAddress(t *testing.T) {
 		t.Fatalf("expected saved config with one profile, got %+v", cfg.saved)
 	}
 	saved := cfg.saved.Profiles[0]
-	if saved.Address != "Helsinki" {
-		t.Fatalf("expected address to stay unchanged, got %q", saved.Address)
-	}
 	if saved.Location.Lat != 60.1699 || saved.Location.Lon != 24.9384 {
 		t.Fatalf("expected location to stay unchanged, got %+v", saved.Location)
 	}

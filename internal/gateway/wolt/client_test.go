@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mekedron/wolt-cli/internal/domain"
 )
@@ -19,9 +20,11 @@ type captureHTTPClient struct {
 	statusCode   int
 	responseBody string
 	doErr        error
+	doCalls      int
 }
 
 func (c *captureHTTPClient) Do(req *http.Request) (*http.Response, error) {
+	c.doCalls++
 	c.request = req
 	if c.doErr != nil {
 		return nil, c.doErr
@@ -231,6 +234,31 @@ func TestVerboseTraceLogsUpstreamErrors(t *testing.T) {
 	}
 	if !strings.Contains(out, "[http] <- GET https://example.test/consumer-assortment/v1/venues/slug/wolt-market-niittari/assortment error=") {
 		t.Fatalf("expected error trace line, got:\n%s", out)
+	}
+}
+
+func TestRequestMinIntervalHonorsContextDeadline(t *testing.T) {
+	httpClient := &captureHTTPClient{}
+	client := NewClient(
+		WithHTTPClient(httpClient),
+		WithRequestMinInterval(time.Hour),
+		WithEndpoints(Endpoints{
+			PaymentMethods: "https://example.test/v3/user/me/payment_methods",
+		}),
+	)
+
+	if _, err := client.PaymentMethods(context.Background(), AuthContext{WToken: "jwt-token"}); err != nil {
+		t.Fatalf("payment methods returned error: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
+	defer cancel()
+	_, err := client.PaymentMethods(ctx, AuthContext{WToken: "jwt-token"})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected context deadline exceeded, got %v", err)
+	}
+	if httpClient.doCalls != 1 {
+		t.Fatalf("expected limiter to block second outbound call, got %d calls", httpClient.doCalls)
 	}
 }
 

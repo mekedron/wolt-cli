@@ -97,9 +97,10 @@ func resolveProfileLocation(
 	format output.Format,
 	locale string,
 	outputPath string,
+	auth *woltgateway.AuthContext,
 	cmd *cobra.Command,
 ) (domain.Location, string, error) {
-	return resolveLocation(ctx, deps, nil, nil, address, profileName, format, locale, outputPath, cmd)
+	return resolveLocation(ctx, deps, nil, nil, address, profileName, format, locale, outputPath, auth, cmd)
 }
 
 func parseOutputFormat(format string) (output.Format, error) {
@@ -159,6 +160,7 @@ func resolveLocation(
 	format output.Format,
 	locale string,
 	outputPath string,
+	auth *woltgateway.AuthContext,
 	cmd *cobra.Command,
 ) (domain.Location, string, error) {
 	resolvedAddress := strings.TrimSpace(address)
@@ -205,7 +207,19 @@ func resolveLocation(
 		if err != nil {
 			return domain.Location{}, "", profileError(err, format, profileName, locale, outputPath, cmd)
 		}
-		return profile.Location, profile.Name, nil
+		location, locationErr := resolveAccountLocation(ctx, deps, profile, auth)
+		if locationErr == nil {
+			return location, profile.Name, nil
+		}
+		return domain.Location{}, "", emitError(
+			cmd,
+			format,
+			profile.Name,
+			locale,
+			outputPath,
+			"WOLT_LOCATION_RESOLVE_ERROR",
+			"unable to resolve location from Wolt account; use --address or sign in and set an address in Wolt",
+		)
 	}
 
 	if lat == nil || lon == nil {
@@ -216,7 +230,7 @@ func resolveLocation(
 			locale,
 			outputPath,
 			"WOLT_INVALID_ARGUMENT",
-			"Both --lat and --lon must be provided together, or omit both to use profile location.",
+			"Both --lat and --lon must be provided together, or omit both to use Wolt account address.",
 		)
 	}
 

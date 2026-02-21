@@ -35,14 +35,20 @@ Output schema:
 ## `wolt venue search <slug>`
 
 ```console
-wolt venue search <slug> --query <text> [--category <slug>] [--include-options] [--limit <n>] [global flags]
+wolt venue search <slug> --query <text> [--category <slug>] [--include-options] [--sort <mode>] [--min-price <n>] [--max-price <n>] [--hide-sold-out] [--discounts-only] [--limit <n>] [--offset <n> | --page <n>] [global flags]
 ```
 
 Options:
 - `--query`: item search query (required)
 - `--category`: optional category filter over matched items
 - `--include-options`: include option-group IDs per item
+- `--sort [recommended|price|name]`
+- `--min-price` / `--max-price`: base price filter in minor units
+- `--hide-sold-out`: exclude sold-out items
+- `--discounts-only`: include only discounted items
 - `--limit`: cap number of returned rows
+- `--offset`: skip N matched rows
+- `--page`: 1-based page number (requires `--limit`, cannot be combined with `--offset`)
 
 Behavior:
 - calls venue-scoped assortment item search endpoint
@@ -55,14 +61,20 @@ Output schema:
 ## `wolt venue menu <slug>`
 
 ```console
-wolt venue menu <slug> [--category <slug>] [--full-catalog] [--include-options] [--limit <n>] [global flags]
+wolt venue menu <slug> [--category <slug>] [--full-catalog] [--include-options] [--sort <mode>] [--min-price <n>] [--max-price <n>] [--hide-sold-out] [--discounts-only] [--limit <n>] [--offset <n> | --page <n>] [global flags]
 ```
 
 Options:
 - `--category`: restrict to one category
 - `--full-catalog`: force cross-category crawl for partial assortments (can be slow)
 - `--include-options`: include option-group IDs per item
+- `--sort [recommended|price|name]`
+- `--min-price` / `--max-price`: base price filter in minor units
+- `--hide-sold-out`: exclude sold-out items
+- `--discounts-only`: include only discounted items
 - `--limit`: cap number of returned items
+- `--offset`: skip N items
+- `--page`: 1-based page number (requires `--limit`, cannot be combined with `--offset`)
 
 Behavior:
 - loads venue metadata from static venue page endpoint

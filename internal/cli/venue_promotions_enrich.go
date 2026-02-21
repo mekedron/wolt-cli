@@ -16,9 +16,10 @@ const dynamicVenuePromotionSecondaryLimit = 0
 const dynamicVenuePromotionRequestPause = 300 * time.Millisecond
 const dynamicVenuePromotionRetryDelay = 2500 * time.Millisecond
 const dynamicVenuePromotionMax429Retries = 0
-const dynamicVenuePromotionFetchBudget = 12
+const dynamicVenuePromotionFetchBudget = 20
 const dynamicVenuePromotionRateLimitRetryBudget = 1
-const dynamicVenuePromotionNoLocationRetryBudget = 2
+const staticVenueWoltPlusFetchBudget = 25
+const staticVenueWoltPlusRequestPause = 120 * time.Millisecond
 
 func enrichVenueSearchRowsWithDynamicPromotions(
 	ctx context.Context,
@@ -38,13 +39,27 @@ func enrichDiscoverFeedRowsWithDynamicPromotions(
 	location *domain.Location,
 	auth woltgateway.AuthContext,
 ) {
-	rows := []any{}
+	sectionsItems := make([][]any, 0, len(asSlice(data["sections"])))
 	for _, sectionValue := range asSlice(data["sections"]) {
 		section := asMap(sectionValue)
 		if section == nil {
 			continue
 		}
-		rows = append(rows, asSlice(section["items"])...)
+		sectionsItems = append(sectionsItems, asSlice(section["items"]))
+	}
+	// Round-robin rows across sections so enrichment budget covers more sections.
+	rows := []any{}
+	for depth := 0; ; depth++ {
+		added := false
+		for _, items := range sectionsItems {
+			if depth < len(items) {
+				rows = append(rows, items[depth])
+				added = true
+			}
+		}
+		if !added {
+			break
+		}
 	}
 	enrichVenueRowsWithDynamicPromotions(ctx, deps, rows, location, auth)
 }
@@ -65,6 +80,8 @@ func enrichVenueRowsWithDynamicPromotions(
 		count        int
 		firstIndex   int
 		hasPromotion bool
+		maxRating    float64
+		hasRating    bool
 	}
 
 	slugInfos := map[string]*slugInfo{}
@@ -86,6 +103,12 @@ func enrichVenueRowsWithDynamicPromotions(
 		info.count++
 		if len(asSlice(row["promotions"])) > 0 {
 			info.hasPromotion = true
+		}
+		if rating, ok := rowRating(row); ok {
+			if !info.hasRating || rating > info.maxRating {
+				info.maxRating = rating
+				info.hasRating = true
+			}
 		}
 	}
 
@@ -109,20 +132,28 @@ func enrichVenueRowsWithDynamicPromotions(
 	}
 	sortCandidates := func(values []candidate) {
 		sort.Slice(values, func(i, j int) bool {
-			if values[i].info.count != values[j].info.count {
-				return values[i].info.count > values[j].info.count
+			if values[i].info.hasRating != values[j].info.hasRating {
+				return values[i].info.hasRating
 			}
-			return values[i].info.firstIndex < values[j].info.firstIndex
+			if values[i].info.hasRating && values[i].info.maxRating != values[j].info.maxRating {
+				return values[i].info.maxRating > values[j].info.maxRating
+			}
+			if values[i].info.firstIndex != values[j].info.firstIndex {
+				return values[i].info.firstIndex < values[j].info.firstIndex
+			}
+			return values[i].info.count > values[j].info.count
 		})
 	}
 	sortCandidates(primary)
 	sortCandidates(secondary)
 
 	cachedLabels := map[string][]string{}
+	cachedWoltPlus := map[string]bool{}
 	attempted := map[string]struct{}{}
+	staticAttempted := map[string]struct{}{}
 	lastDynamicRequestAt := time.Time{}
+	lastStaticRequestAt := time.Time{}
 	rateLimitRetryBudget := dynamicVenuePromotionRateLimitRetryBudget
-	noLocationRetryBudget := dynamicVenuePromotionNoLocationRetryBudget
 
 	resolveLabels := func(slug string) []string {
 		labels, hasLabels := cachedLabels[slug]
@@ -151,17 +182,6 @@ func enrichVenueRowsWithDynamicPromotions(
 						&lastDynamicRequestAt,
 					)
 				}
-				if err != nil && isTooManyRequests(err) && location != nil && noLocationRetryBudget > 0 {
-					noLocationRetryBudget--
-					payload, err = fetchDynamicVenuePayloadWithRetry(
-						ctx,
-						deps,
-						slug,
-						nil,
-						auth,
-						&lastDynamicRequestAt,
-					)
-				}
 				if err == nil && len(payload) > 0 {
 					labels = observability.ExtractVenuePromotionLabels(payload)
 					cachedLabels[slug] = labels
@@ -174,14 +194,43 @@ func enrichVenueRowsWithDynamicPromotions(
 		}
 		return labels
 	}
+	resolveWoltPlus := func(slug string) bool {
+		if value, exists := cachedWoltPlus[slug]; exists {
+			return value
+		}
+		if _, attempted := staticAttempted[slug]; attempted {
+			return false
+		}
+		staticAttempted[slug] = struct{}{}
+		if lastStaticRequestAt != (time.Time{}) {
+			wait := staticVenueWoltPlusRequestPause - time.Since(lastStaticRequestAt)
+			if wait > 0 {
+				select {
+				case <-ctx.Done():
+					return false
+				case <-time.After(wait):
+				}
+			}
+		}
+		payload, err := deps.Wolt.VenuePageStatic(ctx, slug)
+		lastStaticRequestAt = time.Now()
+		if err != nil || len(payload) == 0 {
+			return false
+		}
+		isWoltPlus := observability.ExtractVenueWoltPlus(payload)
+		cachedWoltPlus[slug] = isWoltPlus
+		return isWoltPlus
+	}
 
 	for _, entry := range primary {
 		labels := resolveLabels(entry.slug)
-		if len(labels) == 0 {
-			continue
-		}
 		for _, row := range entry.info.rows {
-			row["promotions"] = mergeVenuePromotionLabels(asSlice(row["promotions"]), labels)
+			if len(labels) > 0 {
+				row["promotions"] = mergeVenuePromotionLabels(asSlice(row["promotions"]), labels)
+			}
+			if !asBool(row["wolt_plus"]) && resolveWoltPlus(entry.slug) {
+				row["wolt_plus"] = true
+			}
 		}
 	}
 
@@ -192,11 +241,50 @@ func enrichVenueRowsWithDynamicPromotions(
 	for i := 0; i < secondaryLimit; i++ {
 		entry := secondary[i]
 		labels := resolveLabels(entry.slug)
-		if len(labels) == 0 {
+		for _, row := range entry.info.rows {
+			if len(labels) > 0 {
+				row["promotions"] = mergeVenuePromotionLabels(asSlice(row["promotions"]), labels)
+			}
+			if !asBool(row["wolt_plus"]) && resolveWoltPlus(entry.slug) {
+				row["wolt_plus"] = true
+			}
+		}
+	}
+
+	staticCandidates := make([]candidate, 0, len(slugInfos))
+	for slug, info := range slugInfos {
+		needsWoltPlus := false
+		for _, row := range info.rows {
+			if !asBool(row["wolt_plus"]) {
+				needsWoltPlus = true
+				break
+			}
+		}
+		if !needsWoltPlus {
+			continue
+		}
+		staticCandidates = append(staticCandidates, candidate{slug: slug, info: info})
+	}
+	sort.Slice(staticCandidates, func(i, j int) bool {
+		if staticCandidates[i].info.hasRating != staticCandidates[j].info.hasRating {
+			return staticCandidates[i].info.hasRating
+		}
+		if staticCandidates[i].info.hasRating && staticCandidates[i].info.maxRating != staticCandidates[j].info.maxRating {
+			return staticCandidates[i].info.maxRating > staticCandidates[j].info.maxRating
+		}
+		return staticCandidates[i].info.firstIndex < staticCandidates[j].info.firstIndex
+	})
+	staticLimit := len(staticCandidates)
+	if staticLimit > staticVenueWoltPlusFetchBudget {
+		staticLimit = staticVenueWoltPlusFetchBudget
+	}
+	for i := 0; i < staticLimit; i++ {
+		entry := staticCandidates[i]
+		if !resolveWoltPlus(entry.slug) {
 			continue
 		}
 		for _, row := range entry.info.rows {
-			row["promotions"] = mergeVenuePromotionLabels(asSlice(row["promotions"]), labels)
+			row["wolt_plus"] = true
 		}
 	}
 }
@@ -294,4 +382,23 @@ func mergeVenuePromotionLabels(existing []any, extra []string) []any {
 	}
 
 	return out
+}
+
+func rowRating(row map[string]any) (float64, bool) {
+	raw, exists := row["rating"]
+	if !exists {
+		return 0, false
+	}
+	switch value := raw.(type) {
+	case float64:
+		return value, true
+	case float32:
+		return float64(value), true
+	case int:
+		return float64(value), true
+	case int64:
+		return float64(value), true
+	default:
+		return 0, false
+	}
 }

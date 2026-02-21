@@ -396,6 +396,17 @@ func TestExtractVenuePromotionLabelsFromDynamicPayload(t *testing.T) {
 	}
 }
 
+func TestExtractVenueWoltPlusFromPayload(t *testing.T) {
+	payload := map[string]any{
+		"venue_raw": map[string]any{
+			"is_wolt_plus": true,
+		},
+	}
+	if !observability.ExtractVenueWoltPlus(payload) {
+		t.Fatalf("expected ExtractVenueWoltPlus to return true")
+	}
+}
+
 func TestExtractMenuItemsDerivesDiscountFromOriginalPrice(t *testing.T) {
 	payload := map[string]any{
 		"items": []any{

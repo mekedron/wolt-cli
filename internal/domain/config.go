@@ -4,7 +4,6 @@ package domain
 type Profile struct {
 	Name          string   `json:"name"`
 	IsDefault     bool     `json:"is_default"`
-	Address       string   `json:"address"`
 	Location      Location `json:"location"`
 	WToken        string   `json:"wtoken,omitempty"`
 	WRefreshToken string   `json:"wrefresh_token,omitempty"`

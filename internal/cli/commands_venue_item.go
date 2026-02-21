@@ -51,6 +51,7 @@ func newVenueShowCommand(deps Dependencies) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			locationAuth := buildAuthContextWithProfile(cmd.Context(), deps, flags)
 			location, profile, err := resolveProfileLocation(
 				cmd.Context(),
 				deps,
@@ -59,6 +60,7 @@ func newVenueShowCommand(deps Dependencies) *cobra.Command {
 				format,
 				flags.Locale,
 				flags.Output,
+				&locationAuth,
 				cmd,
 			)
 			if err != nil {
@@ -212,8 +214,19 @@ func newVenueMenuCommand(deps Dependencies) *cobra.Command {
 	var category string
 	var fullCatalog bool
 	var includeOptions bool
+	var sortValue string
 	var limit int
 	var limitSet bool
+	var offset int
+	var offsetSet bool
+	var page int
+	var pageSet bool
+	var minPrice int
+	var minPriceSet bool
+	var maxPrice int
+	var maxPriceSet bool
+	var hideSoldOut bool
+	var discountsOnly bool
 
 	cmd := &cobra.Command{
 		Use:   "menu <slug>",
@@ -237,6 +250,23 @@ func newVenueMenuCommand(deps Dependencies) *cobra.Command {
 			if limitSet {
 				limitPtr = &limit
 			}
+			sortMode, err := parseItemRowSort(sortValue)
+			if err != nil {
+				return err
+			}
+			resolvedOffset, err := resolvePageOffset(limit, limitSet, offset, offsetSet, page, pageSet)
+			if err != nil {
+				return err
+			}
+			if minPriceSet && minPrice < 0 {
+				return fmt.Errorf("--min-price must be >= 0")
+			}
+			if maxPriceSet && maxPrice < 0 {
+				return fmt.Errorf("--max-price must be >= 0")
+			}
+			if minPriceSet && maxPriceSet && minPrice > maxPrice {
+				return fmt.Errorf("--min-price cannot be greater than --max-price")
+			}
 			venueID := strings.TrimSpace(slug)
 			payloads := []map[string]any{}
 			warnings := []string{}
@@ -250,16 +280,53 @@ func newVenueMenuCommand(deps Dependencies) *cobra.Command {
 				warnings = append(warnings, "venue static page endpoint unavailable")
 			}
 			var dynamicLocation *domain.Location
-			if profile.Location.Lat != 0 || profile.Location.Lon != 0 {
-				location := profile.Location
+			if trimmed := strings.TrimSpace(flags.Address); trimmed != "" {
+				if deps.Location == nil {
+					return emitError(
+						cmd,
+						format,
+						profile.Name,
+						flags.Locale,
+						flags.Output,
+						"WOLT_LOCATION_RESOLVE_ERROR",
+						"location resolver is not available",
+					)
+				}
+				location, locationErr := deps.Location.Get(cmd.Context(), trimmed)
+				if locationErr != nil {
+					return emitError(
+						cmd,
+						format,
+						profile.Name,
+						flags.Locale,
+						flags.Output,
+						"WOLT_LOCATION_RESOLVE_ERROR",
+						locationErr.Error(),
+					)
+				}
 				dynamicLocation = &location
+			} else if location, locationErr := resolveAccountLocation(cmd.Context(), deps, profile, &auth); locationErr == nil {
+				dynamicLocation = &location
+			}
+			dynamicOptions := woltgateway.VenuePageDynamicOptions{
+				Location: dynamicLocation,
+				Auth:     auth,
 			}
 			if payload, err := deps.Wolt.VenuePageDynamic(
 				cmd.Context(),
 				slug,
-				woltgateway.VenuePageDynamicOptions{Location: dynamicLocation},
+				dynamicOptions,
 			); err == nil {
 				payloads = append(payloads, payload)
+			} else if isUnauthorized(err) && dynamicOptions.Auth.HasCredentials() {
+				dynamicOptions.Auth = woltgateway.AuthContext{}
+				if payload, retryErr := deps.Wolt.VenuePageDynamic(cmd.Context(), slug, dynamicOptions); retryErr == nil {
+					payloads = append(payloads, payload)
+				} else {
+					warnings = append(warnings, "venue dynamic page endpoint unavailable")
+				}
+			} else {
+				warnings = append(warnings, "venue dynamic page endpoint unavailable")
 			}
 			if payload, err := deps.Wolt.AssortmentByVenueSlug(cmd.Context(), slug); err == nil {
 				assortmentPayload = payload
@@ -320,7 +387,24 @@ func newVenueMenuCommand(deps Dependencies) *cobra.Command {
 				warnings = append(warnings, fallbackWarnings...)
 			}
 
-			data, menuWarnings := observability.BuildVenueMenu(venueID, payloads, categoryFilter, includeOptions, limitPtr)
+			data, menuWarnings := observability.BuildVenueMenu(venueID, payloads, categoryFilter, includeOptions, nil)
+			data["items"] = applyItemRowFilters(
+				asSlice(data["items"]),
+				itemRowFilters{
+					MinPriceSet:   minPriceSet,
+					MinPrice:      minPrice,
+					MaxPriceSet:   maxPriceSet,
+					MaxPrice:      maxPrice,
+					HideSoldOut:   hideSoldOut,
+					DiscountsOnly: discountsOnly,
+				},
+			)
+			sortItemRows(asSlice(data["items"]), sortMode)
+			data["sort"] = string(sortMode)
+			paginateFlatRows(data, "items", limitPtr, resolvedOffset)
+			if pageSet {
+				data["page"] = page
+			}
 			warnings = append(warnings, menuWarnings...)
 
 			if format == output.FormatTable {
@@ -334,10 +418,21 @@ func newVenueMenuCommand(deps Dependencies) *cobra.Command {
 	cmd.Flags().StringVar(&category, "category", "", "Category slug")
 	cmd.Flags().BoolVar(&fullCatalog, "full-catalog", false, "Force full cross-category crawl for partial assortments (can be slow).")
 	cmd.Flags().BoolVar(&includeOptions, "include-options", false, "Include option group IDs")
+	cmd.Flags().StringVar(&sortValue, "sort", string(itemRowSortRecommended), "Sort strategy: recommended, price, name")
+	cmd.Flags().IntVar(&minPrice, "min-price", 0, "Minimum item base price in minor units")
+	cmd.Flags().IntVar(&maxPrice, "max-price", 0, "Maximum item base price in minor units")
+	cmd.Flags().BoolVar(&hideSoldOut, "hide-sold-out", false, "Exclude sold-out items")
+	cmd.Flags().BoolVar(&discountsOnly, "discounts-only", false, "Only include items with discounts")
 	cmd.Flags().IntVar(&limit, "limit", 0, "Limit returned rows")
+	cmd.Flags().IntVar(&offset, "offset", 0, "Offset returned rows")
+	cmd.Flags().IntVar(&page, "page", 0, "1-based page number (requires --limit; cannot be combined with --offset)")
 	addGlobalFlags(cmd, &flags)
 	cmd.PreRun = func(cmd *cobra.Command, args []string) {
 		limitSet = cmd.Flags().Changed("limit")
+		offsetSet = cmd.Flags().Changed("offset")
+		pageSet = cmd.Flags().Changed("page")
+		minPriceSet = cmd.Flags().Changed("min-price")
+		maxPriceSet = cmd.Flags().Changed("max-price")
 	}
 	return cmd
 }
@@ -347,8 +442,19 @@ func newVenueSearchCommand(deps Dependencies) *cobra.Command {
 	var query string
 	var category string
 	var includeOptions bool
+	var sortValue string
 	var limit int
 	var limitSet bool
+	var offset int
+	var offsetSet bool
+	var page int
+	var pageSet bool
+	var minPrice int
+	var minPriceSet bool
+	var maxPrice int
+	var maxPriceSet bool
+	var hideSoldOut bool
+	var discountsOnly bool
 
 	cmd := &cobra.Command{
 		Use:   "search <slug>",
@@ -373,6 +479,23 @@ func newVenueSearchCommand(deps Dependencies) *cobra.Command {
 			var limitPtr *int
 			if limitSet {
 				limitPtr = &limit
+			}
+			sortMode, err := parseItemRowSort(sortValue)
+			if err != nil {
+				return err
+			}
+			resolvedOffset, err := resolvePageOffset(limit, limitSet, offset, offsetSet, page, pageSet)
+			if err != nil {
+				return err
+			}
+			if minPriceSet && minPrice < 0 {
+				return fmt.Errorf("--min-price must be >= 0")
+			}
+			if maxPriceSet && maxPrice < 0 {
+				return fmt.Errorf("--max-price must be >= 0")
+			}
+			if minPriceSet && maxPriceSet && minPrice > maxPrice {
+				return fmt.Errorf("--min-price cannot be greater than --max-price")
 			}
 
 			venueID := strings.TrimSpace(slug)
@@ -408,8 +531,25 @@ func newVenueSearchCommand(deps Dependencies) *cobra.Command {
 				searchPayload,
 				fallbackCurrency,
 				includeOptions,
-				limitPtr,
+				nil,
 			)
+			data["items"] = applyItemRowFilters(
+				asSlice(data["items"]),
+				itemRowFilters{
+					MinPriceSet:   minPriceSet,
+					MinPrice:      minPrice,
+					MaxPriceSet:   maxPriceSet,
+					MaxPrice:      maxPrice,
+					HideSoldOut:   hideSoldOut,
+					DiscountsOnly: discountsOnly,
+				},
+			)
+			sortItemRows(asSlice(data["items"]), sortMode)
+			data["sort"] = string(sortMode)
+			paginateFlatRows(data, "items", limitPtr, resolvedOffset)
+			if pageSet {
+				data["page"] = page
+			}
 			warnings = append(warnings, searchWarnings...)
 
 			if format == output.FormatTable {
@@ -423,13 +563,24 @@ func newVenueSearchCommand(deps Dependencies) *cobra.Command {
 	cmd.Flags().StringVar(&query, "query", "", "Search query")
 	cmd.Flags().StringVar(&category, "category", "", "Category slug filter")
 	cmd.Flags().BoolVar(&includeOptions, "include-options", false, "Include option-group IDs")
+	cmd.Flags().StringVar(&sortValue, "sort", string(itemRowSortRecommended), "Sort strategy: recommended, price, name")
+	cmd.Flags().IntVar(&minPrice, "min-price", 0, "Minimum item base price in minor units")
+	cmd.Flags().IntVar(&maxPrice, "max-price", 0, "Maximum item base price in minor units")
+	cmd.Flags().BoolVar(&hideSoldOut, "hide-sold-out", false, "Exclude sold-out items")
+	cmd.Flags().BoolVar(&discountsOnly, "discounts-only", false, "Only include items with discounts")
 	cmd.Flags().IntVar(&limit, "limit", 0, "Limit returned rows")
+	cmd.Flags().IntVar(&offset, "offset", 0, "Offset returned rows")
+	cmd.Flags().IntVar(&page, "page", 0, "1-based page number (requires --limit; cannot be combined with --offset)")
 	if err := cmd.MarkFlagRequired("query"); err != nil {
 		panic(err)
 	}
 	addGlobalFlags(cmd, &flags)
 	cmd.PreRun = func(cmd *cobra.Command, _ []string) {
 		limitSet = cmd.Flags().Changed("limit")
+		offsetSet = cmd.Flags().Changed("offset")
+		pageSet = cmd.Flags().Changed("page")
+		minPriceSet = cmd.Flags().Changed("min-price")
+		maxPriceSet = cmd.Flags().Changed("max-price")
 	}
 	return cmd
 }
@@ -485,6 +636,7 @@ func newVenueHoursCommand(deps Dependencies) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			locationAuth := buildAuthContextWithProfile(cmd.Context(), deps, flags)
 			location, profile, err := resolveProfileLocation(
 				cmd.Context(),
 				deps,
@@ -493,6 +645,7 @@ func newVenueHoursCommand(deps Dependencies) *cobra.Command {
 				format,
 				flags.Locale,
 				flags.Output,
+				&locationAuth,
 				cmd,
 			)
 			if err != nil {

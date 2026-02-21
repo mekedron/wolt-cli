@@ -28,7 +28,7 @@ func TestStoreSaveAndLoadRoundTrip(t *testing.T) {
 
 	input := domain.Config{
 		Profiles: []domain.Profile{
-			{Name: "default", IsDefault: true, Address: "Helsinki", Location: domain.Location{Lat: 60.1699, Lon: 24.9384}},
+			{Name: "default", IsDefault: true, Location: domain.Location{Lat: 60.1699, Lon: 24.9384}},
 		},
 	}
 	if err := store.Save(context.Background(), input); err != nil {

@@ -32,7 +32,7 @@ Behavior:
 - calls `GET https://consumer-api.wolt.com/order-xp/web/v1/pages/baskets?lat=...&lon=...`
 - if multiple baskets exist and `--venue-id` is omitted, first basket is selected by default
 - `--details` expands line options in table output (names when available, otherwise IDs)
-- location defaults to profile location; use `--address` or `--lat/--lon` for a temporary override
+- location defaults to selected Wolt account address; use `--address` or `--lat/--lon` for a temporary override
 
 Output schema:
 - `CartState`
@@ -79,7 +79,7 @@ Behavior:
 - selects basket by `--venue-id` or first available basket
 - decrements quantity via `POST /order-xp/v1/baskets`
 - clears full basket via `POST /order-xp/v1/baskets/bulk/delete` when needed
-- location defaults to profile location; use `--address` or `--lat/--lon` for a temporary override
+- location defaults to selected Wolt account address; use `--address` or `--lat/--lon` for a temporary override
 
 Output:
 - `basket_id`
@@ -99,7 +99,7 @@ wolt cart clear [--venue-id <id>] [--all] [--address "<text>" | --lat <value> --
 Behavior:
 - loads baskets
 - clears selected basket (or all baskets with `--all`) using `POST /order-xp/v1/baskets/bulk/delete`
-- location defaults to profile location; use `--address` or `--lat/--lon` for a temporary override
+- location defaults to selected Wolt account address; use `--address` or `--lat/--lon` for a temporary override
 
 Output:
 - `mutation` (`clear`)

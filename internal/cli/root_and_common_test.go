@@ -127,18 +127,18 @@ func TestResolveLocationValidation(t *testing.T) {
 	}
 
 	lon := 24.9
-	_, _, err := resolveLocation(context.Background(), deps, nil, &lon, "", "", output.FormatTable, "en-FI", "", cmd)
+	_, _, err := resolveLocation(context.Background(), deps, nil, &lon, "", "", output.FormatTable, "en-FI", "", nil, cmd)
 	if err == nil {
 		t.Fatal("expected resolveLocation to fail when only lon is provided")
 	}
 
 	lat := 60.1
-	_, _, err = resolveLocation(context.Background(), deps, &lat, &lon, "Kamppi, Helsinki", "", output.FormatTable, "en-FI", "", cmd)
+	_, _, err = resolveLocation(context.Background(), deps, &lat, &lon, "Kamppi, Helsinki", "", output.FormatTable, "en-FI", "", nil, cmd)
 	if err == nil {
 		t.Fatal("expected resolveLocation to fail when --address and --lat/--lon are combined")
 	}
 
-	location, profile, err := resolveLocation(context.Background(), deps, nil, nil, "Kamppi, Helsinki", "", output.FormatTable, "en-FI", "", cmd)
+	location, profile, err := resolveLocation(context.Background(), deps, nil, nil, "Kamppi, Helsinki", "", output.FormatTable, "en-FI", "", nil, cmd)
 	if err != nil {
 		t.Fatalf("expected resolveLocation to resolve --address, got %v", err)
 	}
@@ -147,6 +147,75 @@ func TestResolveLocationValidation(t *testing.T) {
 	}
 	if profile != "anonymous" {
 		t.Fatalf("expected anonymous profile for address override, got %q", profile)
+	}
+}
+
+func TestResolveLocationUsesWoltAccountAddress(t *testing.T) {
+	cmd := &cobra.Command{}
+	buf := &bytes.Buffer{}
+	cmd.SetOut(buf)
+	deps := Dependencies{
+		Profiles: &testProfiles{
+			profile: domain.Profile{
+				Name:          "default",
+				WToken:        "token-1",
+				WoltAddressID: "addr-2",
+			},
+		},
+		Wolt: &testWoltAPI{
+			deliveryInfoListFn: func(context.Context, woltgateway.AuthContext) (map[string]any, error) {
+				return map[string]any{
+					"results": []any{
+						map[string]any{
+							"id": "addr-1",
+							"location": map[string]any{
+								"user_coordinates": map[string]any{
+									"type":        "Point",
+									"coordinates": []any{24.9000, 60.1000},
+								},
+							},
+						},
+						map[string]any{
+							"id": "addr-2",
+							"location": map[string]any{
+								"user_coordinates": map[string]any{
+									"type":        "Point",
+									"coordinates": []any{25.1000, 61.2000},
+								},
+							},
+						},
+					},
+				}, nil
+			},
+		},
+	}
+
+	location, profile, err := resolveLocation(context.Background(), deps, nil, nil, "", "", output.FormatTable, "en-FI", "", nil, cmd)
+	if err != nil {
+		t.Fatalf("expected location from account, got error: %v", err)
+	}
+	if profile != "default" {
+		t.Fatalf("expected profile default, got %q", profile)
+	}
+	if location.Lat != 61.2 || location.Lon != 25.1 {
+		t.Fatalf("expected preferred account address coordinates, got %+v", location)
+	}
+}
+
+func TestResolveLocationErrorsWithoutAccountOrOverrides(t *testing.T) {
+	cmd := &cobra.Command{}
+	buf := &bytes.Buffer{}
+	cmd.SetOut(buf)
+	deps := Dependencies{
+		Profiles: &testProfiles{
+			profile: domain.Profile{Name: "default"},
+		},
+		Wolt: &testWoltAPI{},
+	}
+
+	_, _, err := resolveLocation(context.Background(), deps, nil, nil, "", "", output.FormatTable, "en-FI", "", nil, cmd)
+	if err == nil {
+		t.Fatal("expected resolveLocation to fail without account location or overrides")
 	}
 }
 

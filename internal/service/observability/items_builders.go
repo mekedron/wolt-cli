@@ -53,10 +53,11 @@ func BuildVenueMenu(venueID string, payloads []map[string]any, category string, 
 			applyCampaignPriceFraction(basePrice, originalPrice, campaign.maxFraction)
 		}
 		row := map[string]any{
-			"item_id":    item["item_id"],
-			"name":       item["name"],
-			"base_price": basePrice,
-			"discounts":  discountLabels,
+			"item_id":     item["item_id"],
+			"name":        item["name"],
+			"base_price":  basePrice,
+			"discounts":   discountLabels,
+			"is_sold_out": boolValue(item["is_sold_out"]),
 		}
 		if intValue(originalPrice["amount"]) > 0 {
 			row["original_price"] = originalPrice
@@ -326,14 +327,17 @@ func BuildItemSearchResult(
 	rows := make([]map[string]any, 0, len(menuItems))
 	for _, item := range menuItems {
 		basePrice := normalizeBasePrice(toMap(item["base_price"]), fallbackCurrency)
+		originalPrice := normalizeBasePrice(toMap(item["original_price"]), fallbackCurrency)
 		rows = append(rows, map[string]any{
-			"item_id":     item["item_id"],
-			"venue_id":    coalesce(item["venue_id"], ""),
-			"venue_slug":  coalesce(item["venue_slug"], ""),
-			"name":        item["name"],
-			"base_price":  basePrice,
-			"currency":    basePrice["currency"],
-			"is_sold_out": boolValue(item["is_sold_out"]),
+			"item_id":        item["item_id"],
+			"venue_id":       coalesce(item["venue_id"], ""),
+			"venue_slug":     coalesce(item["venue_slug"], ""),
+			"name":           item["name"],
+			"base_price":     basePrice,
+			"original_price": originalPrice,
+			"discounts":      item["discounts"],
+			"currency":       basePrice["currency"],
+			"is_sold_out":    boolValue(item["is_sold_out"]),
 		})
 	}
 

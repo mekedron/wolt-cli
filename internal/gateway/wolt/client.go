@@ -114,6 +114,9 @@ type Client struct {
 	endpoints      Endpoints
 	locale         string
 	webClientID    string
+	minRequestGap  time.Duration
+	requestWindowM sync.Mutex
+	nextRequestAt  time.Time
 	verboseOutput  io.Writer
 	verboseOutputM sync.RWMutex
 }
@@ -139,6 +142,16 @@ func WithEndpoints(endpoints Endpoints) Option {
 func WithLocale(locale string) Option {
 	return func(c *Client) {
 		c.locale = locale
+	}
+}
+
+// WithRequestMinInterval limits request burst by enforcing minimum delay between upstream calls.
+func WithRequestMinInterval(interval time.Duration) Option {
+	return func(c *Client) {
+		if interval < 0 {
+			interval = 0
+		}
+		c.minRequestGap = interval
 	}
 }
 
@@ -252,6 +265,9 @@ func (c *Client) doJSONRequest(ctx context.Context, method, rawURL string, param
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}
+	if err := c.waitForRequestSlot(ctx); err != nil {
+		return nil, err
+	}
 
 	startedAt := time.Now()
 	c.traceRequestStart(method, rawURL, bodyBytes)
@@ -328,6 +344,9 @@ func (c *Client) doRequest(
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}
+	if err := c.waitForRequestSlot(ctx); err != nil {
+		return nil, err
+	}
 
 	bodyBytes := 0
 	if sized, ok := body.(interface{ Len() int }); ok {
@@ -372,6 +391,28 @@ func (c *Client) traceRequestDone(method, rawURL string, statusCode int, respons
 		duration,
 		responseBytes,
 	)
+}
+
+func (c *Client) waitForRequestSlot(ctx context.Context) error {
+	interval := c.minRequestGap
+	if interval <= 0 {
+		return nil
+	}
+	for {
+		c.requestWindowM.Lock()
+		wait := time.Until(c.nextRequestAt)
+		if wait <= 0 {
+			c.nextRequestAt = time.Now().Add(interval)
+			c.requestWindowM.Unlock()
+			return nil
+		}
+		c.requestWindowM.Unlock()
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(wait):
+		}
+	}
 }
 
 func (c *Client) tracef(format string, args ...any) {

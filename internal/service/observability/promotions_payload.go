@@ -7,6 +7,41 @@ type campaignItemDiscount struct {
 	maxFraction float64
 }
 
+// ExtractVenueWoltPlus reports whether payload marks venue as Wolt+.
+func ExtractVenueWoltPlus(payload map[string]any) bool {
+	candidates := []any{
+		payload["show_wolt_plus"],
+		payload["wolt_plus"],
+		payload["is_wolt_plus"],
+	}
+
+	venue := toMap(payload["venue"])
+	if venue != nil {
+		candidates = append(candidates,
+			venue["show_wolt_plus"],
+			venue["wolt_plus"],
+			venue["is_wolt_plus"],
+		)
+	}
+
+	venueRaw := toMap(payload["venue_raw"])
+	if venueRaw != nil {
+		candidates = append(candidates,
+			venueRaw["show_wolt_plus"],
+			venueRaw["wolt_plus"],
+			venueRaw["is_wolt_plus"],
+		)
+	}
+
+	for _, candidate := range candidates {
+		if boolValue(candidate) {
+			return true
+		}
+	}
+
+	return false
+}
+
 // ExtractVenuePromotionLabels returns unique promotion labels from dynamic/static venue payloads.
 func ExtractVenuePromotionLabels(payload map[string]any) []string {
 	out := []string{}

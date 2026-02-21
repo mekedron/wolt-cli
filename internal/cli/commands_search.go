@@ -3,7 +3,6 @@ package cli
 import (
 	"fmt"
 
-	woltgateway "github.com/mekedron/wolt-cli/internal/gateway/wolt"
 	"github.com/mekedron/wolt-cli/internal/service/observability"
 	"github.com/mekedron/wolt-cli/internal/service/output"
 	"github.com/spf13/cobra"
@@ -30,6 +29,14 @@ func newSearchVenuesCommand(deps Dependencies) *cobra.Command {
 	var limit int
 	var limitSet bool
 	var offset int
+	var offsetSet bool
+	var page int
+	var pageSet bool
+	var minRating float64
+	var minRatingSet bool
+	var maxDeliveryFee int
+	var maxDeliveryFeeSet bool
+	var promotionsOnly bool
 
 	cmd := &cobra.Command{
 		Use:   "venues",
@@ -51,6 +58,7 @@ func newSearchVenuesCommand(deps Dependencies) *cobra.Command {
 				}
 				venueType = &parsedType
 			}
+			locationAuth := buildAuthContextWithProfile(cmd.Context(), deps, flags)
 			location, profile, err := resolveProfileLocation(
 				cmd.Context(),
 				deps,
@@ -59,6 +67,7 @@ func newSearchVenuesCommand(deps Dependencies) *cobra.Command {
 				format,
 				flags.Locale,
 				flags.Output,
+				&locationAuth,
 				cmd,
 			)
 			if err != nil {
@@ -72,6 +81,16 @@ func newSearchVenuesCommand(deps Dependencies) *cobra.Command {
 			if limitSet {
 				limitPtr = &limit
 			}
+			resolvedOffset, err := resolvePageOffset(limit, limitSet, offset, offsetSet, page, pageSet)
+			if err != nil {
+				return err
+			}
+			if minRatingSet && minRating < 0 {
+				return fmt.Errorf("--min-rating must be >= 0")
+			}
+			if maxDeliveryFeeSet && maxDeliveryFee < 0 {
+				return fmt.Errorf("--max-delivery-fee must be >= 0")
+			}
 			data, warnings := observability.BuildVenueSearchResult(
 				items,
 				query,
@@ -80,15 +99,30 @@ func newSearchVenuesCommand(deps Dependencies) *cobra.Command {
 				category,
 				openNow,
 				woltPlus,
-				limitPtr,
-				offset,
+				nil,
+				0,
 			)
+			data["items"] = applyVenueRowFilters(
+				asSlice(data["items"]),
+				venueRowFilters{
+					MinRatingSet:      minRatingSet,
+					MinRating:         minRating,
+					MaxDeliveryFeeSet: maxDeliveryFeeSet,
+					MaxDeliveryFee:    maxDeliveryFee,
+					PromotionsOnly:    promotionsOnly,
+				},
+			)
+			paginateFlatRows(data, "items", limitPtr, resolvedOffset)
+			if pageSet {
+				data["page"] = page
+			}
+			promotionAuth := buildAuthContextWithProfile(cmd.Context(), deps, flags)
 			enrichVenueSearchRowsWithDynamicPromotions(
 				cmd.Context(),
 				deps,
 				data,
-				&location,
-				woltgateway.AuthContext{},
+				nil,
+				promotionAuth,
 			)
 
 			if format == output.FormatTable {
@@ -105,11 +139,19 @@ func newSearchVenuesCommand(deps Dependencies) *cobra.Command {
 	cmd.Flags().StringVar(&category, "category", "", "Category slug")
 	cmd.Flags().BoolVar(&openNow, "open-now", false, "Only include currently open venues")
 	cmd.Flags().BoolVar(&woltPlus, "wolt-plus", false, "Only include Wolt+ venues")
+	cmd.Flags().Float64Var(&minRating, "min-rating", 0, "Minimum venue rating score (for example 8.5)")
+	cmd.Flags().IntVar(&maxDeliveryFee, "max-delivery-fee", 0, "Maximum delivery fee in minor units (for example 500 = EUR 5.00)")
+	cmd.Flags().BoolVar(&promotionsOnly, "promotions-only", false, "Only include venues with promotion labels")
 	cmd.Flags().IntVar(&limit, "limit", 0, "Limit returned rows")
 	cmd.Flags().IntVar(&offset, "offset", 0, "Offset returned rows")
+	cmd.Flags().IntVar(&page, "page", 0, "1-based page number (requires --limit; cannot be combined with --offset)")
 	addGlobalFlags(cmd, &flags)
 	cmd.PreRun = func(cmd *cobra.Command, _ []string) {
 		limitSet = cmd.Flags().Changed("limit")
+		offsetSet = cmd.Flags().Changed("offset")
+		pageSet = cmd.Flags().Changed("page")
+		minRatingSet = cmd.Flags().Changed("min-rating")
+		maxDeliveryFeeSet = cmd.Flags().Changed("max-delivery-fee")
 	}
 
 	return cmd
@@ -123,6 +165,15 @@ func newSearchItemsCommand(deps Dependencies) *cobra.Command {
 	var limit int
 	var limitSet bool
 	var offset int
+	var offsetSet bool
+	var page int
+	var pageSet bool
+	var minPrice int
+	var minPriceSet bool
+	var maxPrice int
+	var maxPriceSet bool
+	var hideSoldOut bool
+	var discountsOnly bool
 
 	cmd := &cobra.Command{
 		Use:   "items",
@@ -140,6 +191,7 @@ func newSearchItemsCommand(deps Dependencies) *cobra.Command {
 				return err
 			}
 
+			locationAuth := buildAuthContextWithProfile(cmd.Context(), deps, flags)
 			location, profile, err := resolveProfileLocation(
 				cmd.Context(),
 				deps,
@@ -148,6 +200,7 @@ func newSearchItemsCommand(deps Dependencies) *cobra.Command {
 				format,
 				flags.Locale,
 				flags.Output,
+				&locationAuth,
 				cmd,
 			)
 			if err != nil {
@@ -171,16 +224,44 @@ func newSearchItemsCommand(deps Dependencies) *cobra.Command {
 			if limitSet {
 				limitPtr = &limit
 			}
+			resolvedOffset, err := resolvePageOffset(limit, limitSet, offset, offsetSet, page, pageSet)
+			if err != nil {
+				return err
+			}
+			if minPriceSet && minPrice < 0 {
+				return fmt.Errorf("--min-price must be >= 0")
+			}
+			if maxPriceSet && maxPrice < 0 {
+				return fmt.Errorf("--max-price must be >= 0")
+			}
+			if minPriceSet && maxPriceSet && minPrice > maxPrice {
+				return fmt.Errorf("--min-price cannot be greater than --max-price")
+			}
 
 			data, itemWarnings := observability.BuildItemSearchResult(
 				query,
 				payloads,
 				sortMode,
 				category,
-				limitPtr,
-				offset,
+				nil,
+				0,
 				fallbackItems,
 			)
+			data["items"] = applyItemRowFilters(
+				asSlice(data["items"]),
+				itemRowFilters{
+					MinPriceSet:   minPriceSet,
+					MinPrice:      minPrice,
+					MaxPriceSet:   maxPriceSet,
+					MaxPrice:      maxPrice,
+					HideSoldOut:   hideSoldOut,
+					DiscountsOnly: discountsOnly,
+				},
+			)
+			paginateFlatRows(data, "items", limitPtr, resolvedOffset)
+			if pageSet {
+				data["page"] = page
+			}
 			warnings = append(warnings, itemWarnings...)
 
 			if format == output.FormatTable {
@@ -194,14 +275,23 @@ func newSearchItemsCommand(deps Dependencies) *cobra.Command {
 	cmd.Flags().StringVar(&query, "query", "", "Search query")
 	cmd.Flags().StringVar(&sortValue, "sort", string(observability.ItemSortRelevance), "Sort strategy")
 	cmd.Flags().StringVar(&category, "category", "", "Category slug")
+	cmd.Flags().IntVar(&minPrice, "min-price", 0, "Minimum item base price in minor units")
+	cmd.Flags().IntVar(&maxPrice, "max-price", 0, "Maximum item base price in minor units")
+	cmd.Flags().BoolVar(&hideSoldOut, "hide-sold-out", false, "Exclude sold-out items")
+	cmd.Flags().BoolVar(&discountsOnly, "discounts-only", false, "Only include items with discounts")
 	cmd.Flags().IntVar(&limit, "limit", 0, "Limit returned rows")
 	cmd.Flags().IntVar(&offset, "offset", 0, "Offset returned rows")
+	cmd.Flags().IntVar(&page, "page", 0, "1-based page number (requires --limit; cannot be combined with --offset)")
 	if err := cmd.MarkFlagRequired("query"); err != nil {
 		panic(err)
 	}
 	addGlobalFlags(cmd, &flags)
 	cmd.PreRun = func(cmd *cobra.Command, _ []string) {
 		limitSet = cmd.Flags().Changed("limit")
+		offsetSet = cmd.Flags().Changed("offset")
+		pageSet = cmd.Flags().Changed("page")
+		minPriceSet = cmd.Flags().Changed("min-price")
+		maxPriceSet = cmd.Flags().Changed("max-price")
 	}
 
 	return cmd

@@ -100,8 +100,20 @@ Optional:
 ### DiscoveryFeed (`discover feed`)
 Required:
 - `city`
+- `total`
+- `count`
+- `offset`
 - `wolt_plus_only`
+- `enrichment_mode` (`full|fast`)
 - `sections[]`
+
+Optional:
+- `limit` (when `--limit` is set)
+- `total_pages` (when `--limit > 0` is set)
+- `next_offset` (when more venues are available after current slice)
+- `page` (when `--page` is set)
+- `query` (when `--query` filter is set)
+- `sort`
 
 Each `sections[].items[]` row includes:
 - `venue_id`
@@ -117,6 +129,7 @@ Each `sections[].items[]` row includes:
 
 Notes:
 - promotions are enriched with dynamic campaign banners (for example `40% off selected items`) when the dynamic endpoint is available.
+- in `fast` enrichment mode, dynamic/static per-venue enrichment is skipped.
 
 ### CategoryList (`discover categories`)
 Required:
@@ -128,6 +141,14 @@ Required:
 - `total`
 - `items[]:{venue_id,slug,name,address,rating,delivery_estimate,delivery_fee,price_range,price_range_scale,promotions,wolt_plus}`
 
+Optional:
+- `count`
+- `offset`
+- `limit`
+- `total_pages`
+- `next_offset`
+- `page`
+
 Notes:
 - venue promotions are enriched with dynamic campaign banners (for example `40% off selected items`) when the dynamic endpoint is available.
 
@@ -136,6 +157,16 @@ Required:
 - `query`
 - `total`
 - `items[]:{item_id,venue_id,venue_slug,name,base_price,currency,is_sold_out}`
+
+Optional:
+- `items[].discounts`
+- `items[].original_price`
+- `count`
+- `offset`
+- `limit`
+- `total_pages`
+- `next_offset`
+- `page`
 
 Notes:
 - `base_price.currency`/`base_price.formatted_amount` are normalized from payload venue metadata when upstream omits currency.
@@ -168,6 +199,13 @@ Required:
 Optional:
 - `original_price` (when upstream exposes pre-discount amount)
 - `option_group_ids` (when `--include-options`)
+- `count`
+- `offset`
+- `limit`
+- `total_pages`
+- `next_offset`
+- `page`
+- `sort`
 
 Notes:
 - `base_price.currency`/`base_price.formatted_amount` are normalized from venue metadata when upstream search payload omits currency.
@@ -183,6 +221,13 @@ Required:
 Optional:
 - `original_price` (for campaign-adjusted menu prices)
 - `option_group_ids` (when `--include-options`)
+- `count`
+- `offset`
+- `limit`
+- `total_pages`
+- `next_offset`
+- `page`
+- `sort`
 
 Notes:
 - item-level campaign discounts from dynamic venue payloads are merged into `discounts[]`.

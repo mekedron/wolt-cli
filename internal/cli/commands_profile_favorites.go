@@ -108,6 +108,7 @@ func runProfileFavoritesList(
 		format,
 		flags.Locale,
 		flags.Output,
+		&auth,
 		cmd,
 	)
 	if err != nil {
@@ -186,7 +187,7 @@ func runFavoriteVenueMutation(
 		return err
 	}
 
-	resolution, err := resolveFavoriteVenueReference(cmd.Context(), deps, flags.Profile, flags.Address, venueInput)
+	resolution, err := resolveFavoriteVenueReference(cmd.Context(), deps, flags.Profile, flags.Address, &auth, venueInput)
 	if err != nil {
 		return emitError(cmd, format, profileName, flags.Locale, flags.Output, "WOLT_INVALID_ARGUMENT", err.Error())
 	}
@@ -250,6 +251,7 @@ func resolveFavoriteVenueReference(
 	deps Dependencies,
 	selectedProfile string,
 	addressOverride string,
+	auth *woltgateway.AuthContext,
 	rawInput string,
 ) (favoriteVenueReference, error) {
 	input := strings.TrimSpace(rawInput)
@@ -291,7 +293,7 @@ func resolveFavoriteVenueReference(
 		}
 	}
 
-	location, err := resolveFavoriteVenueLookupLocation(ctx, deps, selectedProfile, addressOverride)
+	location, err := resolveFavoriteVenueLookupLocation(ctx, deps, selectedProfile, addressOverride, auth)
 	if err != nil {
 		return favoriteVenueReference{}, fmt.Errorf("unable to resolve venue slug %q to venue id", candidate)
 	}
@@ -330,6 +332,7 @@ func resolveFavoriteVenueLookupLocation(
 	deps Dependencies,
 	selectedProfile string,
 	addressOverride string,
+	auth *woltgateway.AuthContext,
 ) (domain.Location, error) {
 	if trimmed := strings.TrimSpace(addressOverride); trimmed != "" {
 		if deps.Location == nil {
@@ -341,7 +344,11 @@ func resolveFavoriteVenueLookupLocation(
 	if err != nil {
 		return domain.Location{}, err
 	}
-	return profile.Location, nil
+	location, locationErr := resolveAccountLocation(ctx, deps, profile, auth)
+	if locationErr == nil {
+		return location, nil
+	}
+	return domain.Location{}, locationErr
 }
 
 func extractFavoriteVenues(payload map[string]any) []any {

@@ -9,6 +9,7 @@ import (
 
 type testWoltAPI struct {
 	refreshAccessTokenFn func(context.Context, string, woltgateway.AuthContext) (woltgateway.TokenRefreshResult, error)
+	deliveryInfoListFn   func(context.Context, woltgateway.AuthContext) (map[string]any, error)
 }
 
 func (m *testWoltAPI) FrontPage(context.Context, domain.Location) (map[string]any, error) {
@@ -83,7 +84,10 @@ func (m *testWoltAPI) AddressFields(context.Context, domain.Location, string, wo
 	return map[string]any{}, nil
 }
 
-func (m *testWoltAPI) DeliveryInfoList(context.Context, woltgateway.AuthContext) (map[string]any, error) {
+func (m *testWoltAPI) DeliveryInfoList(ctx context.Context, auth woltgateway.AuthContext) (map[string]any, error) {
+	if m.deliveryInfoListFn != nil {
+		return m.deliveryInfoListFn(ctx, auth)
+	}
 	return map[string]any{}, nil
 }
 

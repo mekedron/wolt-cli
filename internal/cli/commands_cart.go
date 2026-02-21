@@ -65,6 +65,7 @@ func newCartShowCommand(deps Dependencies) *cobra.Command {
 				format,
 				flags.Locale,
 				flags.Output,
+				&auth,
 				cmd,
 			)
 			if err != nil {
@@ -162,6 +163,7 @@ func newCartAddCommand(deps Dependencies) *cobra.Command {
 				format,
 				flags.Locale,
 				flags.Output,
+				&auth,
 				cmd,
 			)
 			if err != nil {
@@ -492,6 +494,7 @@ func newCartRemoveCommand(deps Dependencies) *cobra.Command {
 				format,
 				flags.Locale,
 				flags.Output,
+				&auth,
 				cmd,
 			)
 			if err != nil {
@@ -698,6 +701,7 @@ func newCartClearCommand(deps Dependencies) *cobra.Command {
 				format,
 				flags.Locale,
 				flags.Output,
+				&auth,
 				cmd,
 			)
 			if err != nil {

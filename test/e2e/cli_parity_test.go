@@ -351,7 +351,6 @@ func runCLI(t *testing.T, args ...string) (int, string) {
 	t.Helper()
 	defaultProfile := domain.Profile{
 		Name:      "default",
-		Address:   "Krakow",
 		IsDefault: true,
 		Location:  domain.Location{Lat: 0, Lon: 0},
 	}
@@ -368,10 +367,62 @@ func runCLI(t *testing.T, args ...string) (int, string) {
 
 func runCLIWithDeps(t *testing.T, deps cli.Dependencies, args ...string) (int, string) {
 	t.Helper()
+	ensureDefaultLocationLookupAuth(args, deps.Profiles)
+	if woltMock, ok := deps.Wolt.(*mockWolt); ok {
+		ensureDefaultDeliveryInfoList(woltMock, deps.Profiles)
+	}
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	exitCode := cli.Execute(context.Background(), args, deps, &stdout, &stderr)
 	return exitCode, stdout.String() + stderr.String()
+}
+
+func ensureDefaultLocationLookupAuth(args []string, profiles cli.ProfileResolver) {
+	if len(args) == 0 {
+		return
+	}
+	switch strings.ToLower(strings.TrimSpace(args[0])) {
+	case "discover", "search", "venue", "item":
+	default:
+		return
+	}
+	profileMock, ok := profiles.(*mockProfiles)
+	if !ok {
+		return
+	}
+	if strings.TrimSpace(profileMock.profile.WToken) != "" || len(profileMock.profile.Cookies) > 0 {
+		return
+	}
+	profileMock.profile.WToken = "test-token"
+}
+
+func ensureDefaultDeliveryInfoList(woltMock *mockWolt, profiles cli.ProfileResolver) {
+	if woltMock == nil || woltMock.deliveryInfoListFunc != nil {
+		return
+	}
+	profileMock, ok := profiles.(*mockProfiles)
+	if !ok {
+		return
+	}
+	location := profileMock.profile.Location
+	if location.Lat == 0 && location.Lon == 0 {
+		location = domain.Location{Lat: 60.1699, Lon: 24.9384}
+	}
+	woltMock.deliveryInfoListFunc = func(_ context.Context, _ woltgateway.AuthContext) (map[string]any, error) {
+		return map[string]any{
+			"results": []any{
+				map[string]any{
+					"id": "default-address",
+					"location": map[string]any{
+						"user_coordinates": map[string]any{
+							"type":        "Point",
+							"coordinates": []any{location.Lon, location.Lat},
+						},
+					},
+				},
+			},
+		}, nil
+	}
 }
 
 func intPtr(v int) *int {
@@ -554,8 +605,8 @@ func TestDiscoverFeedJSON(t *testing.T) {
 	}
 }
 
-func TestDiscoverFeedUsesDefaultProfileLocation(t *testing.T) {
-	profile := domain.Profile{Name: "default", IsDefault: true, Location: domain.Location{Lat: 60.1, Lon: 24.9}}
+func TestDiscoverFeedUsesAccountAddressCoordinates(t *testing.T) {
+	profile := domain.Profile{Name: "default", IsDefault: true, Location: domain.Location{Lat: 60.1, Lon: 24.9}, WToken: "token"}
 	venue := buildVenue("venue-1", "venue-one", "Street 1")
 	section := domain.Section{Name: "popular", Title: "Popular", Items: []domain.Item{{Title: "Venue One", TrackID: "x", Link: domain.Link{Target: "venue-1"}, Venue: venue}}}
 	seen := domain.Location{}
@@ -581,7 +632,7 @@ func TestDiscoverFeedUsesDefaultProfileLocation(t *testing.T) {
 		t.Fatalf("expected exit 0, got %d\noutput:\n%s", exitCode, out)
 	}
 	if seen.Lat != profile.Location.Lat || seen.Lon != profile.Location.Lon {
-		t.Fatalf("expected location %+v, got %+v", profile.Location, seen)
+		t.Fatalf("expected account address location %+v, got %+v", profile.Location, seen)
 	}
 }
 

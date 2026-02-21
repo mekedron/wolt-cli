@@ -80,15 +80,15 @@ Location-aware commands support:
 Rules:
 - provide both `--lat` and `--lon` together
 - do not combine `--address` with `--lat/--lon`
-- if all overrides are omitted, profile location is used
+- if all overrides are omitted, location is resolved from the selected Wolt account address
 - with only one coordinate flag, command returns `WOLT_INVALID_ARGUMENT`
 
 Used by:
 - `discover feed`, `discover categories`
 - `cart show`, `cart remove`, `cart clear`, `checkout preview`
 - `profile favorites`, `profile favorites list`
-- `search venues`, `search items` (address/profile location only)
-- `venue show`, `venue hours` (address/profile location only)
+- `search venues`, `search items` (address/account address only)
+- `venue show`, `venue hours` (address/account address only)
 
 ## Safety
 
