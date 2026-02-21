@@ -5,8 +5,8 @@
 <meta name="generator" content="Docusaurus v3.9.2">
 <title data-rh="true">Venue and Item Commands | wolt-cli</title><meta data-rh="true" name="viewport" content="width=device-width,initial-scale=1"><meta data-rh="true" name="twitter:card" content="summary_large_image"><meta data-rh="true" property="og:image" content="https://mekedron.github.io/wolt-cli/img/docusaurus-social-card.jpg"><meta data-rh="true" name="twitter:image" content="https://mekedron.github.io/wolt-cli/img/docusaurus-social-card.jpg"><meta data-rh="true" property="og:url" content="https://mekedron.github.io/wolt-cli/docs/cli-venue-item"><meta data-rh="true" property="og:locale" content="en"><meta data-rh="true" name="docusaurus_locale" content="en"><meta data-rh="true" name="docsearch:language" content="en"><meta data-rh="true" name="docusaurus_version" content="current"><meta data-rh="true" name="docusaurus_tag" content="docs-default-current"><meta data-rh="true" name="docsearch:version" content="current"><meta data-rh="true" name="docsearch:docusaurus_tag" content="docs-default-current"><meta data-rh="true" property="og:title" content="Venue and Item Commands | wolt-cli"><meta data-rh="true" name="description" content="Shared/global flags are documented in cli-overview."><meta data-rh="true" property="og:description" content="Shared/global flags are documented in cli-overview."><link data-rh="true" rel="icon" href="/wolt-cli/img/favicon.png"><link data-rh="true" rel="canonical" href="https://mekedron.github.io/wolt-cli/docs/cli-venue-item"><link data-rh="true" rel="alternate" href="https://mekedron.github.io/wolt-cli/docs/cli-venue-item" hreflang="en"><link data-rh="true" rel="alternate" href="https://mekedron.github.io/wolt-cli/docs/cli-venue-item" hreflang="x-default"><script data-rh="true" type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Venue and Item Commands","item":"https://mekedron.github.io/wolt-cli/docs/cli-venue-item"}]}</script><link rel="alternate" type="application/rss+xml" href="/wolt-cli/blog/rss.xml" title="wolt-cli RSS Feed">
 <link rel="alternate" type="application/atom+xml" href="/wolt-cli/blog/atom.xml" title="wolt-cli Atom Feed"><link rel="stylesheet" href="/wolt-cli/assets/css/styles.c2c6d026.css">
-<script src="/wolt-cli/assets/js/runtime~main.41e63db8.js" defer="defer"></script>
-<script src="/wolt-cli/assets/js/main.752210ad.js" defer="defer"></script>
+<script src="/wolt-cli/assets/js/runtime~main.b20248c2.js" defer="defer"></script>
+<script src="/wolt-cli/assets/js/main.f91bb67c.js" defer="defer"></script>
 </head>
 <body class="navigation-with-keyboard">
 <svg style="display: none;"><defs>
@@ -42,13 +42,19 @@
 <li class=""><code>VenueCategoryList</code></li>
 </ul>
 <h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="wolt-venue-search-slug"><code>wolt venue search &lt;slug&gt;</code><a href="#wolt-venue-search-slug" class="hash-link" aria-label="Direct link to wolt-venue-search-slug" title="Direct link to wolt-venue-search-slug" translate="no">​</a></h2>
-<div class="language-console codeBlockContainer_Ckt0 theme-code-block" style="--prism-color:#393A34;--prism-background-color:#f6f8fa"><div class="codeBlockContent_QJqH"><pre tabindex="0" class="prism-code language-console codeBlock_bY9V thin-scrollbar" style="color:#393A34;background-color:#f6f8fa"><code class="codeBlockLines_e6Vv"><span class="token-line" style="color:#393A34"><span class="token plain">wolt venue search &lt;slug&gt; --query &lt;text&gt; [--category &lt;slug&gt;] [--include-options] [--limit &lt;n&gt;] [global flags]</span><br></span></code></pre></div></div>
+<div class="language-console codeBlockContainer_Ckt0 theme-code-block" style="--prism-color:#393A34;--prism-background-color:#f6f8fa"><div class="codeBlockContent_QJqH"><pre tabindex="0" class="prism-code language-console codeBlock_bY9V thin-scrollbar" style="color:#393A34;background-color:#f6f8fa"><code class="codeBlockLines_e6Vv"><span class="token-line" style="color:#393A34"><span class="token plain">wolt venue search &lt;slug&gt; --query &lt;text&gt; [--category &lt;slug&gt;] [--include-options] [--sort &lt;mode&gt;] [--min-price &lt;n&gt;] [--max-price &lt;n&gt;] [--hide-sold-out] [--discounts-only] [--limit &lt;n&gt;] [--offset &lt;n&gt; | --page &lt;n&gt;] [global flags]</span><br></span></code></pre></div></div>
 <p>Options:</p>
 <ul>
 <li class=""><code>--query</code>: item search query (required)</li>
 <li class=""><code>--category</code>: optional category filter over matched items</li>
 <li class=""><code>--include-options</code>: include option-group IDs per item</li>
+<li class=""><code>--sort [recommended|price|name]</code></li>
+<li class=""><code>--min-price</code> / <code>--max-price</code>: base price filter in minor units</li>
+<li class=""><code>--hide-sold-out</code>: exclude sold-out items</li>
+<li class=""><code>--discounts-only</code>: include only discounted items</li>
 <li class=""><code>--limit</code>: cap number of returned rows</li>
+<li class=""><code>--offset</code>: skip N matched rows</li>
+<li class=""><code>--page</code>: 1-based page number (requires <code>--limit</code>, cannot be combined with <code>--offset</code>)</li>
 </ul>
 <p>Behavior:</p>
 <ul>
@@ -61,13 +67,19 @@
 <li class=""><code>VenueItemSearchResult</code></li>
 </ul>
 <h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="wolt-venue-menu-slug"><code>wolt venue menu &lt;slug&gt;</code><a href="#wolt-venue-menu-slug" class="hash-link" aria-label="Direct link to wolt-venue-menu-slug" title="Direct link to wolt-venue-menu-slug" translate="no">​</a></h2>
-<div class="language-console codeBlockContainer_Ckt0 theme-code-block" style="--prism-color:#393A34;--prism-background-color:#f6f8fa"><div class="codeBlockContent_QJqH"><pre tabindex="0" class="prism-code language-console codeBlock_bY9V thin-scrollbar" style="color:#393A34;background-color:#f6f8fa"><code class="codeBlockLines_e6Vv"><span class="token-line" style="color:#393A34"><span class="token plain">wolt venue menu &lt;slug&gt; [--category &lt;slug&gt;] [--full-catalog] [--include-options] [--limit &lt;n&gt;] [global flags]</span><br></span></code></pre></div></div>
+<div class="language-console codeBlockContainer_Ckt0 theme-code-block" style="--prism-color:#393A34;--prism-background-color:#f6f8fa"><div class="codeBlockContent_QJqH"><pre tabindex="0" class="prism-code language-console codeBlock_bY9V thin-scrollbar" style="color:#393A34;background-color:#f6f8fa"><code class="codeBlockLines_e6Vv"><span class="token-line" style="color:#393A34"><span class="token plain">wolt venue menu &lt;slug&gt; [--category &lt;slug&gt;] [--full-catalog] [--include-options] [--sort &lt;mode&gt;] [--min-price &lt;n&gt;] [--max-price &lt;n&gt;] [--hide-sold-out] [--discounts-only] [--limit &lt;n&gt;] [--offset &lt;n&gt; | --page &lt;n&gt;] [global flags]</span><br></span></code></pre></div></div>
 <p>Options:</p>
 <ul>
 <li class=""><code>--category</code>: restrict to one category</li>
 <li class=""><code>--full-catalog</code>: force cross-category crawl for partial assortments (can be slow)</li>
 <li class=""><code>--include-options</code>: include option-group IDs per item</li>
+<li class=""><code>--sort [recommended|price|name]</code></li>
+<li class=""><code>--min-price</code> / <code>--max-price</code>: base price filter in minor units</li>
+<li class=""><code>--hide-sold-out</code>: exclude sold-out items</li>
+<li class=""><code>--discounts-only</code>: include only discounted items</li>
 <li class=""><code>--limit</code>: cap number of returned items</li>
+<li class=""><code>--offset</code>: skip N items</li>
+<li class=""><code>--page</code>: 1-based page number (requires <code>--limit</code>, cannot be combined with <code>--offset</code>)</li>
 </ul>
 <p>Behavior:</p>
 <ul>
