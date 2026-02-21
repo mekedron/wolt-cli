@@ -5,7 +5,7 @@
 <meta name="generator" content="Docusaurus v3.9.2">
 <title data-rh="true">CLI Output Contract | wolt-cli</title><meta data-rh="true" name="viewport" content="width=device-width,initial-scale=1"><meta data-rh="true" name="twitter:card" content="summary_large_image"><meta data-rh="true" property="og:image" content="https://mekedron.github.io/wolt-cli/img/docusaurus-social-card.jpg"><meta data-rh="true" name="twitter:image" content="https://mekedron.github.io/wolt-cli/img/docusaurus-social-card.jpg"><meta data-rh="true" property="og:url" content="https://mekedron.github.io/wolt-cli/docs/cli-output-contract"><meta data-rh="true" property="og:locale" content="en"><meta data-rh="true" name="docusaurus_locale" content="en"><meta data-rh="true" name="docsearch:language" content="en"><meta data-rh="true" name="docusaurus_version" content="current"><meta data-rh="true" name="docusaurus_tag" content="docs-default-current"><meta data-rh="true" name="docsearch:version" content="current"><meta data-rh="true" name="docsearch:docusaurus_tag" content="docs-default-current"><meta data-rh="true" property="og:title" content="CLI Output Contract | wolt-cli"><meta data-rh="true" name="description" content="This document defines the stable output shape for machine-readable responses used by"><meta data-rh="true" property="og:description" content="This document defines the stable output shape for machine-readable responses used by"><link data-rh="true" rel="icon" href="/wolt-cli/img/favicon.png"><link data-rh="true" rel="canonical" href="https://mekedron.github.io/wolt-cli/docs/cli-output-contract"><link data-rh="true" rel="alternate" href="https://mekedron.github.io/wolt-cli/docs/cli-output-contract" hreflang="en"><link data-rh="true" rel="alternate" href="https://mekedron.github.io/wolt-cli/docs/cli-output-contract" hreflang="x-default"><script data-rh="true" type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"CLI Output Contract","item":"https://mekedron.github.io/wolt-cli/docs/cli-output-contract"}]}</script><link rel="alternate" type="application/rss+xml" href="/wolt-cli/blog/rss.xml" title="wolt-cli RSS Feed">
 <link rel="alternate" type="application/atom+xml" href="/wolt-cli/blog/atom.xml" title="wolt-cli Atom Feed"><link rel="stylesheet" href="/wolt-cli/assets/css/styles.c2c6d026.css">
-<script src="/wolt-cli/assets/js/runtime~main.d74b6928.js" defer="defer"></script>
+<script src="/wolt-cli/assets/js/runtime~main.41e63db8.js" defer="defer"></script>
 <script src="/wolt-cli/assets/js/main.752210ad.js" defer="defer"></script>
 </head>
 <body class="navigation-with-keyboard">
@@ -93,6 +93,10 @@ all <code>wolt</code> v1 commands.</p>
 <li class=""><code>promotions[]</code> (active venue promotion labels)</li>
 <li class=""><code>wolt_plus</code></li>
 </ul>
+<p>Notes:</p>
+<ul>
+<li class="">promotions are enriched with dynamic campaign banners (for example <code>40% off selected items</code>) when the dynamic endpoint is available.</li>
+</ul>
 <h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="categorylist-discover-categories">CategoryList (<code>discover categories</code>)<a href="#categorylist-discover-categories" class="hash-link" aria-label="Direct link to categorylist-discover-categories" title="Direct link to categorylist-discover-categories" translate="no">​</a></h3>
 <p>Required:</p>
 <ul>
@@ -104,6 +108,10 @@ all <code>wolt</code> v1 commands.</p>
 <li class=""><code>query</code></li>
 <li class=""><code>total</code></li>
 <li class=""><code>items[]:{venue_id,slug,name,address,rating,delivery_estimate,delivery_fee,price_range,price_range_scale,promotions,wolt_plus}</code></li>
+</ul>
+<p>Notes:</p>
+<ul>
+<li class="">venue promotions are enriched with dynamic campaign banners (for example <code>40% off selected items</code>) when the dynamic endpoint is available.</li>
 </ul>
 <h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="itemsearchresult-search-items">ItemSearchResult (<code>search items</code>)<a href="#itemsearchresult-search-items" class="hash-link" aria-label="Direct link to itemsearchresult-search-items" title="Direct link to itemsearchresult-search-items" translate="no">​</a></h3>
 <p>Required:</p>
@@ -164,7 +172,13 @@ all <code>wolt</code> v1 commands.</p>
 </ul>
 <p>Optional:</p>
 <ul>
+<li class=""><code>original_price</code> (for campaign-adjusted menu prices)</li>
 <li class=""><code>option_group_ids</code> (when <code>--include-options</code>)</li>
+</ul>
+<p>Notes:</p>
+<ul>
+<li class="">item-level campaign discounts from dynamic venue payloads are merged into <code>discounts[]</code>.</li>
+<li class="">when a percentage campaign applies, <code>base_price</code> is adjusted to discounted value and <code>original_price</code> is included.</li>
 </ul>
 <h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="venuehours-venue-hours">VenueHours (<code>venue hours</code>)<a href="#venuehours-venue-hours" class="hash-link" aria-label="Direct link to venuehours-venue-hours" title="Direct link to venuehours-venue-hours" translate="no">​</a></h3>
 <p>Required:</p>
