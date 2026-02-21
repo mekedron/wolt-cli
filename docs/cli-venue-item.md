@@ -66,6 +66,7 @@ Options:
 
 Behavior:
 - loads venue metadata from static venue page endpoint
+- loads dynamic venue page payload to resolve campaign-level item discounts
 - loads menu/option topology from assortment endpoint
 - when `--category` is provided, fetches only that category payload and hydrates its items
 - for partial assortments without `--category`, returns `WOLT_INVALID_ARGUMENT` and guidance to use `venue categories` + `--category`, or `venue search`
@@ -79,7 +80,8 @@ Output schema:
 
 Notes:
 - venue payload includes `wolt_plus` participation flag
-- menu/search items include `discounts[]` from upstream promotion metadata when available
+- menu/search items include `discounts[]` from upstream promotion metadata and dynamic campaign payloads when available
+- when dynamic item campaigns include percentage discounts, `base_price` is adjusted to discounted value and `original_price` is populated
 - for marketplace payloads that expose `original_price` without promo labels, CLI derives a synthetic discount label (for example `21% off`)
 
 ## `wolt venue hours <slug>`

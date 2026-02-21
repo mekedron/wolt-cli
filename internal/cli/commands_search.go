@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 
+	woltgateway "github.com/mekedron/wolt-cli/internal/gateway/wolt"
 	"github.com/mekedron/wolt-cli/internal/service/observability"
 	"github.com/mekedron/wolt-cli/internal/service/output"
 	"github.com/spf13/cobra"
@@ -81,6 +82,13 @@ func newSearchVenuesCommand(deps Dependencies) *cobra.Command {
 				woltPlus,
 				limitPtr,
 				offset,
+			)
+			enrichVenueSearchRowsWithDynamicPromotions(
+				cmd.Context(),
+				deps,
+				data,
+				&location,
+				woltgateway.AuthContext{},
 			)
 
 			if format == output.FormatTable {

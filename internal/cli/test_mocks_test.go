@@ -35,7 +35,7 @@ func (m *testWoltAPI) VenuePageStatic(context.Context, string) (map[string]any, 
 	return map[string]any{}, nil
 }
 
-func (m *testWoltAPI) VenuePageDynamic(context.Context, string) (map[string]any, error) {
+func (m *testWoltAPI) VenuePageDynamic(context.Context, string, woltgateway.VenuePageDynamicOptions) (map[string]any, error) {
 	return map[string]any{}, nil
 }
 

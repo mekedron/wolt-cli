@@ -249,6 +249,18 @@ func newVenueMenuCommand(deps Dependencies) *cobra.Command {
 			} else {
 				warnings = append(warnings, "venue static page endpoint unavailable")
 			}
+			var dynamicLocation *domain.Location
+			if profile.Location.Lat != 0 || profile.Location.Lon != 0 {
+				location := profile.Location
+				dynamicLocation = &location
+			}
+			if payload, err := deps.Wolt.VenuePageDynamic(
+				cmd.Context(),
+				slug,
+				woltgateway.VenuePageDynamicOptions{Location: dynamicLocation},
+			); err == nil {
+				payloads = append(payloads, payload)
+			}
 			if payload, err := deps.Wolt.AssortmentByVenueSlug(cmd.Context(), slug); err == nil {
 				assortmentPayload = payload
 				payloads = append(payloads, payload)

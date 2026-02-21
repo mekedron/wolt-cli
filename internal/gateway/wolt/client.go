@@ -22,6 +22,7 @@ const (
 	defaultConsumerAPIURL       = "https://consumer-api.wolt.com/v1/pages/front"
 	defaultSearchAPIURL         = "https://restaurant-api.wolt.com/v1/pages/search"
 	defaultVenuePageAPIURL      = "https://restaurant-api.wolt.com/order-xp/web/v1/pages/venue/slug/"
+	defaultVenuePageDynamicURL  = "https://consumer-api.wolt.com/order-xp/web/v1/venue/slug/"
 	defaultAssortmentAPIURL     = "https://consumer-api.wolt.com/consumer-api/consumer-assortment/v1/venues/slug/"
 	defaultVenueContentAPIURL   = "https://consumer-api.wolt.com/consumer-api/venue-content-api/v3/web/venue-content/slug/"
 	defaultVenueItemAPIURL      = "https://restaurant-api.wolt.com/order-xp/web/v1/pages/venue/"
@@ -86,6 +87,7 @@ type Endpoints struct {
 	ConsumerFront    string
 	SearchPage       string
 	VenuePage        string
+	VenuePageDynamic string
 	Assortment       string
 	VenueContent     string
 	VenueItem        string
@@ -155,6 +157,7 @@ func NewClient(opts ...Option) *Client {
 			ConsumerFront:    defaultConsumerAPIURL,
 			SearchPage:       defaultSearchAPIURL,
 			VenuePage:        defaultVenuePageAPIURL,
+			VenuePageDynamic: defaultVenuePageDynamicURL,
 			Assortment:       defaultAssortmentAPIURL,
 			VenueContent:     defaultVenueContentAPIURL,
 			VenueItem:        defaultVenueItemAPIURL,
@@ -571,8 +574,29 @@ func (c *Client) VenuePageStatic(ctx context.Context, slug string) (map[string]a
 }
 
 // VenuePageDynamic returns venue dynamic page payload.
-func (c *Client) VenuePageDynamic(ctx context.Context, slug string) (map[string]any, error) {
-	return c.doJSONRequest(ctx, http.MethodGet, c.endpoints.VenuePage+slug+"/dynamic", nil, nil, c.headers(nil, nil))
+func (c *Client) VenuePageDynamic(ctx context.Context, slug string, options VenuePageDynamicOptions) (map[string]any, error) {
+	endpoint := strings.TrimSpace(c.endpoints.VenuePageDynamic)
+	if endpoint == "" {
+		endpoint = defaultVenuePageDynamicURL
+	}
+	params := url.Values{}
+	if options.Location != nil {
+		params.Set("lat", strconv.FormatFloat(options.Location.Lat, 'f', 6, 64))
+		params.Set("lon", strconv.FormatFloat(options.Location.Lon, 'f', 6, 64))
+		selectedDeliveryMethod := strings.TrimSpace(options.SelectedDeliveryMethod)
+		if selectedDeliveryMethod == "" {
+			selectedDeliveryMethod = "homedelivery"
+		}
+		params.Set("selected_delivery_method", selectedDeliveryMethod)
+	}
+	return c.doJSONRequest(
+		ctx,
+		http.MethodGet,
+		endpoint+slug+"/dynamic/",
+		params,
+		nil,
+		c.headers(nil, &options.Auth),
+	)
 }
 
 // AssortmentByVenueSlug returns full assortment payload for one venue slug.

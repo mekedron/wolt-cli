@@ -30,7 +30,7 @@ type API interface {
 	RestaurantByID(ctx context.Context, venueID string) (*domain.Restaurant, error)
 	Search(ctx context.Context, location domain.Location, query string) (map[string]any, error)
 	VenuePageStatic(ctx context.Context, slug string) (map[string]any, error)
-	VenuePageDynamic(ctx context.Context, slug string) (map[string]any, error)
+	VenuePageDynamic(ctx context.Context, slug string, options VenuePageDynamicOptions) (map[string]any, error)
 	AssortmentByVenueSlug(ctx context.Context, slug string) (map[string]any, error)
 	AssortmentCategoryByVenueSlug(ctx context.Context, slug string, categorySlug string, language string, auth AuthContext) (map[string]any, error)
 	AssortmentItemsByVenueSlug(ctx context.Context, slug string, itemIDs []string, auth AuthContext) (map[string]any, error)
@@ -56,6 +56,13 @@ type API interface {
 	DeleteBaskets(ctx context.Context, basketIDs []string, auth AuthContext) (map[string]any, error)
 	CheckoutPreview(ctx context.Context, payload map[string]any, auth AuthContext) (map[string]any, error)
 	RefreshAccessToken(ctx context.Context, refreshToken string, auth AuthContext) (TokenRefreshResult, error)
+}
+
+// VenuePageDynamicOptions controls optional request context for dynamic venue page calls.
+type VenuePageDynamicOptions struct {
+	Location               *domain.Location
+	SelectedDeliveryMethod string
+	Auth                   AuthContext
 }
 
 // PaymentMethodsProfileOptions controls payment profile endpoint query params.

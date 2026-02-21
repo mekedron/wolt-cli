@@ -1,6 +1,7 @@
 package observability
 
 import (
+	"math"
 	"sort"
 	"strings"
 
@@ -13,6 +14,7 @@ func BuildVenueMenu(venueID string, payloads []map[string]any, category string, 
 	menuItems := []map[string]any{}
 	isWoltPlus := false
 	fallbackCurrency := resolvePayloadCurrency(payloads)
+	campaignDiscounts := collectCampaignItemDiscounts(payloads)
 
 	for _, payload := range payloads {
 		menuItems = append(menuItems, ExtractMenuItems(payload, venueID, "")...)
@@ -43,11 +45,21 @@ func BuildVenueMenu(venueID string, payloads []map[string]any, category string, 
 	for _, item := range menuItems {
 		categorySet[stringFromAny(item["category"])] = struct{}{}
 		basePrice := normalizeBasePrice(toMap(item["base_price"]), fallbackCurrency)
+		originalPrice := normalizeBasePrice(toMap(item["original_price"]), fallbackCurrency)
+		itemID := strings.TrimSpace(stringFromAny(item["item_id"]))
+		discountLabels := labelsFromAny(item["discounts"])
+		if campaign, ok := campaignDiscounts[itemID]; ok {
+			discountLabels = mergeStringLabels(discountLabels, campaign.labels)
+			applyCampaignPriceFraction(basePrice, originalPrice, campaign.maxFraction)
+		}
 		row := map[string]any{
 			"item_id":    item["item_id"],
 			"name":       item["name"],
 			"base_price": basePrice,
-			"discounts":  item["discounts"],
+			"discounts":  discountLabels,
+		}
+		if intValue(originalPrice["amount"]) > 0 {
+			row["original_price"] = originalPrice
 		}
 		if includeOptions {
 			row["option_group_ids"] = item["option_group_ids"]
@@ -134,6 +146,47 @@ func normalizeBasePrice(basePrice map[string]any, fallbackCurrency string) map[s
 		}
 	}
 	return normalized
+}
+
+func applyCampaignPriceFraction(basePrice map[string]any, originalPrice map[string]any, fraction float64) {
+	if fraction <= 0 || fraction >= 1 || basePrice == nil {
+		return
+	}
+	currentAmount := intValue(basePrice["amount"])
+	if currentAmount <= 0 {
+		return
+	}
+
+	if originalPrice == nil {
+		originalPrice = map[string]any{}
+	}
+	if intValue(originalPrice["amount"]) <= 0 {
+		originalPrice["amount"] = currentAmount
+		if currency := strings.TrimSpace(stringFromAny(coalesce(originalPrice["currency"], basePrice["currency"]))); currency != "" {
+			originalPrice["currency"] = currency
+			if formatted := formatAmount(&currentAmount, currency); formatted != nil {
+				originalPrice["formatted_amount"] = *formatted
+			}
+		}
+	}
+
+	discountedAmount := int(math.Round(float64(currentAmount) * (1 - fraction)))
+	if discountedAmount < 0 {
+		discountedAmount = 0
+	}
+	basePrice["amount"] = discountedAmount
+	currency := strings.TrimSpace(stringFromAny(basePrice["currency"]))
+	if currency == "" {
+		currency = strings.TrimSpace(stringFromAny(originalPrice["currency"]))
+		if currency != "" {
+			basePrice["currency"] = currency
+		}
+	}
+	if currency != "" {
+		if formatted := formatAmount(&discountedAmount, currency); formatted != nil {
+			basePrice["formatted_amount"] = *formatted
+		}
+	}
 }
 
 func payloadVenueWoltPlus(payload map[string]any) bool {

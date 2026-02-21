@@ -311,6 +311,91 @@ func TestBuildVenueMenuIncludesDiscounts(t *testing.T) {
 	}
 }
 
+func TestBuildVenueMenuMergesDynamicCampaignDiscounts(t *testing.T) {
+	assortmentPayload := map[string]any{
+		"items": []any{
+			map[string]any{
+				"id":    "item-1",
+				"name":  "Steakhouse",
+				"price": 1075,
+			},
+		},
+	}
+	dynamicPayload := map[string]any{
+		"venue_raw": map[string]any{
+			"discounts": []any{
+				map[string]any{
+					"effects": map[string]any{
+						"item_discount": map[string]any{
+							"fraction": 0.4,
+							"include": map[string]any{
+								"items": []any{"item-1"},
+							},
+						},
+					},
+					"effect_item_badge": map[string]any{
+						"text": "40% off selected items",
+					},
+				},
+			},
+		},
+	}
+
+	data, warnings := observability.BuildVenueMenu("venue-1", []map[string]any{assortmentPayload, dynamicPayload}, "", false, nil)
+	if len(warnings) != 0 {
+		t.Fatalf("expected no warnings, got %v", warnings)
+	}
+	items := asSlice(t, data["items"])
+	if len(items) != 1 {
+		t.Fatalf("expected one menu item, got %d", len(items))
+	}
+	first := asMap(t, items[0])
+	basePrice := asMap(t, first["base_price"])
+	if intValue(basePrice["amount"]) != 645 {
+		t.Fatalf("expected discounted base price 645, got %v", basePrice["amount"])
+	}
+	originalPrice := asMap(t, first["original_price"])
+	if intValue(originalPrice["amount"]) != 1075 {
+		t.Fatalf("expected original price 1075, got %v", originalPrice["amount"])
+	}
+	discounts := asSlice(t, first["discounts"])
+	if len(discounts) != 1 || discounts[0] != "40% off selected items" {
+		t.Fatalf("expected discounts [40%% off selected items], got %v", discounts)
+	}
+}
+
+func TestExtractVenuePromotionLabelsFromDynamicPayload(t *testing.T) {
+	payload := map[string]any{
+		"venue": map[string]any{
+			"banners": []any{
+				map[string]any{
+					"discount": map[string]any{
+						"formatted_text": "40% off selected items",
+					},
+				},
+			},
+		},
+		"venue_raw": map[string]any{
+			"discounts": []any{
+				map[string]any{
+					"description": map[string]any{"title": "40% off selected items"},
+				},
+				map[string]any{
+					"description": map[string]any{"title": "€0 delivery fee"},
+				},
+			},
+		},
+	}
+
+	labels := observability.ExtractVenuePromotionLabels(payload)
+	if len(labels) != 2 {
+		t.Fatalf("expected two labels, got %v", labels)
+	}
+	if labels[0] != "40% off selected items" && labels[1] != "40% off selected items" {
+		t.Fatalf("expected labels to include campaign text, got %v", labels)
+	}
+}
+
 func TestExtractMenuItemsDerivesDiscountFromOriginalPrice(t *testing.T) {
 	payload := map[string]any{
 		"items": []any{

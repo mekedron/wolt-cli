@@ -1,6 +1,7 @@
 package cli
 
 import (
+	woltgateway "github.com/mekedron/wolt-cli/internal/gateway/wolt"
 	"github.com/mekedron/wolt-cli/internal/service/observability"
 	"github.com/mekedron/wolt-cli/internal/service/output"
 	"github.com/spf13/cobra"
@@ -78,6 +79,13 @@ func newDiscoverFeedCommand(deps Dependencies) *cobra.Command {
 				limitPtr = &limit
 			}
 			data := observability.BuildDiscoveryFeed(sections, city, limitPtr, woltPlus)
+			enrichDiscoverFeedRowsWithDynamicPromotions(
+				cmd.Context(),
+				deps,
+				data,
+				&location,
+				woltgateway.AuthContext{},
+			)
 
 			if format == output.FormatTable {
 				return writeTable(cmd, buildDiscoveryFeedTable(data), flags.Output)

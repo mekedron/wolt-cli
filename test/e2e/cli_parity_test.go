@@ -20,7 +20,7 @@ type mockWolt struct {
 	restaurantByIDFunc      func(context.Context, string) (*domain.Restaurant, error)
 	searchFunc              func(context.Context, domain.Location, string) (map[string]any, error)
 	venuePageStaticFunc     func(context.Context, string) (map[string]any, error)
-	venuePageDynamicFunc    func(context.Context, string) (map[string]any, error)
+	venuePageDynamicFunc    func(context.Context, string, woltgateway.VenuePageDynamicOptions) (map[string]any, error)
 	assortmentBySlugFunc    func(context.Context, string) (map[string]any, error)
 	assortmentCategoryFn    func(context.Context, string, string, string, woltgateway.AuthContext) (map[string]any, error)
 	assortmentItemsFn       func(context.Context, string, []string, woltgateway.AuthContext) (map[string]any, error)
@@ -90,11 +90,11 @@ func (m *mockWolt) VenuePageStatic(ctx context.Context, slug string) (map[string
 	return m.venuePageStaticFunc(ctx, slug)
 }
 
-func (m *mockWolt) VenuePageDynamic(ctx context.Context, slug string) (map[string]any, error) {
+func (m *mockWolt) VenuePageDynamic(ctx context.Context, slug string, options woltgateway.VenuePageDynamicOptions) (map[string]any, error) {
 	if m.venuePageDynamicFunc == nil {
 		return nil, errors.New("venue page dynamic not mocked")
 	}
-	return m.venuePageDynamicFunc(ctx, slug)
+	return m.venuePageDynamicFunc(ctx, slug, options)
 }
 
 func (m *mockWolt) AssortmentByVenueSlug(ctx context.Context, slug string) (map[string]any, error) {

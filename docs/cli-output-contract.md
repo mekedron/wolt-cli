@@ -115,6 +115,9 @@ Each `sections[].items[]` row includes:
 - `promotions[]` (active venue promotion labels)
 - `wolt_plus`
 
+Notes:
+- promotions are enriched with dynamic campaign banners (for example `40% off selected items`) when the dynamic endpoint is available.
+
 ### CategoryList (`discover categories`)
 Required:
 - `categories[]:{id,name,slug}`
@@ -124,6 +127,9 @@ Required:
 - `query`
 - `total`
 - `items[]:{venue_id,slug,name,address,rating,delivery_estimate,delivery_fee,price_range,price_range_scale,promotions,wolt_plus}`
+
+Notes:
+- venue promotions are enriched with dynamic campaign banners (for example `40% off selected items`) when the dynamic endpoint is available.
 
 ### ItemSearchResult (`search items`)
 Required:
@@ -175,7 +181,12 @@ Required:
 - `items[]:{item_id,name,base_price,discounts}`
 
 Optional:
+- `original_price` (for campaign-adjusted menu prices)
 - `option_group_ids` (when `--include-options`)
+
+Notes:
+- item-level campaign discounts from dynamic venue payloads are merged into `discounts[]`.
+- when a percentage campaign applies, `base_price` is adjusted to discounted value and `original_price` is included.
 
 ### VenueHours (`venue hours`)
 Required:
