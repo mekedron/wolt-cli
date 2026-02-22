@@ -1,0 +1,281 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        goos: [darwin, linux]
+        goarch: [amd64, arm64]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build and package release artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          out_dir="dist/${{ matrix.goos }}-${{ matrix.goarch }}"
+          mkdir -p "${out_dir}"
+          binary_name="wolt"
+
+          CGO_ENABLED=0 GOOS="${{ matrix.goos }}" GOARCH="${{ matrix.goarch }}" \
+            go build -trimpath -ldflags "-s -w -X main.version=${GITHUB_REF_NAME}" \
+            -o "${out_dir}/${binary_name}" ./cmd/wolt
+
+          archive_name="wolt_${GITHUB_REF_NAME}_${{ matrix.goos }}_${{ matrix.goarch }}.tar.gz"
+          tar -C "${out_dir}" -czf "dist/${archive_name}" "${binary_name}"
+
+      - name: Verify embedded release version
+        if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          actual_version="$(dist/linux-amd64/wolt --version | tr -d '\r\n')"
+          if [ "${actual_version}" != "${GITHUB_REF_NAME}" ]; then
+            echo "wolt --version mismatch: expected '${GITHUB_REF_NAME}', got '${actual_version}'"
+            exit 1
+          fi
+
+      - name: Upload platform archive
+        uses: actions/upload-artifact@v6
+        with:
+          name: release-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/wolt_${{ github.ref_name }}_${{ matrix.goos }}_${{ matrix.goarch }}.tar.gz
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub release
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v7
+        with:
+          path: artifacts
+
+      - name: Consolidate release archives
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p dist
+          find artifacts -type f -name "*.tar.gz" -exec cp {} dist/ \;
+
+          archive_count="$(find dist -maxdepth 1 -type f -name "*.tar.gz" | wc -l | tr -d ' ')"
+          if [ "${archive_count}" -eq 0 ]; then
+            echo "No release archives found."
+            exit 1
+          fi
+
+      - name: Package skill archive
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if ! command -v zip >/dev/null 2>&1; then
+            echo "zip command is required but not available."
+            exit 1
+          fi
+
+          skill_dir="skills/wolt-cli"
+          if [ ! -d "${skill_dir}" ]; then
+            echo "Skill directory not found: ${skill_dir}"
+            exit 1
+          fi
+
+          skill_archive="wolt-cli_skill_${GITHUB_REF_NAME}.zip"
+          (
+            cd skills/wolt-cli
+            zip -r "../../dist/${skill_archive}" .
+          )
+
+      - name: Generate checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          (
+            cd dist
+            shopt -s nullglob
+            archives=(./*.tar.gz ./*.zip)
+            if [ "${#archives[@]}" -eq 0 ]; then
+              echo "No archives found for checksum generation."
+              exit 1
+            fi
+            sha256sum "${archives[@]}" > SHA256SUMS
+          )
+
+      - name: Generate release notes
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          CURRENT_TAG="${GITHUB_REF_NAME}"
+          PREV_TAG="$(git describe --tags --abbrev=0 "${GITHUB_SHA}^" 2>/dev/null || true)"
+          REPO_URL="https://github.com/${GITHUB_REPOSITORY}"
+
+          {
+            echo "# ${CURRENT_TAG}"
+            echo
+            if [ -n "${PREV_TAG}" ]; then
+              echo "## Changelog (${PREV_TAG}..${CURRENT_TAG})"
+              echo
+              git log "${PREV_TAG}..${CURRENT_TAG}" --pretty=format:'- %s (%h)'
+              echo
+              echo
+              echo "[Compare ${PREV_TAG}...${CURRENT_TAG}](${REPO_URL}/compare/${PREV_TAG}...${CURRENT_TAG})"
+            else
+              echo "## Changelog (initial release)"
+              echo
+              git log "${CURRENT_TAG}" --pretty=format:'- %s (%h)'
+            fi
+            echo
+            echo
+            echo "## Artifacts"
+            echo
+            echo "- \`SHA256SUMS\` contains checksums for all release archives."
+            echo "- \`wolt-cli_skill_${CURRENT_TAG}.zip\` contains the AI agent skill bundle."
+          } > RELEASE_NOTES.md
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          body_path: RELEASE_NOTES.md
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          overwrite_files: true
+          files: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/SHA256SUMS
+
+  sync_tap:
+    name: Sync Homebrew tap formula
+    runs-on: ubuntu-latest
+    needs: release
+
+    steps:
+      - name: Checkout tap repository
+        uses: actions/checkout@v6
+        with:
+          repository: mekedron/tap
+          token: ${{ secrets.TAP_REPO_TOKEN }}
+          path: tap
+
+      - name: Update formula for released tag
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tag="${GITHUB_REF_NAME}"
+          version="${tag#v}"
+          sums_url="https://github.com/mekedron/wolt-cli/releases/download/${tag}/SHA256SUMS"
+          sums_file="/tmp/SHA256SUMS"
+
+          curl -fsSL "${sums_url}" -o "${sums_file}"
+
+          darwin_amd64="$(awk '/wolt_.*_darwin_amd64\.tar\.gz/ {print $1}' "${sums_file}")"
+          darwin_arm64="$(awk '/wolt_.*_darwin_arm64\.tar\.gz/ {print $1}' "${sums_file}")"
+          linux_amd64="$(awk '/wolt_.*_linux_amd64\.tar\.gz/ {print $1}' "${sums_file}")"
+          linux_arm64="$(awk '/wolt_.*_linux_arm64\.tar\.gz/ {print $1}' "${sums_file}")"
+
+          if [ -z "${darwin_amd64}" ] || [ -z "${darwin_arm64}" ] || [ -z "${linux_amd64}" ] || [ -z "${linux_arm64}" ]; then
+            echo "Failed to parse all required checksums from ${sums_url}"
+            exit 1
+          fi
+
+          {
+            echo '# typed: false'
+            echo '# frozen_string_literal: true'
+            echo
+            echo 'class WoltCli < Formula'
+            echo '  desc "Unofficial community CLI for interacting with Wolt APIs"'
+            echo '  homepage "https://github.com/mekedron/wolt-cli"'
+            echo "  version \"${version}\""
+            echo '  license "MIT"'
+            echo
+            echo '  on_macos do'
+            echo '    if Hardware::CPU.intel?'
+            echo "      url \"https://github.com/mekedron/wolt-cli/releases/download/${tag}/wolt_${tag}_darwin_amd64.tar.gz\""
+            echo "      sha256 \"${darwin_amd64}\""
+            echo '    end'
+            echo '    if Hardware::CPU.arm?'
+            echo "      url \"https://github.com/mekedron/wolt-cli/releases/download/${tag}/wolt_${tag}_darwin_arm64.tar.gz\""
+            echo "      sha256 \"${darwin_arm64}\""
+            echo '    end'
+            echo '  end'
+            echo
+            echo '  on_linux do'
+            echo '    if Hardware::CPU.intel? && Hardware::CPU.is_64_bit?'
+            echo "      url \"https://github.com/mekedron/wolt-cli/releases/download/${tag}/wolt_${tag}_linux_amd64.tar.gz\""
+            echo "      sha256 \"${linux_amd64}\""
+            echo '    end'
+            echo '    if Hardware::CPU.arm? && Hardware::CPU.is_64_bit?'
+            echo "      url \"https://github.com/mekedron/wolt-cli/releases/download/${tag}/wolt_${tag}_linux_arm64.tar.gz\""
+            echo "      sha256 \"${linux_arm64}\""
+            echo '    end'
+            echo '  end'
+            echo
+            echo '  def install'
+            echo '    bin.install "wolt"'
+            echo '  end'
+            echo
+            echo '  test do'
+            echo '    output = shell_output("#{bin}/wolt --help")'
+            echo '    assert_match "wolt", output'
+            echo '  end'
+            echo 'end'
+          } > tap/Formula/wolt-cli.rb
+
+      - name: Commit and push updated formula
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/wolt-cli.rb
+
+          if git diff --cached --quiet; then
+            echo "Formula already up to date."
+            exit 0
+          fi
+
+          git commit -m "chore(formula): bump wolt-cli to ${GITHUB_REF_NAME}"
+          git push origin HEAD:main

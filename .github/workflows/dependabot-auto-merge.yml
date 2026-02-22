@@ -1,0 +1,60 @@
+name: Dependabot Auto Merge
+
+on:
+  workflow_run:
+    workflows: ["Go CI", "Docs CI"]
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  merge:
+    name: Auto-merge Dependabot PR after successful CI
+    if: >
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.actor.login == 'dependabot[bot]' &&
+      github.event.workflow_run.pull_requests[0].number != null
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify required CI workflows are successful
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+
+          runs_json="$(gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/runs?event=pull_request&head_sha=${HEAD_SHA}&per_page=100")"
+
+          required_workflows=("Go CI" "Docs CI")
+          for workflow_name in "${required_workflows[@]}"; do
+            status="$(echo "${runs_json}" | jq -r --arg wf "${workflow_name}" \
+              '.workflow_runs[] | select(.name == $wf) | .status' | head -n1)"
+            conclusion="$(echo "${runs_json}" | jq -r --arg wf "${workflow_name}" \
+              '.workflow_runs[] | select(.name == $wf) | .conclusion' | head -n1)"
+
+            if [ -z "${status}" ]; then
+              echo "Workflow '${workflow_name}' has not run yet for ${HEAD_SHA}. Skipping."
+              exit 0
+            fi
+
+            if [ "${conclusion}" != "success" ]; then
+              echo "Workflow '${workflow_name}' conclusion='${conclusion}'. Skipping."
+              exit 0
+            fi
+          done
+
+      - name: Auto-approve pull request
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
+        run: gh pr review "${PR_NUMBER}" --approve --body "Auto-approved after successful Go CI and Docs CI." || true
+
+      - name: Enable auto-merge
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
+        run: gh pr merge "${PR_NUMBER}" --auto --squash --delete-branch || true

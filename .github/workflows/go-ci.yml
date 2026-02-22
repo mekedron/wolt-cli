@@ -1,0 +1,60 @@
+name: Go CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+
+jobs:
+  test:
+    name: Build, Lint, Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Download modules
+        run: go mod download
+
+      - name: Build
+        run: go build ./...
+
+      - name: Resolve build version
+        run: echo "BUILD_VERSION=$(git describe --tags --always --dirty)" >> "$GITHUB_ENV"
+
+      - name: Build versioned CLI binary
+        run: |
+          mkdir -p bin
+          go build -trimpath -ldflags "-s -w -X main.version=${BUILD_VERSION}" -o bin/wolt ./cmd/wolt
+
+      - name: Verify CLI version output
+        run: |
+          actual_version="$(./bin/wolt --version | tr -d '\r\n')"
+          if [ -z "${actual_version}" ] || [ "${actual_version}" = "dev" ]; then
+            echo "wolt --version returned invalid value: '${actual_version}'"
+            exit 1
+          fi
+          if [ "${actual_version}" != "${BUILD_VERSION}" ]; then
+            echo "wolt --version mismatch: expected '${BUILD_VERSION}', got '${actual_version}'"
+            exit 1
+          fi
+
+      - name: Lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.4.0
+          install-mode: goinstall
+
+      - name: Unit and integration tests
+        run: go test ./...
+
+      - name: Race detector
+        run: go test -race ./...

@@ -1,0 +1,28 @@
+# Go
+bin/
+coverage.out
+*.test
+
+# Local tooling
+.DS_Store
+
+# Python legacy caches kept ignored for local environments
+__pycache__/
+.venv*
+.pytest_cache/
+
+# Local profile/auth configs
+.wolt/
+.wolt-config.json
+*.wolt-config.json
+.chrome-profile/
+
+.scratches
+.codex
+.claude
+.agents
+
+skills-lock.json
+
+skills/*
+!skills/wolt-cli/

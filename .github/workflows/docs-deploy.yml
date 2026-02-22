@@ -1,0 +1,76 @@
+name: Docs Deploy
+
+on:
+  push:
+    branches:
+      - master
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: docs-deploy
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Build and deploy docs
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: docs-site/package-lock.json
+
+      - name: Install docs dependencies
+        working-directory: docs-site
+        run: npm ci
+
+      - name: Build docs
+        working-directory: docs-site
+        run: npm run build
+
+      - name: Publish to gh-pages
+        env:
+          BUILD_DIR: docs-site/build
+        run: |
+          set -euo pipefail
+
+          tmp_dir="$(mktemp -d)"
+          trap 'rm -rf "$tmp_dir"' EXIT
+          cp -R "${BUILD_DIR}/." "${tmp_dir}/"
+          touch "${tmp_dir}/.nojekyll"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          if git ls-remote --exit-code --heads origin gh-pages >/dev/null 2>&1; then
+            git fetch origin gh-pages
+            git checkout gh-pages
+          else
+            git checkout --orphan gh-pages
+          fi
+
+          git rm -rf . >/dev/null 2>&1 || true
+          find . -mindepth 1 -maxdepth 1 ! -name ".git" -exec rm -rf {} +
+
+          cp -R "${tmp_dir}/." .
+          git add -A
+
+          if git diff --cached --quiet; then
+            echo "No docs changes to deploy."
+            exit 0
+          fi
+
+          git commit -m "docs: deploy site from ${GITHUB_SHA::7}"
+          git push origin gh-pages

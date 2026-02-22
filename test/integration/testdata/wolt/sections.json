@@ -1,0 +1,2131 @@
+{
+    "city": "krakow",
+    "city_data": {
+        "country_code_alpha2": "PL",
+        "country_code_alpha3": "POL",
+        "has_frontpage": true,
+        "location": {
+            "coordinates": [
+                19.93641080387866,
+                50.06229296216091
+            ],
+            "type": "Point"
+        },
+        "name": "Kraków",
+        "slug": "krakow"
+    },
+    "created": {
+        "$date": 1699697840930
+    },
+    "expires_in_seconds": 936,
+    "name": "front",
+    "page_title": "Discovery",
+    "sections": [
+        {
+            "end_of_section": {
+                "link": {
+                    "target": "quickest-delivery-venues:krakow",
+                    "target_sort": "delivers-to",
+                    "target_title": "",
+                    "title": "",
+                    "type": "venue-page"
+                },
+                "type": "expand-arrow-swipe"
+            },
+            "items": [
+                {
+                    "filtering": {
+                        "filters": []
+                    },
+                    "image": {
+                        "blurhash": "j4JUxJ8wbe00YMjKTsXK0jPuXkJ3",
+                        "url": "https://prod-wolt-venue-images-cdn.wolt.com/61cb1965f3fae657fa00f9c7/ba558202-f087-11ec-ab6a-1ae2b30db66d_kfc__1010x544pxv3.png"
+                    },
+                    "link": {
+                        "selected_delivery_method": "homedelivery",
+                        "target": "61cb1965f3fae657fa00f9c7",
+                        "target_sort": "delivers-to",
+                        "target_title": "",
+                        "title": "",
+                        "type": "venue-id",
+                        "venue_mainimage_blurhash": "j4JUxJ8wbe00YMjKTsXK0jPuXkJ3"
+                    },
+                    "sorting": {
+                        "sortables": []
+                    },
+                    "telemetry_venue_badges": [],
+                    "template": "venue",
+                    "title": "KFC Kraków Floriańska 103102",
+                    "track_id": "venue-kfc-krakow-florianska-103102",
+                    "venue": {
+                        "address": "ul. Floriańska 33",
+                        "badges": [],
+                        "badges_v2": [],
+                        "categories": [],
+                        "city": "",
+                        "country": "POL",
+                        "currency": "PLN",
+                        "delivers": true,
+                        "delivery_price": "PLN2.49",
+                        "delivery_price_highlight": false,
+                        "delivery_price_int": 249,
+                        "estimate": 30,
+                        "estimate_box": {
+                            "subtitle": "min",
+                            "template": "estimate",
+                            "title": "25-35"
+                        },
+                        "estimate_range": "25-35",
+                        "franchise": "",
+                        "icon": "bike",
+                        "id": "61cb1965f3fae657fa00f9c7",
+                        "location": [
+                            19.9404363,
+                            50.0636244
+                        ],
+                        "name": "KFC Kraków Floriańska 103102",
+                        "online": true,
+                        "price_range": 1,
+                        "product_line": "restaurant",
+                        "promotions": [],
+                        "rating": {
+                            "rating": 3,
+                            "score": 8.6
+                        },
+                        "short_description": "Kubełki pełne chrupiącego kurczaka oraz skrzydełek i dodatków\n",
+                        "show_wolt_plus": false,
+                        "slug": "kfc-krakow-florianska-103102",
+                        "tags": [
+                            "american",
+                            "burger",
+                            "chicken"
+                        ]
+                    }
+                },
+                {
+                    "filtering": {
+                        "filters": []
+                    },
+                    "image": {
+                        "blurhash": "j1Jail0i00R05u000j9u00;;0i8Q",
+                        "url": "https://prod-wolt-venue-images-cdn.wolt.com/64ef0fb4e1fd4862d4bfc8c6/0126819c-471a-11ee-8d36-ba431714dc61_72204ef4_58f6_11ed_9ff9_92a7ecb0e19f_1fb3cefe_6a86_11ea_9ffd_0a58647ce746_charrr__1_.jpg"
+                    },
+                    "link": {
+                        "selected_delivery_method": "homedelivery",
+                        "target": "64ef0fb4e1fd4862d4bfc8c6",
+                        "target_sort": "delivers-to",
+                        "target_title": "",
+                        "title": "",
+                        "type": "venue-id",
+                        "venue_mainimage_blurhash": "j2FpacM0r;0j00X:X;007u0i8h;:"
+                    },
+                    "sorting": {
+                        "sortables": []
+                    },
+                    "telemetry_venue_badges": [],
+                    "template": "venue",
+                    "title": "Charlotte Menora Mostowa",
+                    "track_id": "venue-charlotte-menora-mostowa",
+                    "venue": {
+                        "address": "Mostowa 6",
+                        "badges": [],
+                        "badges_v2": [],
+                        "categories": [],
+                        "city": "",
+                        "country": "POL",
+                        "currency": "PLN",
+                        "delivers": true,
+                        "delivery_price": "PLN4.99",
+                        "delivery_price_highlight": false,
+                        "delivery_price_int": 499,
+                        "estimate": 35,
+                        "estimate_box": {
+                            "subtitle": "min",
+                            "template": "estimate",
+                            "title": "30-40"
+                        },
+                        "estimate_range": "30-40",
+                        "franchise": "",
+                        "icon": "bike",
+                        "id": "64ef0fb4e1fd4862d4bfc8c6",
+                        "location": [
+                            19.9459121,
+                            50.04811060000001
+                        ],
+                        "name": "Charlotte Menora Mostowa",
+                        "online": true,
+                        "price_range": 1,
+                        "product_line": "restaurant",
+                        "promotions": [],
+                        "rating": {
+                            "rating": 3,
+                            "score": 8.8
+                        },
+                        "short_description": "Francuska piekarnia i bistro\n",
+                        "show_wolt_plus": false,
+                        "slug": "charlotte-menora-mostowa",
+                        "tags": [
+                            "breakfast",
+                            "dessert",
+                            "french"
+                        ]
+                    }
+                },
+                {
+                    "filtering": {
+                        "filters": []
+                    },
+                    "image": {
+                        "blurhash": "j1Mb6D000040cg0004T:00jL8Pcg",
+                        "url": "https://prod-wolt-venue-images-cdn.wolt.com/5f203ca9cd8fea9a4b632efd/92561d22-0b87-11ee-9d30-ce123f575dc2_64b04e50_e862_11eb_b310_46a96bdfc4c2_lam_hong__1_.jpg"
+                    },
+                    "link": {
+                        "selected_delivery_method": "homedelivery",
+                        "target": "5f203ca9cd8fea9a4b632efd",
+                        "target_sort": "delivers-to",
+                        "target_title": "",
+                        "title": "",
+                        "type": "venue-id",
+                        "venue_mainimage_blurhash": "j1Mb6D000040cg0004T:00jLcPgg"
+                    },
+                    "sorting": {
+                        "sortables": []
+                    },
+                    "telemetry_venue_badges": [],
+                    "template": "venue",
+                    "title": "Lam Hong Phở Việt",
+                    "track_id": "venue-lam-hong-ph-vit",
+                    "venue": {
+                        "address": "Ambrożego Grabowskiego 6",
+                        "badges": [],
+                        "badges_v2": [],
+                        "categories": [],
+                        "city": "",
+                        "country": "POL",
+                        "currency": "PLN",
+                        "delivers": true,
+                        "delivery_price": "PLN2.49",
+                        "delivery_price_highlight": false,
+                        "delivery_price_int": 249,
+                        "estimate": 25,
+                        "estimate_box": {
+                            "subtitle": "min",
+                            "template": "estimate",
+                            "title": "20-30"
+                        },
+                        "estimate_range": "20-30",
+                        "franchise": "",
+                        "icon": "wolt-plus",
+                        "id": "5f203ca9cd8fea9a4b632efd",
+                        "location": [
+                            19.9278631,
+                            50.06702989999999
+                        ],
+                        "name": "Lam Hong Phở Việt",
+                        "online": true,
+                        "price_range": 1,
+                        "product_line": "restaurant",
+                        "promotions": [],
+                        "rating": {
+                            "rating": 3,
+                            "score": 8.0
+                        },
+                        "short_description": "Tradycyjna kuchnia azjatycka",
+                        "show_wolt_plus": true,
+                        "slug": "lam-hong-ph-vit",
+                        "tags": [
+                            "asian",
+                            "vietnamese",
+                            "soup"
+                        ]
+                    }
+                },
+                {
+                    "filtering": {
+                        "filters": []
+                    },
+                    "image": {
+                        "blurhash": "jcKFOf;;dlHcTsh4F4SWPch4pkTb",
+                        "url": "https://prod-wolt-venue-images-cdn.wolt.com/5eec6e3c46f7b62c3a8ddaaf/0907d38e-b636-11ea-8b92-76f28a4377d5_kebaber_zbiorcze1.jpg"
+                    },
+                    "link": {
+                        "selected_delivery_method": "homedelivery",
+                        "target": "5eec6e3c46f7b62c3a8ddaaf",
+                        "target_sort": "delivers-to",
+                        "target_title": "",
+                        "title": "",
+                        "type": "venue-id",
+                        "venue_mainimage_blurhash": "j9MGmq;;d3XKTuczSp;K8yBCh3Gm"
+                    },
+                    "sorting": {
+                        "sortables": []
+                    },
+                    "telemetry_venue_badges": [],
+                    "template": "venue",
+                    "title": "Kebaber Starowiślna 8",
+                    "track_id": "venue-kebaber-starowilna-8",
+                    "venue": {
+                        "address": "Starowiślna 8",
+                        "badges": [],
+                        "badges_v2": [],
+                        "categories": [],
+                        "city": "",
+                        "country": "POL",
+                        "currency": "PLN",
+                        "delivers": true,
+                        "delivery_price": "PLN2.49",
+                        "delivery_price_highlight": false,
+                        "delivery_price_int": 249,
+                        "estimate": 30,
+                        "estimate_box": {
+                            "subtitle": "min",
+                            "template": "estimate",
+                            "title": "25-35"
+                        },
+                        "estimate_range": "25-35",
+                        "franchise": "",
+                        "icon": "bike",
+                        "id": "5eec6e3c46f7b62c3a8ddaaf",
+                        "location": [
+                            19.9436639,
+                            50.0583772
+                        ],
+                        "name": "Kebaber Starowiślna 8",
+                        "online": true,
+                        "price_range": 1,
+                        "product_line": "restaurant",
+                        "promotions": [],
+                        "rating": {
+                            "rating": 3,
+                            "score": 8.6
+                        },
+                        "short_description": "Kebz dobry na wszystko",
+                        "show_wolt_plus": false,
+                        "slug": "kebaber-starowilna-8",
+                        "tags": [
+                            "kebab",
+                            "turkish",
+                            "street food"
+                        ]
+                    }
+                },
+                {
+                    "filtering": {
+                        "filters": []
+                    },
+                    "image": {
+                        "blurhash": "j3C7po;c40MR3Z4WlbJ6E0JA;;JG",
+                        "url": "https://imageproxy.wolt.com/mes-image/27ed7f86-4841-474d-bb78-66a06f7a781d/09a3da95-dbd3-41ad-a9c7-fdbf3a495e9a"
+                    },
+                    "link": {
+                        "selected_delivery_method": "homedelivery",
+                        "target": "64ec49aac80a3167603fa01f",
+                        "target_sort": "delivers-to",
+                        "target_title": "",
+                        "title": "",
+                        "type": "venue-id",
+                        "venue_mainimage_blurhash": "j3BThl;c40IR3Z4WgXJ6M0JA;;JG"
+                    },
+                    "sorting": {
+                        "sortables": []
+                    },
+                    "telemetry_venue_badges": [],
+                    "template": "venue",
+                    "title": "McDonald’s - Pl. Dominikański",
+                    "track_id": "venue-mcdonalds-pl-dominikaski",
+                    "venue": {
+                        "address": "Grodzka 26",
+                        "badges": [],
+                        "badges_v2": [],
+                        "categories": [],
+                        "city": "",
+                        "country": "POL",
+                        "currency": "PLN",
+                        "delivers": true,
+                        "delivery_price": "PLN2.49",
+                        "delivery_price_highlight": false,
+                        "delivery_price_int": 249,
+                        "estimate": 25,
+                        "estimate_box": {
+                            "subtitle": "min",
+                            "template": "estimate",
+                            "title": "20-30"
+                        },
+                        "estimate_range": "20-30",
+                        "franchise": "",
+                        "icon": "wolt-plus",
+                        "id": "64ec49aac80a3167603fa01f",
+                        "location": [
+                            19.9380168400277,
+                            50.058956550969725
+                        ],
+                        "name": "McDonald’s - Pl. Dominikański",
+                        "online": true,
+                        "price_range": 2,
+                        "product_line": "restaurant",
+                        "promotions": [],
+                        "rating": {
+                            "rating": 3,
+                            "score": 8.2
+                        },
+                        "short_description": "Mak, gdziekolwiek Ci w smak!\n",
+                        "show_wolt_plus": true,
+                        "slug": "mcdonalds-pl-dominikaski",
+                        "tags": [
+                            "american",
+                            "burger"
+                        ]
+                    }
+                },
+                {
+                    "filtering": {
+                        "filters": []
+                    },
+                    "image": {
+                        "blurhash": "jbPbGyN5TnlJ;;Trh5yWlllrJkGW",
+                        "url": "https://prod-wolt-venue-images-cdn.wolt.com/60cb155f035c511f134e1f50/d38513f6-29d4-11ed-89d6-f61af35f3eab_7274fa5a_cf43_11eb_85d5_2674eb3c5187_wrap_me_1.jpeg"
+                    },
+                    "link": {
+                        "selected_delivery_method": "homedelivery",
+                        "target": "60cb155f035c511f134e1f50",
+                        "target_sort": "delivers-to",
+                        "target_title": "",
+                        "title": "",
+                        "type": "venue-id",
+                        "venue_mainimage_blurhash": "jbPbGyN5TnlJ;;Trh5yWlllrJkGW"
+                    },
+                    "sorting": {
+                        "sortables": []
+                    },
+                    "telemetry_venue_badges": [],
+                    "template": "venue",
+                    "title": "Wrap Me! Galeria Kazimierz",
+                    "track_id": "venue-wrap-me-galeria-kazimierz",
+                    "venue": {
+                        "address": "Podgórska 34",
+                        "badges": [],
+                        "badges_v2": [],
+                        "categories": [],
+                        "city": "",
+                        "country": "POL",
+                        "currency": "PLN",
+                        "delivers": true,
+                        "delivery_price": "PLN4.99",
+                        "delivery_price_highlight": false,
+                        "delivery_price_int": 499,
+                        "estimate": 30,
+                        "estimate_box": {
+                            "subtitle": "min",
+                            "template": "estimate",
+                            "title": "25-35"
+                        },
+                        "estimate_range": "25-35",
+                        "franchise": "",
+                        "icon": "wolt-plus",
+                        "id": "60cb155f035c511f134e1f50",
+                        "location": [
+                            19.956458692596538,
+                            50.05255613427441
+                        ],
+                        "name": "Wrap Me! Galeria Kazimierz",
+                        "online": true,
+                        "price_range": 1,
+                        "product_line": "restaurant",
+                        "promotions": [],
+                        "rating": {
+                            "rating": 3,
+                            "score": 8.2
+                        },
+                        "short_description": "Smacznie i szybko\n",
+                        "show_wolt_plus": true,
+                        "slug": "wrap-me-galeria-kazimierz",
+                        "tags": [
+                            "salad",
+                            "wrap",
+                            "burger"
+                        ]
+                    }
+                },
+                {
+                    "filtering": {
+                        "filters": []
+                    },
+                    "image": {
+                        "blurhash": "j8MXSTX;8z;;hah5PcKAXKJkLcLc",
+                        "url": "https://prod-wolt-venue-images-cdn.wolt.com/5facf16759ffd82b217f2902/64f3d242-24e9-11ec-b2f0-72a8f096b95b_tartelette_caf_.jpeg"
+                    },
+                    "link": {
+                        "selected_delivery_method": "homedelivery",
+                        "target": "5facf16759ffd82b217f2902",
+                        "target_sort": "delivers-to",
+                        "target_title": "",
+                        "title": "",
+                        "type": "venue-id",
+                        "venue_mainimage_blurhash": "jaMXiC;;4hcPX;hrGYJAXLhtgQPt"
+                    },
+                    "sorting": {
+                        "sortables": []
+                    },
+                    "telemetry_venue_badges": [],
+                    "template": "venue",
+                    "title": "Tartelette Café",
+                    "track_id": "venue-tartelette-caf",
+                    "venue": {
+                        "address": "Ul. Stradomska 15",
+                        "badges": [],
+                        "badges_v2": [],
+                        "categories": [],
+                        "city": "",
+                        "country": "POL",
+                        "currency": "PLN",
+                        "delivers": true,
+                        "delivery_price": "PLN2.49",
+                        "delivery_price_highlight": false,
+                        "delivery_price_int": 249,
+                        "estimate": 25,
+                        "estimate_box": {
+                            "subtitle": "min",
+                            "template": "estimate",
+                            "title": "20-30"
+                        },
+                        "estimate_range": "20-30",
+                        "franchise": "",
+                        "icon": "wolt-plus",
+                        "id": "5facf16759ffd82b217f2902",
+                        "location": [
+                            19.9400151,
+                            50.0527854
+                        ],
+                        "name": "Tartelette Café",
+                        "online": true,
+                        "price_range": 2,
+                        "product_line": "restaurant",
+                        "promotions": [],
+                        "rating": {
+                            "rating": 4,
+                            "score": 9.4
+                        },
+                        "short_description": "Pyszne domowe wypieki",
+                        "show_wolt_plus": true,
+                        "slug": "tartelette-caf",
+                        "tags": [
+                            "cake",
+                            "sweets",
+                            "pastry"
+                        ]
+                    }
+                },
+                {
+                    "filtering": {
+                        "filters": []
+                    },
+                    "image": {
+                        "blurhash": "j4EVWh4g;;4BmPhjgPtJ00aJOAXJ",
+                        "url": "https://prod-wolt-venue-images-cdn.wolt.com/5f85c38333b2435d81ba483d/a8261d3e-612f-11ee-a9a3-926892fcb91a_20off___2023_10_02t162608.299.png"
+                    },
+                    "link": {
+                        "selected_delivery_method": "homedelivery",
+                        "target": "5f85c38333b2435d81ba483d",
+                        "target_sort": "delivers-to",
+                        "target_title": "",
+                        "title": "",
+                        "type": "venue-id",
+                        "venue_mainimage_blurhash": "j4FFWd0y;;4zPllicPlI01d3KWTK"
+                    },
+                    "sorting": {
+                        "sortables": []
+                    },
+                    "telemetry_venue_badges": [],
+                    "template": "venue",
+                    "title": "Alchemia od Kuchni",
+                    "track_id": "venue-alchemia-od-kuchni",
+                    "venue": {
+                        "address": "Ul. Estery 5",
+                        "badges": [],
+                        "badges_v2": [],
+                        "categories": [],
+                        "city": "",
+                        "country": "POL",
+                        "currency": "PLN",
+                        "delivers": true,
+                        "delivery_price": "PLN2.49",
+                        "delivery_price_highlight": false,
+                        "delivery_price_int": 249,
+                        "estimate": 30,
+                        "estimate_box": {
+                            "subtitle": "min",
+                            "template": "estimate",
+                            "title": "25-35"
+                        },
+                        "estimate_range": "25-35",
+                        "franchise": "",
+                        "icon": "wolt-plus",
+                        "id": "5f85c38333b2435d81ba483d",
+                        "location": [
+                            19.9448164,
+                            50.0522959
+                        ],
+                        "name": "Alchemia od Kuchni",
+                        "online": true,
+                        "price_range": 2,
+                        "product_line": "restaurant",
+                        "promotions": [],
+                        "rating": {
+                            "rating": 4,
+                            "score": 9.2
+                        },
+                        "short_description": "Dobre jedzenie, którym chcemy się z Wami dzielić \n\n",
+                        "show_wolt_plus": true,
+                        "slug": "alchemia-od-kuchni",
+                        "tags": [
+                            "burger",
+                            "breakfast",
+                            "vegetarian"
+                        ]
+                    }
+                },
+                {
+                    "filtering": {
+                        "filters": []
+                    },
+                    "image": {
+                        "blurhash": "j3CTVS0i0in6;4OYWZdm8PgPXJSC",
+                        "url": "https://prod-wolt-venue-images-cdn.wolt.com/5fda28ae21a80adbed144244/9694883e-ef77-11eb-bcaa-fab3fb499242_beef_burger_bar.jpeg"
+                    },
+                    "link": {
+                        "selected_delivery_method": "homedelivery",
+                        "target": "5fda28ae21a80adbed144244",
+                        "target_sort": "delivers-to",
+                        "target_title": "",
+                        "title": "",
+                        "type": "venue-id",
+                        "venue_mainimage_blurhash": "j3z7dG7ebffd0OX;gOXrPe4xcQR2"
+                    },
+                    "sorting": {
+                        "sortables": []
+                    },
+                    "telemetry_venue_badges": [],
+                    "template": "venue",
+                    "title": "Beef Burger Bar Warszauera",
+                    "track_id": "venue-beef-burger-bar-warszauera",
+                    "venue": {
+                        "address": "Ul. Warszauera 1",
+                        "badges": [],
+                        "badges_v2": [],
+                        "categories": [],
+                        "city": "",
+                        "country": "POL",
+                        "currency": "PLN",
+                        "delivers": true,
+                        "delivery_price": "PLN2.49",
+                        "delivery_price_highlight": false,
+                        "delivery_price_int": 249,
+                        "estimate": 35,
+                        "estimate_box": {
+                            "subtitle": "min",
+                            "template": "estimate",
+                            "title": "30-40"
+                        },
+                        "estimate_range": "30-40",
+                        "franchise": "",
+                        "icon": "wolt-plus",
+                        "id": "5fda28ae21a80adbed144244",
+                        "location": [
+                            19.9453239,
+                            50.0521693
+                        ],
+                        "name": "Beef Burger Bar Warszauera",
+                        "online": true,
+                        "price_range": 1,
+                        "product_line": "restaurant",
+                        "promotions": [],
+                        "rating": {
+                            "rating": 4,
+                            "score": 9.4
+                        },
+                        "short_description": "Burgery pełne smaku i dodatków",
+                        "show_wolt_plus": true,
+                        "slug": "beef-burger-bar-warszauera",
+                        "tags": [
+                            "american",
+                            "burger",
+                            "street food"
+                        ]
+                    }
+                },
+                {
+                    "filtering": {
+                        "filters": []
+                    },
+                    "image": {
+                        "blurhash": "j4SbKuXrrd;;XLXt;Y4h808h;;l3",
+                        "url": "https://imageproxy.wolt.com/mes-image/1bef0eed-a312-48d0-bcdf-47487755b7ba/27cb331b-b535-47ea-a359-03778eed2ed6"
+                    },
+                    "link": {
+                        "selected_delivery_method": "homedelivery",
+                        "target": "64639698c1f525405fb81d43",
+                        "target_sort": "delivers-to",
+                        "target_title": "",
+                        "title": "",
+                        "type": "venue-id",
+                        "venue_mainimage_blurhash": "jgSY6zTmKSOVlkh4PtLc;;mbh6GY"
+                    },
+                    "sorting": {
+                        "sortables": []
+                    },
+                    "telemetry_venue_badges": [],
+                    "template": "venue",
+                    "title": "Burger King - Szewska",
+                    "track_id": "venue-burger-king-szewska",
+                    "venue": {
+                        "address": "Szewska 7",
+                        "badges": [],
+                        "badges_v2": [],
+                        "categories": [],
+                        "city": "",
+                        "country": "POL",
+                        "currency": "PLN",
+                        "delivers": true,
+                        "delivery_price": "PLN2.49",
+                        "delivery_price_highlight": false,
+                        "delivery_price_int": 249,
+                        "estimate": 20,
+                        "estimate_box": {
+                            "subtitle": "min",
+                            "template": "estimate",
+                            "title": "15-25"
+                        },
+                        "estimate_range": "15-25",
+                        "franchise": "",
+                        "icon": "wolt-plus",
+                        "id": "64639698c1f525405fb81d43",
+                        "location": [
+                            19.9355263,
+                            50.0623896
+                        ],
+                        "name": "Burger King - Szewska",
+                        "online": true,
+                        "price_range": 2,
+                        "product_line": "restaurant",
+                        "promotions": [],
+                        "rating": {
+                            "rating": 3,
+                            "score": 7.8
+                        },
+                        "short_description": "Amerykański kultowy fast food z pysznymi burgerami!",
+                        "show_wolt_plus": true,
+                        "slug": "burger-king-szewska",
+                        "tags": [
+                            "burger",
+                            "american"
+                        ]
+                    }
+                },
+                {
+                    "filtering": {
+                        "filters": []
+                    },
+                    "image": {
+                        "blurhash": "j5M9tScP8ygy;;IPhjNkghVlgPFQ",
+                        "url": "https://prod-wolt-venue-images-cdn.wolt.com/5f33af88c7fb7863834f1650/38842248-375c-11ee-9b57-1ee8b6f74ec3_premium_kebab.jpeg"
+                    },
+                    "link": {
+                        "selected_delivery_method": "homedelivery",
+                        "target": "5f33af88c7fb7863834f1650",
+                        "target_sort": "delivers-to",
+                        "target_title": "",
+                        "title": "",
+                        "type": "venue-id",
+                        "venue_mainimage_blurhash": "j4LpZ:0B0h7fT;;t56SQohRJQXat"
+                    },
+                    "sorting": {
+                        "sortables": []
+                    },
+                    "telemetry_venue_badges": [
+                        "promotions"
+                    ],
+                    "template": "venue",
+                    "title": "Premium kebab",
+                    "track_id": "venue-premium-kebab",
+                    "venue": {
+                        "address": "Długa 69b",
+                        "badges": [],
+                        "badges_v2": [],
+                        "categories": [],
+                        "city": "",
+                        "country": "POL",
+                        "currency": "PLN",
+                        "delivers": true,
+                        "delivery_price": "PLN0.00",
+                        "delivery_price_highlight": true,
+                        "delivery_price_int": 0,
+                        "estimate": 25,
+                        "estimate_box": {
+                            "subtitle": "min",
+                            "template": "estimate",
+                            "title": "20-30"
+                        },
+                        "estimate_range": "20-30",
+                        "franchise": "",
+                        "icon": "wolt-plus",
+                        "id": "5f33af88c7fb7863834f1650",
+                        "location": [
+                            19.9361149,
+                            50.072669
+                        ],
+                        "name": "Premium kebab",
+                        "online": true,
+                        "price_range": 1,
+                        "product_line": "restaurant",
+                        "promotions": [
+                            {
+                                "icon": "coupon-fill",
+                                "text": "Free delivery",
+                                "variant": "discount"
+                            }
+                        ],
+                        "rating": {
+                            "rating": 3,
+                            "score": 7.6
+                        },
+                        "short_description": "Solidna porcja w dobrej cenie",
+                        "show_wolt_plus": true,
+                        "slug": "premium-kebab",
+                        "tags": [
+                            "tortilla",
+                            "kebab",
+                            "turkish"
+                        ]
+                    }
+                },
+                {
+                    "filtering": {
+                        "filters": []
+                    },
+                    "image": {
+                        "blurhash": "j6FU:gJzHjdsPcX2cY;kHLKWN2lt",
+                        "url": "https://prod-wolt-venue-images-cdn.wolt.com/6435682449da0654989e78d5/c155b8b0-7970-11ee-aa90-fe65a11480bb_mac_5905.jpg"
+                    },
+                    "link": {
+                        "selected_delivery_method": "homedelivery",
+                        "target": "6435682449da0654989e78d5",
+                        "target_sort": "delivers-to",
+                        "target_title": "",
+                        "title": "",
+                        "type": "venue-id",
+                        "venue_mainimage_blurhash": "jcIVy8jvfvXrXsPb8QRjJkLdTmX5"
+                    },
+                    "sorting": {
+                        "sortables": []
+                    },
+                    "telemetry_venue_badges": [
+                        "new"
+                    ],
+                    "template": "venue",
+                    "title": "Lam Hong Mogilska",
+                    "track_id": "venue-bar-lam-hong-mogilska",
+                    "venue": {
+                        "address": "Mogilska 43B ",
+                        "badges": [
+                            {
+                                "text": "New",
+                                "variant": "primary"
+                            }
+                        ],
+                        "badges_v2": [],
+                        "categories": [],
+                        "city": "",
+                        "country": "POL",
+                        "currency": "PLN",
+                        "delivers": true,
+                        "delivery_price": "PLN4.99",
+                        "delivery_price_highlight": false,
+                        "delivery_price_int": 499,
+                        "estimate": 30,
+                        "estimate_box": {
+                            "subtitle": "min",
+                            "template": "estimate",
+                            "title": "25-35"
+                        },
+                        "estimate_range": "25-35",
+                        "franchise": "",
+                        "icon": "wolt-plus",
+                        "id": "6435682449da0654989e78d5",
+                        "location": [
+                            19.9673359,
+                            50.0663325
+                        ],
+                        "name": "Lam Hong Mogilska",
+                        "online": true,
+                        "price_range": 1,
+                        "product_line": "restaurant",
+                        "promotions": [],
+                        "short_description": "Tradycyjna kuchnia azjatycka\n",
+                        "show_wolt_plus": true,
+                        "slug": "bar-lam-hong-mogilska",
+                        "tags": [
+                            "asian",
+                            "vietnamese",
+                            "soup"
+                        ]
+                    }
+                },
+                {
+                    "filtering": {
+                        "filters": []
+                    },
+                    "image": {
+                        "blurhash": "j3Lr2zP;8gb4;;T58h8x97;JMyc0",
+                        "url": "https://prod-wolt-venue-images-cdn.wolt.com/5fb781ef2b37bb5b6fd43307/3e6c2a0c-ef79-11eb-8b57-fab3fb499242_fidrygalki.jpeg"
+                    },
+                    "link": {
+                        "selected_delivery_method": "homedelivery",
+                        "target": "5fb781ef2b37bb5b6fd43307",
+                        "target_sort": "delivers-to",
+                        "target_title": "",
+                        "title": "",
+                        "type": "venue-id",
+                        "venue_mainimage_blurhash": "j7Gqqa;:;;XeZKNiNzd3d3XugOTJ"
+                    },
+                    "sorting": {
+                        "sortables": []
+                    },
+                    "telemetry_venue_badges": [],
+                    "template": "venue",
+                    "title": "Fidrygałki",
+                    "track_id": "venue-fidrygaki",
+                    "venue": {
+                        "address": "Ul. Urzędnicza 47/LU1",
+                        "badges": [],
+                        "badges_v2": [],
+                        "categories": [],
+                        "city": "",
+                        "country": "POL",
+                        "currency": "PLN",
+                        "delivers": true,
+                        "delivery_price": "PLN4.99",
+                        "delivery_price_highlight": false,
+                        "delivery_price_int": 499,
+                        "estimate": 30,
+                        "estimate_box": {
+                            "subtitle": "min",
+                            "template": "estimate",
+                            "title": "25-35"
+                        },
+                        "estimate_range": "25-35",
+                        "franchise": "",
+                        "icon": "wolt-plus",
+                        "id": "5fb781ef2b37bb5b6fd43307",
+                        "location": [
+                            19.9195019,
+                            50.0715456
+                        ],
+                        "name": "Fidrygałki",
+                        "online": true,
+                        "price_range": 1,
+                        "product_line": "restaurant",
+                        "promotions": [],
+                        "rating": {
+                            "rating": 4,
+                            "score": 9.6
+                        },
+                        "short_description": "Z pasji i miłości do słodkości oraz kawy",
+                        "show_wolt_plus": true,
+                        "slug": "fidrygaki",
+                        "tags": [
+                            "pastry",
+                            "cake",
+                            "sweets"
+                        ]
+                    }
+                },
+                {
+                    "filtering": {
+                        "filters": []
+                    },
+                    "image": {
+                        "blurhash": "j4IVhN;L8YLtXZ4ih3T6408ycOh3",
+                        "url": "https://prod-wolt-venue-images-cdn.wolt.com/651bd2f998474a7b6ba9f5ea/2a187df2-6e53-11ee-88bf-9a29975fbed2_mac_7110.jpg"
+                    },
+                    "link": {
+                        "selected_delivery_method": "homedelivery",
+                        "target": "651bd2f998474a7b6ba9f5ea",
+                        "target_sort": "delivers-to",
+                        "target_title": "",
+                        "title": "",
+                        "type": "venue-id",
+                        "venue_mainimage_blurhash": "j5MGC6;v0u73;;pAN6WC4ySTmYdX"
+                    },
+                    "sorting": {
+                        "sortables": []
+                    },
+                    "telemetry_venue_badges": [
+                        "new"
+                    ],
+                    "template": "venue",
+                    "title": "Gossip Bistro",
+                    "track_id": "venue-gossip-vege-bistro",
+                    "venue": {
+                        "address": "Zwierzyniecka 4",
+                        "badges": [
+                            {
+                                "text": "New",
+                                "variant": "primary"
+                            }
+                        ],
+                        "badges_v2": [],
+                        "categories": [],
+                        "city": "",
+                        "country": "POL",
+                        "currency": "PLN",
+                        "delivers": true,
+                        "delivery_price": "PLN2.49",
+                        "delivery_price_highlight": false,
+                        "delivery_price_int": 249,
+                        "estimate": 25,
+                        "estimate_box": {
+                            "subtitle": "min",
+                            "template": "estimate",
+                            "title": "20-30"
+                        },
+                        "estimate_range": "20-30",
+                        "franchise": "",
+                        "icon": "bike",
+                        "id": "651bd2f998474a7b6ba9f5ea",
+                        "location": [
+                            19.9326068,
+                            50.0583468
+                        ],
+                        "name": "Gossip Bistro",
+                        "online": true,
+                        "price_range": 2,
+                        "product_line": "restaurant",
+                        "promotions": [],
+                        "short_description": "Smaczny początek dnia!\n",
+                        "show_wolt_plus": false,
+                        "slug": "gossip-vege-bistro",
+                        "tags": [
+                            "breakfast",
+                            "salad"
+                        ]
+                    }
+                },
+                {
+                    "filtering": {
+                        "filters": []
+                    },
+                    "image": {
+                        "blurhash": "j2vD93;l01ftLGh4r5O600aY;;R5",
+                        "url": "https://prod-wolt-venue-images-cdn.wolt.com/6492dcc21473424034569768/24003f9a-382f-11ee-bfb5-72cac44e6548_1f0ddd0e_abd4_11ed_bc12_625970d10d33_miski_delivery.jpg"
+                    },
+                    "link": {
+                        "selected_delivery_method": "homedelivery",
+                        "target": "6492dcc21473424034569768",
+                        "target_sort": "delivers-to",
+                        "target_title": "",
+                        "title": "",
+                        "type": "venue-id",
+                        "venue_mainimage_blurhash": "j3yDFa;441PIrshknqOW006GXKoR"
+                    },
+                    "sorting": {
+                        "sortables": []
+                    },
+                    "telemetry_venue_badges": [],
+                    "template": "venue",
+                    "title": "Miski na Lea",
+                    "track_id": "venue-miski-na-lea1",
+                    "venue": {
+                        "address": "Juliusza Lea 17B",
+                        "badges": [],
+                        "badges_v2": [],
+                        "categories": [],
+                        "city": "",
+                        "country": "POL",
+                        "currency": "PLN",
+                        "delivers": true,
+                        "delivery_price": "PLN4.99",
+                        "delivery_price_highlight": false,
+                        "delivery_price_int": 499,
+                        "estimate": 30,
+                        "estimate_box": {
+                            "subtitle": "min",
+                            "template": "estimate",
+                            "title": "25-35"
+                        },
+                        "estimate_range": "25-35",
+                        "franchise": "",
+                        "icon": "bike",
+                        "id": "6492dcc21473424034569768",
+                        "location": [
+                            19.9196363,
+                            50.0703501
+                        ],
+                        "name": "Miski na Lea",
+                        "online": true,
+                        "price_range": 2,
+                        "product_line": "restaurant",
+                        "promotions": [],
+                        "rating": {
+                            "rating": 4,
+                            "score": 9.4
+                        },
+                        "short_description": "Zdrowo, pysznie i kolorowo\n",
+                        "show_wolt_plus": false,
+                        "slug": "miski-na-lea1",
+                        "tags": [
+                            "bowl",
+                            "healthy",
+                            "poke"
+                        ]
+                    }
+                },
+                {
+                    "filtering": {
+                        "filters": []
+                    },
+                    "image": {
+                        "blurhash": "j1CmZd1f0C0jjs02cygQ4I;lRz0Y",
+                        "url": "https://prod-wolt-venue-images-cdn.wolt.com/5fd9fb356864695e454d322c/e37a7512-4376-11eb-9188-ae1068ffccb6_discovery_view_top.jpg"
+                    },
+                    "link": {
+                        "selected_delivery_method": "homedelivery",
+                        "target": "5fd9fb356864695e454d322c",
+                        "target_sort": "delivers-to",
+                        "target_title": "",
+                        "title": "",
+                        "type": "venue-id",
+                        "venue_mainimage_blurhash": "j3ACgXR35c0jp40D;r;I8Q;t;9iG"
+                    },
+                    "sorting": {
+                        "sortables": []
+                    },
+                    "telemetry_venue_badges": [],
+                    "template": "venue",
+                    "title": "Delhi Curry House",
+                    "track_id": "venue-delhi-curry-house",
+                    "venue": {
+                        "address": "Ul. Świętej Anny 4",
+                        "badges": [],
+                        "badges_v2": [],
+                        "categories": [],
+                        "city": "",
+                        "country": "POL",
+                        "currency": "PLN",
+                        "delivers": true,
+                        "delivery_price": "PLN2.49",
+                        "delivery_price_highlight": false,
+                        "delivery_price_int": 249,
+                        "estimate": 25,
+                        "estimate_box": {
+                            "subtitle": "min",
+                            "template": "estimate",
+                            "title": "20-30"
+                        },
+                        "estimate_range": "20-30",
+                        "franchise": "",
+                        "icon": "wolt-plus",
+                        "id": "5fd9fb356864695e454d322c",
+                        "location": [
+                            19.9346968,
+                            50.0614401
+                        ],
+                        "name": "Delhi Curry House",
+                        "online": true,
+                        "price_range": 2,
+                        "product_line": "restaurant",
+                        "promotions": [],
+                        "rating": {
+                            "rating": 3,
+                            "score": 8.8
+                        },
+                        "short_description": "Wybierz się z nami w kulinarną podróż",
+                        "show_wolt_plus": true,
+                        "slug": "delhi-curry-house",
+                        "tags": [
+                            "curry",
+                            "indian",
+                            "asian"
+                        ]
+                    }
+                },
+                {
+                    "filtering": {
+                        "filters": []
+                    },
+                    "image": {
+                        "blurhash": "j1vRp2YO1k4T007t02Nn0YcPiXKX",
+                        "url": "https://prod-wolt-venue-images-cdn.wolt.com/64a3e86685822a0bb33f9268/d4be9bb2-223e-11ee-a7a2-8aa9d0702ff0_grupowe.jpg"
+                    },
+                    "link": {
+                        "selected_delivery_method": "homedelivery",
+                        "target": "64a3e86685822a0bb33f9268",
+                        "target_sort": "delivers-to",
+                        "target_title": "",
+                        "title": "",
+                        "type": "venue-id",
+                        "venue_mainimage_blurhash": "j2yRR6Z3LqcQ027s0Ah5XKMPhCdA"
+                    },
+                    "sorting": {
+                        "sortables": []
+                    },
+                    "telemetry_venue_badges": [],
+                    "template": "venue",
+                    "title": "Krep n' go",
+                    "track_id": "venue-krep-n-go-krakw",
+                    "venue": {
+                        "address": " Basztowa 26",
+                        "badges": [],
+                        "badges_v2": [],
+                        "categories": [],
+                        "city": "",
+                        "country": "POL",
+                        "currency": "PLN",
+                        "delivers": true,
+                        "delivery_price": "PLN2.49",
+                        "delivery_price_highlight": false,
+                        "delivery_price_int": 249,
+                        "estimate": 25,
+                        "estimate_box": {
+                            "subtitle": "min",
+                            "template": "estimate",
+                            "title": "20-30"
+                        },
+                        "estimate_range": "20-30",
+                        "franchise": "",
+                        "icon": "bike",
+                        "id": "64a3e86685822a0bb33f9268",
+                        "location": [
+                            19.944072881291,
+                            50.06470312184666
+                        ],
+                        "name": "Krep n' go",
+                        "online": true,
+                        "price_range": 1,
+                        "product_line": "restaurant",
+                        "promotions": [],
+                        "rating": {
+                            "rating": 3,
+                            "score": 8.8
+                        },
+                        "short_description": "Zapraszamy do świata naleśników",
+                        "show_wolt_plus": false,
+                        "slug": "krep-n-go-krakw",
+                        "tags": [
+                            "pancakes"
+                        ]
+                    }
+                },
+                {
+                    "filtering": {
+                        "filters": []
+                    },
+                    "image": {
+                        "blurhash": "j6yCVQoP3cHu;tPd94GY0ypkQPFl",
+                        "url": "https://prod-wolt-venue-images-cdn.wolt.com/5f3bca6ca102787f2e4db810/19389b0a-9936-11ec-9957-3ac93254f77b_48ee71bc_e14f_11ea_8531_ea4c549a70ab_grapefruit.jpg"
+                    },
+                    "link": {
+                        "selected_delivery_method": "homedelivery",
+                        "target": "5f3bca6ca102787f2e4db810",
+                        "target_sort": "delivers-to",
+                        "target_title": "",
+                        "title": "",
+                        "type": "venue-id",
+                        "venue_mainimage_blurhash": "j5I9SkT;XLIz;;9bX;PK;KPcHtGY"
+                    },
+                    "sorting": {
+                        "sortables": []
+                    },
+                    "telemetry_venue_badges": [],
+                    "template": "venue",
+                    "title": "BubbleJoy Kraków",
+                    "track_id": "venue-bubblejoy-krakw",
+                    "venue": {
+                        "address": "Krupnicza 28",
+                        "badges": [],
+                        "badges_v2": [],
+                        "categories": [],
+                        "city": "",
+                        "country": "POL",
+                        "currency": "PLN",
+                        "delivers": true,
+                        "delivery_price": "PLN2.49",
+                        "delivery_price_highlight": false,
+                        "delivery_price_int": 249,
+                        "estimate": 25,
+                        "estimate_box": {
+                            "subtitle": "min",
+                            "template": "estimate",
+                            "title": "20-30"
+                        },
+                        "estimate_range": "20-30",
+                        "franchise": "",
+                        "icon": "wolt-plus",
+                        "id": "5f3bca6ca102787f2e4db810",
+                        "location": [
+                            19.9281659,
+                            50.06327400000001
+                        ],
+                        "name": "BubbleJoy Kraków",
+                        "online": true,
+                        "price_range": 1,
+                        "product_line": "restaurant",
+                        "promotions": [],
+                        "rating": {
+                            "rating": 4,
+                            "score": 9.6
+                        },
+                        "short_description": "Herbata na wesoło",
+                        "show_wolt_plus": true,
+                        "slug": "bubblejoy-krakw",
+                        "tags": [
+                            "dessert",
+                            "vietnamese",
+                            "bubble tea"
+                        ]
+                    }
+                },
+                {
+                    "filtering": {
+                        "filters": []
+                    },
+                    "image": {
+                        "blurhash": "j1MbyQ0041n;IhPWMPoN40T;gyh3",
+                        "url": "https://prod-wolt-venue-images-cdn.wolt.com/60b0ebb0e2792abf2c15cbe0/f12fa8ca-29d0-11ed-a7e6-eae09d05c8ab_jerusalem_kebab__falafel__2_.jpg"
+                    },
+                    "link": {
+                        "selected_delivery_method": "homedelivery",
+                        "target": "60b0ebb0e2792abf2c15cbe0",
+                        "target_sort": "delivers-to",
+                        "target_title": "",
+                        "title": "",
+                        "type": "venue-id",
+                        "venue_mainimage_blurhash": "j5MXWRNijLgy41Xm8ggPMNlBPt8y"
+                    },
+                    "sorting": {
+                        "sortables": []
+                    },
+                    "telemetry_venue_badges": [],
+                    "template": "venue",
+                    "title": "Jerusalem Kebab & Falafel",
+                    "track_id": "venue-jerusalem-kebab-falafel",
+                    "venue": {
+                        "address": " Krakowska 36/2",
+                        "badges": [],
+                        "badges_v2": [],
+                        "categories": [],
+                        "city": "",
+                        "country": "POL",
+                        "currency": "PLN",
+                        "delivers": true,
+                        "delivery_price": "PLN2.49",
+                        "delivery_price_highlight": false,
+                        "delivery_price_int": 249,
+                        "estimate": 30,
+                        "estimate_box": {
+                            "subtitle": "min",
+                            "template": "estimate",
+                            "title": "25-35"
+                        },
+                        "estimate_range": "25-35",
+                        "franchise": "",
+                        "icon": "wolt-plus",
+                        "id": "60b0ebb0e2792abf2c15cbe0",
+                        "location": [
+                            19.9433625,
+                            50.0492436
+                        ],
+                        "name": "Jerusalem Kebab & Falafel",
+                        "online": true,
+                        "price_range": 2,
+                        "product_line": "restaurant",
+                        "promotions": [],
+                        "rating": {
+                            "rating": 3,
+                            "score": 9.0
+                        },
+                        "short_description": "Dania tureckie, kebaby i falafel",
+                        "show_wolt_plus": true,
+                        "slug": "jerusalem-kebab-falafel",
+                        "tags": [
+                            "kebab",
+                            "doner",
+                            "falafel"
+                        ]
+                    }
+                },
+                {
+                    "filtering": {
+                        "filters": []
+                    },
+                    "image": {
+                        "blurhash": "j2EEVK;G8h;IbfTk010tZ6PdfkXr",
+                        "url": "https://prod-wolt-venue-images-cdn.wolt.com/62cd4058cbb5b5508bdce5f4/4f34b67e-027e-11ed-88d5-9a9e16867f12_mac_4100.jpg"
+                    },
+                    "link": {
+                        "selected_delivery_method": "homedelivery",
+                        "target": "62cd4058cbb5b5508bdce5f4",
+                        "target_sort": "delivers-to",
+                        "target_title": "",
+                        "title": "",
+                        "type": "venue-id",
+                        "venue_mainimage_blurhash": "j6DENNTKgPTl;;TsczmG9t;:Tshc"
+                    },
+                    "sorting": {
+                        "sortables": []
+                    },
+                    "telemetry_venue_badges": [],
+                    "template": "venue",
+                    "title": "Shawerma Klub Haus",
+                    "track_id": "venue-shawerma-klub-haus",
+                    "venue": {
+                        "address": "Wiślna 3",
+                        "badges": [],
+                        "badges_v2": [],
+                        "categories": [],
+                        "city": "",
+                        "country": "POL",
+                        "currency": "PLN",
+                        "delivers": true,
+                        "delivery_price": "PLN2.49",
+                        "delivery_price_highlight": false,
+                        "delivery_price_int": 249,
+                        "estimate": 25,
+                        "estimate_box": {
+                            "subtitle": "min",
+                            "template": "estimate",
+                            "title": "20-30"
+                        },
+                        "estimate_range": "20-30",
+                        "franchise": "",
+                        "icon": "wolt-plus",
+                        "id": "62cd4058cbb5b5508bdce5f4",
+                        "location": [
+                            19.9350365,
+                            50.0610454
+                        ],
+                        "name": "Shawerma Klub Haus",
+                        "online": true,
+                        "price_range": 2,
+                        "product_line": "restaurant",
+                        "promotions": [],
+                        "rating": {
+                            "rating": 3,
+                            "score": 7.8
+                        },
+                        "short_description": "Autentyczna kuchnia z Bliskiego Wschodu",
+                        "show_wolt_plus": true,
+                        "slug": "shawerma-klub-haus",
+                        "tags": [
+                            "middle eastern",
+                            "chicken"
+                        ]
+                    }
+                },
+                {
+                    "filtering": {
+                        "filters": []
+                    },
+                    "image": {
+                        "blurhash": "j3Gq6j1fbdXtQw;h;iPK;;jucx8g",
+                        "url": "https://prod-wolt-venue-images-cdn.wolt.com/616d68d57af405668d886945/cb539bfc-31a6-11ec-8b73-821508d7bd1b_grupowe.jpg"
+                    },
+                    "link": {
+                        "selected_delivery_method": "homedelivery",
+                        "target": "616d68d57af405668d886945",
+                        "target_sort": "delivers-to",
+                        "target_title": "",
+                        "title": "",
+                        "type": "venue-id",
+                        "venue_mainimage_blurhash": "j2HV:73fUh0000JtYNXJ1fYgT;;:"
+                    },
+                    "sorting": {
+                        "sortables": []
+                    },
+                    "telemetry_venue_badges": [],
+                    "template": "venue",
+                    "title": "FITAGAIN Coffee & Food",
+                    "track_id": "venue-fitagain-coffee-food",
+                    "venue": {
+                        "address": "ul. Szczepańska 7",
+                        "badges": [],
+                        "badges_v2": [],
+                        "categories": [],
+                        "city": "",
+                        "country": "POL",
+                        "currency": "PLN",
+                        "delivers": true,
+                        "delivery_price": "PLN2.49",
+                        "delivery_price_highlight": false,
+                        "delivery_price_int": 249,
+                        "estimate": 25,
+                        "estimate_box": {
+                            "subtitle": "min",
+                            "template": "estimate",
+                            "title": "20-30"
+                        },
+                        "estimate_range": "20-30",
+                        "franchise": "",
+                        "icon": "wolt-plus",
+                        "id": "616d68d57af405668d886945",
+                        "location": [
+                            19.9363496,
+                            50.0632125
+                        ],
+                        "name": "FITAGAIN Coffee & Food",
+                        "online": true,
+                        "price_range": 2,
+                        "product_line": "restaurant",
+                        "promotions": [],
+                        "rating": {
+                            "rating": 4,
+                            "score": 9.4
+                        },
+                        "short_description": "Miejsce pełne pasji do jedzenia i zdrowego stylu życia!",
+                        "show_wolt_plus": true,
+                        "slug": "fitagain-coffee-food",
+                        "tags": [
+                            "pizza",
+                            "breakfast",
+                            "pancakes"
+                        ]
+                    }
+                },
+                {
+                    "filtering": {
+                        "filters": []
+                    },
+                    "image": {
+                        "blurhash": "j3HVy340gy;:;;d5415s;GcQX4;J",
+                        "url": "https://prod-wolt-venue-images-cdn.wolt.com/5f843627d19fa5228d7f65c0/3ef3833c-4bc8-11ee-8d02-ee290af38202_20off___2023_01_26t092948.948.png"
+                    },
+                    "link": {
+                        "selected_delivery_method": "homedelivery",
+                        "target": "5f843627d19fa5228d7f65c0",
+                        "target_sort": "delivers-to",
+                        "target_title": "",
+                        "title": "",
+                        "type": "venue-id",
+                        "venue_mainimage_blurhash": "j8IGen8x8zPb;;gOmYTs8YgOLtcP"
+                    },
+                    "sorting": {
+                        "sortables": []
+                    },
+                    "telemetry_venue_badges": [],
+                    "template": "venue",
+                    "title": "Choi's Korean Chicken & Cupbop",
+                    "track_id": "venue-chois-korean-chicken-cupbop",
+                    "venue": {
+                        "address": "Ul. Krupnicza 6",
+                        "badges": [],
+                        "badges_v2": [],
+                        "categories": [],
+                        "city": "",
+                        "country": "POL",
+                        "currency": "PLN",
+                        "delivers": true,
+                        "delivery_price": "PLN2.49",
+                        "delivery_price_highlight": false,
+                        "delivery_price_int": 249,
+                        "estimate": 30,
+                        "estimate_box": {
+                            "subtitle": "min",
+                            "template": "estimate",
+                            "title": "25-35"
+                        },
+                        "estimate_range": "25-35",
+                        "franchise": "",
+                        "icon": "wolt-plus",
+                        "id": "5f843627d19fa5228d7f65c0",
+                        "location": [
+                            19.931600391423586,
+                            50.06320192750519
+                        ],
+                        "name": "Choi's Korean Chicken & Cupbop",
+                        "online": true,
+                        "price_range": 2,
+                        "product_line": "restaurant",
+                        "promotions": [],
+                        "rating": {
+                            "rating": 4,
+                            "score": 9.4
+                        },
+                        "short_description": "Koreańskie smaki ",
+                        "show_wolt_plus": true,
+                        "slug": "chois-korean-chicken-cupbop",
+                        "tags": [
+                            "korean",
+                            "asian",
+                            "noodles"
+                        ]
+                    }
+                },
+                {
+                    "filtering": {
+                        "filters": []
+                    },
+                    "image": {
+                        "blurhash": "j2IqaeaK009tXzbvKZRj000z;WiZ",
+                        "url": "https://prod-wolt-venue-images-cdn.wolt.com/639c42e860b9dd1e2ef0bd15/923328ea-052d-11ee-8611-52b65f324b1b_66ce9254_965e_11ed_8ccd_7e6e8d447ad2_mac_0606__1_.jpg"
+                    },
+                    "link": {
+                        "selected_delivery_method": "homedelivery",
+                        "target": "639c42e860b9dd1e2ef0bd15",
+                        "target_sort": "delivers-to",
+                        "target_title": "",
+                        "title": "",
+                        "type": "venue-id",
+                        "venue_mainimage_blurhash": "j2IqaeaK009tXzbvKZRj000z;XiZ"
+                    },
+                    "sorting": {
+                        "sortables": []
+                    },
+                    "telemetry_venue_badges": [],
+                    "template": "venue",
+                    "title": "Baho",
+                    "track_id": "venue-baho",
+                    "venue": {
+                        "address": "Stefana Batorego 6A",
+                        "badges": [],
+                        "badges_v2": [],
+                        "categories": [],
+                        "city": "",
+                        "country": "POL",
+                        "currency": "PLN",
+                        "delivers": true,
+                        "delivery_price": "PLN2.49",
+                        "delivery_price_highlight": false,
+                        "delivery_price_int": 249,
+                        "estimate": 25,
+                        "estimate_box": {
+                            "subtitle": "min",
+                            "template": "estimate",
+                            "title": "20-30"
+                        },
+                        "estimate_range": "20-30",
+                        "franchise": "",
+                        "icon": "wolt-plus",
+                        "id": "639c42e860b9dd1e2ef0bd15",
+                        "location": [
+                            19.9330045,
+                            50.0673512
+                        ],
+                        "name": "Baho",
+                        "online": true,
+                        "price_range": 1,
+                        "product_line": "restaurant",
+                        "promotions": [],
+                        "rating": {
+                            "rating": 4,
+                            "score": 9.2
+                        },
+                        "short_description": "Kawa, ciasta, śniadania",
+                        "show_wolt_plus": true,
+                        "slug": "baho",
+                        "tags": [
+                            "cake",
+                            "breakfast",
+                            "café"
+                        ]
+                    }
+                },
+                {
+                    "filtering": {
+                        "filters": []
+                    },
+                    "image": {
+                        "blurhash": "j6G8RQX;P;J5TuaucPVyeXVilD8Q",
+                        "url": "https://prod-wolt-venue-images-cdn.wolt.com/647704614ec9462a5fc2585c/1d0ef348-06a2-11ee-9b8b-baaa20640790_mac_0179.jpg"
+                    },
+                    "link": {
+                        "selected_delivery_method": "homedelivery",
+                        "target": "647704614ec9462a5fc2585c",
+                        "target_sort": "delivers-to",
+                        "target_title": "",
+                        "title": "",
+                        "type": "venue-id",
+                        "venue_mainimage_blurhash": "jaOrSGMwnL4YPLdsp2T7jvd8NjP6"
+                    },
+                    "sorting": {
+                        "sortables": []
+                    },
+                    "telemetry_venue_badges": [],
+                    "template": "venue",
+                    "title": "BOM DIA Fábrica de pastéis de nata",
+                    "track_id": "venue-bom-dia-fbrica-de-pastis-de-nata",
+                    "venue": {
+                        "address": "Sławkowska 21",
+                        "badges": [],
+                        "badges_v2": [],
+                        "categories": [],
+                        "city": "",
+                        "country": "POL",
+                        "currency": "PLN",
+                        "delivers": true,
+                        "delivery_price": "PLN2.49",
+                        "delivery_price_highlight": false,
+                        "delivery_price_int": 249,
+                        "estimate": 30,
+                        "estimate_box": {
+                            "subtitle": "min",
+                            "template": "estimate",
+                            "title": "25-35"
+                        },
+                        "estimate_range": "25-35",
+                        "franchise": "",
+                        "icon": "wolt-plus",
+                        "id": "647704614ec9462a5fc2585c",
+                        "location": [
+                            19.9386441,
+                            50.0648285
+                        ],
+                        "name": "BOM DIA Fábrica de pastéis de nata",
+                        "online": true,
+                        "price_range": 1,
+                        "product_line": "restaurant",
+                        "promotions": [],
+                        "rating": {
+                            "rating": 4,
+                            "score": 9.2
+                        },
+                        "short_description": "Przenieś się prosto portugalskie słodkości",
+                        "show_wolt_plus": true,
+                        "slug": "bom-dia-fbrica-de-pastis-de-nata",
+                        "tags": [
+                            "café",
+                            "sandwich"
+                        ]
+                    }
+                },
+                {
+                    "filtering": {
+                        "filters": []
+                    },
+                    "image": {
+                        "blurhash": "j1MqmoY00kQAL;5rcBcz0hb;80gO",
+                        "url": "https://prod-wolt-venue-images-cdn.wolt.com/604f43d1aaaaf606b7dddff5/f4e803d4-1c89-11ee-a952-02f54dfa27e8_whole_menu_10__34_.png"
+                    },
+                    "link": {
+                        "selected_delivery_method": "homedelivery",
+                        "target": "604f43d1aaaaf606b7dddff5",
+                        "target_sort": "delivers-to",
+                        "target_title": "",
+                        "title": "",
+                        "type": "venue-id",
+                        "venue_mainimage_blurhash": "j3N9W3be7fMxfvOPTskyjs8hoNeZ"
+                    },
+                    "sorting": {
+                        "sortables": []
+                    },
+                    "telemetry_venue_badges": [],
+                    "template": "venue",
+                    "title": "Family Bistro",
+                    "track_id": "venue-family-bistro",
+                    "venue": {
+                        "address": "Ul. Królewska 55",
+                        "badges": [],
+                        "badges_v2": [],
+                        "categories": [],
+                        "city": "",
+                        "country": "POL",
+                        "currency": "PLN",
+                        "delivers": true,
+                        "delivery_price": "PLN4.99",
+                        "delivery_price_highlight": false,
+                        "delivery_price_int": 499,
+                        "estimate": 35,
+                        "estimate_box": {
+                            "subtitle": "min",
+                            "template": "estimate",
+                            "title": "30-40"
+                        },
+                        "estimate_range": "30-40",
+                        "franchise": "",
+                        "icon": "wolt-plus",
+                        "id": "604f43d1aaaaf606b7dddff5",
+                        "location": [
+                            19.9163846,
+                            50.0733863
+                        ],
+                        "name": "Family Bistro",
+                        "online": true,
+                        "price_range": 2,
+                        "product_line": "restaurant",
+                        "promotions": [],
+                        "rating": {
+                            "rating": 3,
+                            "score": 9.0
+                        },
+                        "short_description": "Smaki domowej kuchni",
+                        "show_wolt_plus": true,
+                        "slug": "family-bistro",
+                        "tags": [
+                            "dumplings",
+                            "homemade"
+                        ]
+                    }
+                },
+                {
+                    "filtering": {
+                        "filters": []
+                    },
+                    "image": {
+                        "blurhash": "j3JV:aYg0dbvPuX;Ttcg01be;kTa",
+                        "url": "https://prod-wolt-venue-images-cdn.wolt.com/5fb23be667d0303890d3e5c3/477f0b76-798a-11ee-b674-ae62f2690dd9_20off___2023_11_02t151525.697.png"
+                    },
+                    "link": {
+                        "selected_delivery_method": "homedelivery",
+                        "target": "5fb23be667d0303890d3e5c3",
+                        "target_sort": "delivers-to",
+                        "target_title": "",
+                        "title": "",
+                        "type": "venue-id",
+                        "venue_mainimage_blurhash": "jaEFB:T;0ijm808OTrmS8YORTkNF"
+                    },
+                    "sorting": {
+                        "sortables": []
+                    },
+                    "telemetry_venue_badges": [],
+                    "template": "venue",
+                    "title": "Bagelmama",
+                    "track_id": "venue-bagelmama",
+                    "venue": {
+                        "address": "Dajwor 10b",
+                        "badges": [],
+                        "badges_v2": [],
+                        "categories": [],
+                        "city": "",
+                        "country": "POL",
+                        "currency": "PLN",
+                        "delivers": true,
+                        "delivery_price": "PLN2.49",
+                        "delivery_price_highlight": false,
+                        "delivery_price_int": 249,
+                        "estimate": 35,
+                        "estimate_box": {
+                            "subtitle": "min",
+                            "template": "estimate",
+                            "title": "30-40"
+                        },
+                        "estimate_range": "30-40",
+                        "franchise": "",
+                        "icon": "wolt-plus",
+                        "id": "5fb23be667d0303890d3e5c3",
+                        "location": [
+                            19.9494177,
+                            50.0516814
+                        ],
+                        "name": "Bagelmama",
+                        "online": true,
+                        "price_range": 1,
+                        "product_line": "restaurant",
+                        "promotions": [],
+                        "rating": {
+                            "rating": 4,
+                            "score": 9.4
+                        },
+                        "short_description": "Pierwsza w Polsce restauracja z nowojorskimi bajglami",
+                        "show_wolt_plus": true,
+                        "slug": "bagelmama",
+                        "tags": [
+                            "bagel",
+                            "sandwich",
+                            "breakfast"
+                        ]
+                    }
+                },
+                {
+                    "filtering": {
+                        "filters": []
+                    },
+                    "image": {
+                        "blurhash": "j2GVWp0001cP0jTtFjX;128g;;4i",
+                        "url": "https://prod-wolt-venue-images-cdn.wolt.com/61a8820e425f9a6295694caa/d5b2c0c8-1175-11ed-80bb-aeefaacd6fdb_vegab_bdg.jpg"
+                    },
+                    "link": {
+                        "selected_delivery_method": "homedelivery",
+                        "target": "61a8820e425f9a6295694caa",
+                        "target_sort": "delivers-to",
+                        "target_title": "",
+                        "title": "",
+                        "type": "venue-id",
+                        "venue_mainimage_blurhash": "j5IGyA40LLPu00XJTccP0hnd;:hA"
+                    },
+                    "sorting": {
+                        "sortables": []
+                    },
+                    "telemetry_venue_badges": [],
+                    "template": "venue",
+                    "title": "Vegab",
+                    "track_id": "venue-vegab1",
+                    "venue": {
+                        "address": "Starowiślna 8",
+                        "badges": [],
+                        "badges_v2": [],
+                        "categories": [],
+                        "city": "",
+                        "country": "POL",
+                        "currency": "PLN",
+                        "delivers": true,
+                        "delivery_price": "PLN2.49",
+                        "delivery_price_highlight": false,
+                        "delivery_price_int": 249,
+                        "estimate": 35,
+                        "estimate_box": {
+                            "subtitle": "min",
+                            "template": "estimate",
+                            "title": "30-40"
+                        },
+                        "estimate_range": "30-40",
+                        "franchise": "",
+                        "icon": "wolt-plus",
+                        "id": "61a8820e425f9a6295694caa",
+                        "location": [
+                            19.94376643668035,
+                            50.05822673292035
+                        ],
+                        "name": "Vegab",
+                        "online": true,
+                        "price_range": 2,
+                        "product_line": "restaurant",
+                        "promotions": [],
+                        "rating": {
+                            "rating": 4,
+                            "score": 9.2
+                        },
+                        "short_description": "Weganizm pełną gębą! ",
+                        "show_wolt_plus": true,
+                        "slug": "vegab1",
+                        "tags": [
+                            "bowl",
+                            "kebab",
+                            "vegan"
+                        ]
+                    }
+                },
+                {
+                    "filtering": {
+                        "filters": []
+                    },
+                    "image": {
+                        "blurhash": "j6KGek;dPKOP;;9dXKTdJ3iBSX8Z",
+                        "url": "https://prod-wolt-venue-images-cdn.wolt.com/650c3269d1a08265c5b55394/e979a5a4-7fc4-11ee-a4de-12fbc92a9ffd_whole_menu_10__57_.png"
+                    },
+                    "link": {
+                        "selected_delivery_method": "homedelivery",
+                        "target": "650c3269d1a08265c5b55394",
+                        "target_sort": "delivers-to",
+                        "target_title": "",
+                        "title": "",
+                        "type": "venue-id",
+                        "venue_mainimage_blurhash": "j8NGSp40DL8xTLSQ;:Pddb8QXtXJ"
+                    },
+                    "sorting": {
+                        "sortables": []
+                    },
+                    "telemetry_venue_badges": [
+                        "new"
+                    ],
+                    "template": "venue",
+                    "title": "WafflePanc gofry, naleśniki",
+                    "track_id": "venue-wafflepanc-gofry-naleniki",
+                    "venue": {
+                        "address": "Świętego Tomasza 25A",
+                        "badges": [
+                            {
+                                "text": "New",
+                                "variant": "primary"
+                            }
+                        ],
+                        "badges_v2": [],
+                        "categories": [],
+                        "city": "",
+                        "country": "POL",
+                        "currency": "PLN",
+                        "delivers": true,
+                        "delivery_price": "PLN2.49",
+                        "delivery_price_highlight": false,
+                        "delivery_price_int": 249,
+                        "estimate": 25,
+                        "estimate_box": {
+                            "subtitle": "min",
+                            "template": "estimate",
+                            "title": "20-30"
+                        },
+                        "estimate_range": "20-30",
+                        "franchise": "",
+                        "icon": "wolt-plus",
+                        "id": "650c3269d1a08265c5b55394",
+                        "location": [
+                            19.9414638,
+                            50.06223660000001
+                        ],
+                        "name": "WafflePanc gofry, naleśniki",
+                        "online": true,
+                        "price_range": 2,
+                        "product_line": "restaurant",
+                        "promotions": [],
+                        "short_description": "Eksplozja smaków zamknięta w naleśnikach",
+                        "show_wolt_plus": true,
+                        "slug": "wafflepanc-gofry-naleniki",
+                        "tags": [
+                            "pancakes",
+                            "crepes",
+                            "dessert"
+                        ]
+                    }
+                },
+                {
+                    "filtering": {
+                        "filters": []
+                    },
+                    "image": {
+                        "blurhash": "j5CoR;;Z9iXc54968QdlcxhjvsLq",
+                        "url": "https://prod-wolt-venue-images-cdn.wolt.com/5fb3e9e7e423e96c8e766e29/ca7d8686-5903-11ed-a0f2-3e7f87d90795_zbiorcze__2_.jpg"
+                    },
+                    "link": {
+                        "selected_delivery_method": "homedelivery",
+                        "target": "5fb3e9e7e423e96c8e766e29",
+                        "target_sort": "delivers-to",
+                        "target_title": "",
+                        "title": "",
+                        "type": "venue-id",
+                        "venue_mainimage_blurhash": "j7FFyg;LJc:RUSVBR3cz4iHKd48y"
+                    },
+                    "sorting": {
+                        "sortables": []
+                    },
+                    "telemetry_venue_badges": [],
+                    "template": "venue",
+                    "title": "Karma Cafe ",
+                    "track_id": "venue-karma-cafe",
+                    "venue": {
+                        "address": "Krupnicza 12",
+                        "badges": [],
+                        "badges_v2": [],
+                        "categories": [],
+                        "city": "",
+                        "country": "POL",
+                        "currency": "PLN",
+                        "delivers": true,
+                        "delivery_price": "PLN2.49",
+                        "delivery_price_highlight": false,
+                        "delivery_price_int": 249,
+                        "estimate": 30,
+                        "estimate_box": {
+                            "subtitle": "min",
+                            "template": "estimate",
+                            "title": "25-35"
+                        },
+                        "estimate_range": "25-35",
+                        "franchise": "",
+                        "icon": "wolt-plus",
+                        "id": "5fb3e9e7e423e96c8e766e29",
+                        "location": [
+                            19.930567,
+                            50.063386
+                        ],
+                        "name": "Karma Cafe ",
+                        "online": true,
+                        "price_range": 1,
+                        "product_line": "restaurant",
+                        "promotions": [],
+                        "rating": {
+                            "rating": 4,
+                            "score": 9.0
+                        },
+                        "short_description": "Piekarnia, restauracja i palarnia kawy",
+                        "show_wolt_plus": true,
+                        "slug": "karma-cafe",
+                        "tags": [
+                            "vegan",
+                            "vegetarian",
+                            "breakfast"
+                        ]
+                    }
+                },
+                {
+                    "filtering": {
+                        "filters": []
+                    },
+                    "image": {
+                        "blurhash": "j6QrWN;;TLnrqQcyX;TsfLHdTt8i",
+                        "url": "https://prod-wolt-venue-images-cdn.wolt.com/5edf953fc5cf3d6e52fefde5/8235ffac-993c-11ec-bb96-aebe4419efed_krowarzywa_wroc_aw.jpg"
+                    },
+                    "link": {
+                        "selected_delivery_method": "homedelivery",
+                        "target": "5edf953fc5cf3d6e52fefde5",
+                        "target_sort": "delivers-to",
+                        "target_title": "",
+                        "title": "",
+                        "type": "venue-id",
+                        "venue_mainimage_blurhash": "j6QHWN;;TLnruQcyX;TsfLHdTt8i"
+                    },
+                    "sorting": {
+                        "sortables": []
+                    },
+                    "telemetry_venue_badges": [],
+                    "template": "venue",
+                    "title": "Krowarzywa Kraków",
+                    "track_id": "venue-krowarzywa-krakow-slawkowska",
+                    "venue": {
+                        "address": "ul. Sławkowska 8",
+                        "badges": [],
+                        "badges_v2": [],
+                        "categories": [],
+                        "city": "",
+                        "country": "POL",
+                        "currency": "PLN",
+                        "delivers": true,
+                        "delivery_price": "PLN2.49",
+                        "delivery_price_highlight": false,
+                        "delivery_price_int": 249,
+                        "estimate": 25,
+                        "estimate_box": {
+                            "subtitle": "min",
+                            "template": "estimate",
+                            "title": "20-30"
+                        },
+                        "estimate_range": "20-30",
+                        "franchise": "",
+                        "icon": "wolt-plus",
+                        "id": "5edf953fc5cf3d6e52fefde5",
+                        "location": [
+                            19.9370628,
+                            50.0634449
+                        ],
+                        "name": "Krowarzywa Kraków",
+                        "online": true,
+                        "price_range": 1,
+                        "product_line": "restaurant",
+                        "promotions": [],
+                        "rating": {
+                            "rating": 3,
+                            "score": 8.8
+                        },
+                        "short_description": "Wegańskie burgery dla wszystkich",
+                        "show_wolt_plus": true,
+                        "slug": "krowarzywa-krakow-slawkowska",
+                        "tags": [
+                            "burger",
+                            "vegetarian",
+                            "vegan"
+                        ]
+                    }
+                }
+            ],
+            "link": {
+                "target": "quickest-delivery-venues:krakow",
+                "target_sort": "delivers-to",
+                "target_title": "",
+                "title": "See all",
+                "type": "venue-page"
+            },
+            "name": "quickest-delivery-venues",
+            "template": "venue-list",
+            "title": "Fastest delivery"
+        }
+    ],
+    "show_large_title": false,
+    "show_map": false,
+    "track_id": "discovery:front-page:krakow"
+}

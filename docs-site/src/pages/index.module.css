@@ -1,0 +1,202 @@
+.heroBanner {
+  padding: 4rem 0 3rem;
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(180deg, #ffffff 0%, #f5f8fc 100%);
+  border-bottom: 1px solid rgba(18, 26, 42, 0.08);
+}
+
+.heroGrid {
+  display: grid;
+  grid-template-columns: 1.2fr 0.8fr;
+  gap: 1.25rem;
+  align-items: center;
+}
+
+.heroLeft {
+  animation: fadeSlideUp 520ms ease-out;
+}
+
+.brandLockup {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  margin: 0 0 0.35rem;
+}
+
+.kicker {
+  display: inline-block;
+  margin: 0 0 0.8rem;
+  padding: 0.3rem 0.65rem;
+  border-radius: 999px;
+  border: 1px solid rgba(0, 125, 152, 0.2);
+  background: #ffffff;
+  color: #00667b;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.heroTitle {
+  margin: 0;
+  font-size: clamp(2.4rem, 5vw, 4.2rem);
+  line-height: 0.98;
+  letter-spacing: -0.03em;
+  color: #1d2739;
+}
+
+.heroLogo {
+  display: block;
+  width: clamp(72px, 10vw, 108px);
+  height: auto;
+  border-radius: 0;
+  border: 0;
+  box-shadow: none;
+}
+
+.heroSubtitle {
+  margin: 1rem 0 1.25rem;
+  max-width: 44rem;
+  font-size: 1.05rem;
+  color: #445166;
+}
+
+@media screen and (max-width: 996px) {
+  .heroBanner {
+    padding: 2.5rem 0 2rem;
+  }
+
+  .heroGrid {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+  }
+
+  .heroSubtitle {
+    margin-bottom: 1rem;
+    font-size: 1rem;
+  }
+
+  .brandLockup {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin-bottom: 0.15rem;
+  }
+
+  .notice {
+    max-width: 100%;
+  }
+}
+
+.buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+}
+
+.notice {
+  margin: 1rem 0 0;
+  max-width: 45rem;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  color: #5a687e;
+}
+
+.heroRight {
+  display: grid;
+  gap: 0.8rem;
+  animation: fadeSlideUp 520ms ease-out;
+}
+
+.shellCard,
+.shellCardMuted {
+  border-radius: 12px;
+  border: 1px solid rgba(18, 26, 42, 0.12);
+  background: #ffffff;
+  box-shadow: 0 12px 22px rgba(18, 26, 42, 0.06);
+  padding: 1rem 1.1rem;
+}
+
+.shellTitle {
+  margin: 0 0 0.45rem;
+  color: #273247;
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.shellCard code {
+  display: block;
+  font-size: 0.9rem;
+  line-height: 1.45;
+  color: #2a3750;
+}
+
+.shellCardMuted p {
+  margin: 0 0 0.35rem;
+  color: #55657a;
+}
+
+.shellCardMuted strong {
+  color: #253247;
+  font-size: 0.98rem;
+}
+
+[data-theme='dark'] .heroBanner {
+  background: linear-gradient(180deg, #0b2230 0%, #0a1d29 100%);
+  border-bottom-color: rgba(164, 201, 217, 0.18);
+}
+
+[data-theme='dark'] .kicker {
+  border-color: rgba(64, 214, 243, 0.35);
+  background: rgba(10, 28, 38, 0.65);
+  color: #8de7fb;
+}
+
+[data-theme='dark'] .heroTitle {
+  color: #e6f3fa;
+}
+
+[data-theme='dark'] .heroSubtitle {
+  color: #b7cfdb;
+}
+
+[data-theme='dark'] .notice {
+  color: #9eb8c4;
+}
+
+[data-theme='dark'] .shellCard,
+[data-theme='dark'] .shellCardMuted {
+  border-color: rgba(164, 201, 217, 0.2);
+  background: #0f2835;
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.28);
+}
+
+[data-theme='dark'] .shellTitle {
+  color: #cfe4ee;
+}
+
+[data-theme='dark'] .shellCard code {
+  color: #d9e9f1;
+}
+
+[data-theme='dark'] .shellCardMuted p {
+  color: #a8c2ce;
+}
+
+[data-theme='dark'] .shellCardMuted strong {
+  color: #e0eef5;
+}
+
+@keyframes fadeSlideUp {
+  from {
+    transform: translateY(14px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}

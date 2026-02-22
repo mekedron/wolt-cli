@@ -1,0 +1,20 @@
+{
+  "profiles": [
+    {
+      "name": "default",
+      "is_default": true,
+      "address": "Krakow",
+      "wtoken": "eyJ...example.jwt...signature",
+      "wrefresh_token": "refresh-token-example",
+      "cookies": [
+        "__wtoken=eyJ...example.jwt...signature",
+        "__wrtoken=refresh-token-example",
+        "foo=bar"
+      ],
+      "location": {
+        "lat": 50.0614,
+        "lon": 19.9366
+      }
+    }
+  ]
+}
