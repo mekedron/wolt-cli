@@ -64,7 +64,7 @@ jobs:
           fi
 
       - name: Upload platform archive
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: release-${{ matrix.goos }}-${{ matrix.goarch }}
           path: dist/wolt_${{ github.ref_name }}_${{ matrix.goos }}_${{ matrix.goarch }}.tar.gz
@@ -83,7 +83,7 @@ jobs:
           fetch-tags: true
 
       - name: Download build artifacts
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           path: artifacts
 
