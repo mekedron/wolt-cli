@@ -19,7 +19,8 @@ jobs:
       github.event.workflow_run.pull_requests[0].number != null
     runs-on: ubuntu-latest
     steps:
-      - name: Verify required CI workflows are successful
+      - name: Verify all relevant CI workflows are successful
+        id: check
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
@@ -29,31 +30,49 @@ jobs:
           runs_json="$(gh api \
             "repos/${GITHUB_REPOSITORY}/actions/runs?event=pull_request&head_sha=${HEAD_SHA}&per_page=100")"
 
-          required_workflows=("Go CI" "Docs CI")
-          for workflow_name in "${required_workflows[@]}"; do
-            status="$(echo "${runs_json}" | jq -r --arg wf "${workflow_name}" \
-              '.workflow_runs[] | select(.name == $wf) | .status' | head -n1)"
+          # Each workflow is treated as required only if it actually ran for this
+          # SHA. Path filters on Docs CI / Go CI mean a Go-only or docs-only PR
+          # legitimately runs just one of them; the other should not block merge.
+          candidate_workflows=("Go CI" "Docs CI")
+          ran_at_least_one=false
+
+          for workflow_name in "${candidate_workflows[@]}"; do
             conclusion="$(echo "${runs_json}" | jq -r --arg wf "${workflow_name}" \
-              '.workflow_runs[] | select(.name == $wf) | .conclusion' | head -n1)"
+              '[.workflow_runs[] | select(.name == $wf)] | (.[0].conclusion // "missing")')"
 
-            if [ -z "${status}" ]; then
-              echo "Workflow '${workflow_name}' has not run yet for ${HEAD_SHA}. Skipping."
-              exit 0
-            fi
-
-            if [ "${conclusion}" != "success" ]; then
-              echo "Workflow '${workflow_name}' conclusion='${conclusion}'. Skipping."
-              exit 0
-            fi
+            case "${conclusion}" in
+              missing|skipped)
+                echo "Workflow '${workflow_name}' did not run for ${HEAD_SHA} (likely path filter). Treating as N/A."
+                ;;
+              success)
+                echo "Workflow '${workflow_name}' succeeded."
+                ran_at_least_one=true
+                ;;
+              *)
+                echo "Workflow '${workflow_name}' conclusion='${conclusion}'. Not auto-merging."
+                echo "proceed=false" >> "${GITHUB_OUTPUT}"
+                exit 0
+                ;;
+            esac
           done
 
+          if [ "${ran_at_least_one}" != "true" ]; then
+            echo "No required workflow ran successfully for ${HEAD_SHA}. Refusing to auto-merge."
+            echo "proceed=false" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          echo "proceed=true" >> "${GITHUB_OUTPUT}"
+
       - name: Auto-approve pull request
+        if: steps.check.outputs.proceed == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
-        run: gh pr review --repo "${GITHUB_REPOSITORY}" "${PR_NUMBER}" --approve --body "Auto-approved after successful Go CI and Docs CI."
+        run: gh pr review --repo "${GITHUB_REPOSITORY}" "${PR_NUMBER}" --approve --body "Auto-approved after successful CI."
 
       - name: Enable auto-merge
+        if: steps.check.outputs.proceed == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
