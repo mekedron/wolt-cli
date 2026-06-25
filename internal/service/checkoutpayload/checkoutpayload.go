@@ -36,10 +36,7 @@ func Build(
 
 	venue := payloadutil.Map(basket["venue"])
 	venueID := strings.TrimSpace(payloadutil.String(venue["id"]))
-	currency := payloadutil.InferCurrency(payloadutil.String(basket["total"]))
-	if currency == "" {
-		currency = "EUR"
-	}
+	currency := resolveCheckoutCurrency(basket)
 	country := strings.TrimSpace(payloadutil.String(venue["country"]))
 	warnings := []string{}
 	itemDetails := map[string]map[string]any{}
@@ -150,6 +147,26 @@ func Build(
 			},
 		},
 	}, warnings, nil
+}
+
+// resolveCheckoutCurrency picks the basket currency, preferring the value Wolt
+// states explicitly (basket.currency / basket.total_price.currency) over a guess
+// from the formatted total. InferCurrency only recognises a few symbols (EUR,
+// USD, PLN), so inferring alone sends EUR for markets like SEK/DKK/NOK whose
+// total is absent, structured, or uses an unrecognised symbol — which can make
+// Wolt reject or mis-price the preview. Inference and the EUR default remain as
+// last resorts so behaviour is unchanged when no explicit currency is present.
+func resolveCheckoutCurrency(basket map[string]any) string {
+	if c := strings.TrimSpace(payloadutil.String(payloadutil.CoalesceAny(
+		basket["currency"],
+		payloadutil.Map(basket["total_price"])["currency"],
+	))); c != "" {
+		return c
+	}
+	if c := payloadutil.InferCurrency(payloadutil.String(basket["total"])); c != "" {
+		return c
+	}
+	return "EUR"
 }
 
 func resolveCheckoutCategoryID(item map[string]any, detail map[string]any, itemID string, fallback map[string]string) string {

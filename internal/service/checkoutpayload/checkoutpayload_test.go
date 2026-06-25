@@ -231,6 +231,54 @@ func TestBuildCurrencyInferenceAndDefault(t *testing.T) {
 	}
 }
 
+// TestBuildPrefersExplicitBasketCurrency guards the regression Codex flagged:
+// the shared builder must use the basket's explicit currency (which the old MCP
+// handler passed through) instead of only inferring from the formatted total,
+// so non-EUR markets aren't silently priced in EUR.
+func TestBuildPrefersExplicitBasketCurrency(t *testing.T) {
+	item := map[string]any{"id": "627cb2c7e2a6f0a1b2c3d4e5", "count": 1, "price": 500, "category_id": "cat"}
+	cases := []struct {
+		name   string
+		basket map[string]any
+		want   string
+	}{
+		{
+			name: "total_price.currency wins when total symbol is non-inferable",
+			basket: map[string]any{
+				"venue":       map[string]any{"id": "5f9a1b2c3d4e5f6071829304"},
+				"total":       "120,00 kr", // InferCurrency can't read "kr"
+				"total_price": map[string]any{"currency": "SEK"},
+				"items":       []any{item},
+			},
+			want: "SEK",
+		},
+		{
+			name: "explicit basket.currency beats an inferable total",
+			basket: map[string]any{
+				"venue":    map[string]any{"id": "5f9a1b2c3d4e5f6071829304"},
+				"currency": "DKK",
+				"total":    "€5.00", // would infer EUR, but explicit DKK must win
+				"items":    []any{item},
+			},
+			want: "DKK",
+		},
+	}
+	for _, c := range cases {
+		c := c
+		t.Run(c.name, func(t *testing.T) {
+			payload, _, err := Build(context.Background(), nil, nil, c.basket,
+				domain.Location{}, "standard", 0, "")
+			if err != nil {
+				t.Fatalf("Build error: %v", err)
+			}
+			venue, _ := purchasePlan(t, payload)["venue"].(map[string]any)
+			if venue["currency"] != c.want {
+				t.Errorf("currency = %v, want %v", venue["currency"], c.want)
+			}
+		})
+	}
+}
+
 func TestBuildAppliesTipAndPromo(t *testing.T) {
 	basket := basketWithItem("€5", map[string]any{
 		"id": "627cb2c7e2a6f0a1b2c3d4e5", "count": 1, "price": 500, "category_id": "cat",
