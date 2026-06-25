@@ -7,6 +7,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	woltgateway "github.com/mekedron/wolt-cli/internal/gateway/wolt"
+	"github.com/mekedron/wolt-cli/internal/service/checkoutpayload"
 )
 
 func registerCheckoutTools(srv *mcp.Server, tc *ToolCtx) {
@@ -23,7 +24,7 @@ func registerCheckoutTools(srv *mcp.Server, tc *ToolCtx) {
 type CheckoutPreviewInput struct {
 	LocationInput
 	Venue        string `json:"venue"                    jsonschema:"venue slug, id, or url"`
-	DeliveryMode string `json:"delivery_mode,omitempty"  jsonschema:"home_delivery | takeaway | eatin"`
+	DeliveryMode string `json:"delivery_mode,omitempty"  jsonschema:"standard | priority | schedule"`
 	Tip          int    `json:"tip,omitempty"            jsonschema:"tip in minor units (e.g. 200 = EUR 2.00)"`
 	PromoCode    string `json:"promo_code,omitempty"     jsonschema:"promo code to apply"`
 }
@@ -65,24 +66,12 @@ func (tc *ToolCtx) handleCheckoutPreview(ctx context.Context, _ *mcp.CallToolReq
 
 	deliveryMode := strings.TrimSpace(in.DeliveryMode)
 	if deliveryMode == "" {
-		deliveryMode = "home_delivery"
+		deliveryMode = "standard"
 	}
 
-	payload := map[string]any{
-		"venue_id":      ref.ID,
-		"currency":      asString(coalesceAny(basket["currency"], asMap(basket["total_price"])["currency"])),
-		"items":         basket["items"],
-		"delivery_mode": deliveryMode,
-		"location": map[string]any{
-			"lat": loc.Lat,
-			"lon": loc.Lon,
-		},
-	}
-	if in.Tip > 0 {
-		payload["tip"] = in.Tip
-	}
-	if code := strings.TrimSpace(in.PromoCode); code != "" {
-		payload["promo_code"] = code
+	payload, _, err := checkoutpayload.Build(ctx, tc.wolt, tc.wolt.VenuePageStatic, basket, loc, deliveryMode, in.Tip, in.PromoCode)
+	if err != nil {
+		return nil, CheckoutPreviewOutput{}, toolErr(err)
 	}
 
 	preview, err := invokeWithRefresh(ctx, tc, &auth, func(a woltgateway.AuthContext) (map[string]any, error) {

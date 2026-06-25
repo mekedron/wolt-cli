@@ -43,6 +43,12 @@ readonly MCD_VENUE="${WOLT_SMOKE_CART_VENUE:-mcdonalds-kamppi-1}"
 MCD_ITEM_QUERY="$(printf '%s' "${WOLT_SMOKE_CART_ITEM_QUERY:-with cheese}" | tr '[:upper:]' '[:lower:]')"
 readonly MCD_ITEM_QUERY
 
+# wolt-mcp powers the MCP checkout-preview smoke — the code path PR #23 fixed
+# (the MCP handler used to POST a flat body Wolt rejected for a missing
+# purchase_plan). Built on demand if the workflow didn't pre-build it, so local
+# runs work the same. Only exercised inside the opt-in cart round-trip below.
+readonly WOLT_MCP_BIN="${WOLT_MCP_BIN:-./bin/wolt-mcp}"
+
 mkdir -p "${SMOKE_DIR}"
 
 pass=0
@@ -92,6 +98,41 @@ run() {
     } | redact | sed 's/^/    | /' | head -20 || true
     fail=$((fail + 1))
     failures+=("${label}")
+  fi
+}
+
+# run_mcp_checkout_preview "<venue>" — exercise the MCP wolt_checkout_preview
+# tool end to end by spawning wolt-mcp over stdio. This is the MCP counterpart
+# to the CLI "checkout preview" step and guards the exact regression PR #23
+# fixed (the MCP handler now builds the shared purchase_plan payload). It needs
+# a basket already on the account, so it only runs inside the cart round-trip.
+# Preview-only — no order is ever placed. The structured preview lands in a
+# local file (byte count only in the public log); stderr is redacted on failure.
+run_mcp_checkout_preview() {
+  local venue="$1"
+  local label="mcp checkout preview"
+  local out="${SMOKE_DIR}/mcp_checkout_preview.json"
+  local err="${SMOKE_DIR}/mcp_checkout_preview.err"
+
+  # Build wolt-mcp once if the workflow didn't already drop it in ./bin.
+  if [ ! -x "${WOLT_MCP_BIN}" ]; then
+    if ! go build -o "${WOLT_MCP_BIN}" ./cmd/wolt-mcp >"${err}" 2>&1; then
+      printf "[%s] %-22s ... FAIL (could not build wolt-mcp)\n" "$(date -u +%H:%M:%S)" "${label}"
+      redact <"${err}" | sed 's/^/    | /' | head -10 || true
+      fail=$((fail + 1)); failures+=("${label}")
+      return
+    fi
+  fi
+
+  printf "[%s] %-22s ... " "$(date -u +%H:%M:%S)" "${label}"
+  if WOLT_MCP_BIN="${WOLT_MCP_BIN}" WOLT_SMOKE_LAT="${HEL_LAT}" WOLT_SMOKE_LON="${HEL_LON}" \
+     go run ./scripts/mcp-checkout-smoke "${venue}" >"${out}" 2>"${err}"; then
+    printf "ok (%s bytes)\n" "$(wc -c <"${out}" | tr -d ' ')"
+    pass=$((pass + 1))
+  else
+    printf "FAIL\n"
+    redact <"${err}" | sed 's/^/    | /' | head -20 || true
+    fail=$((fail + 1)); failures+=("${label}")
   fi
 }
 
@@ -208,6 +249,8 @@ if [ "${RUN_CART_SMOKE}" = "1" ]; then
     fi
 
     run "checkout preview" "${WOLT_BIN}" checkout --venue-id "${cart_venue_id}"
+    # Same basket, via the MCP tool — covers the handler the CLI path doesn't.
+    run_mcp_checkout_preview "${cart_venue_id}"
     run "cart remove" "${WOLT_BIN}" cart remove "${cart_item_id}" --all --venue-id "${cart_venue_id}"
   else
     printf "[%s] %-22s ... FAIL (no in-stock item matching %q in %s)\n" \

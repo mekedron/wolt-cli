@@ -8,6 +8,7 @@ import (
 	"github.com/mekedron/wolt-cli/internal/domain"
 	woltgateway "github.com/mekedron/wolt-cli/internal/gateway/wolt"
 	"github.com/mekedron/wolt-cli/internal/service/output"
+	"github.com/mekedron/wolt-cli/internal/service/payloadutil"
 	"github.com/spf13/cobra"
 )
 
@@ -151,16 +152,7 @@ func emptyToNil(value string) any {
 }
 
 func coalesceAny(values ...any) any {
-	for _, value := range values {
-		if value == nil {
-			continue
-		}
-		if text, ok := value.(string); ok && strings.TrimSpace(text) == "" {
-			continue
-		}
-		return value
-	}
-	return nil
+	return payloadutil.CoalesceAny(values...)
 }
 
 // authStatusResult bundles the upstream payloads the status command depends on so

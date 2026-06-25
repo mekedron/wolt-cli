@@ -1,82 +1,27 @@
 package cli
 
 import (
-	"fmt"
-	"reflect"
+	"github.com/mekedron/wolt-cli/internal/service/payloadutil"
 )
 
 func asMap(value any) map[string]any {
-	if value == nil {
-		return nil
-	}
-	switch m := value.(type) {
-	case map[string]any:
-		return m
-	case map[string]string:
-		out := make(map[string]any, len(m))
-		for k, v := range m {
-			out[k] = v
-		}
-		return out
-	}
-	return nil
+	return payloadutil.Map(value)
 }
 
 func asSlice(value any) []any {
-	if value == nil {
-		return nil
-	}
-	if values, ok := value.([]any); ok {
-		return values
-	}
-	rv := reflect.ValueOf(value)
-	if !rv.IsValid() {
-		return nil
-	}
-	kind := rv.Kind()
-	if kind != reflect.Slice && kind != reflect.Array {
-		return nil
-	}
-	if rv.Type().Elem().Kind() == reflect.Uint8 {
-		return nil
-	}
-	values := make([]any, rv.Len())
-	for idx := 0; idx < rv.Len(); idx++ {
-		values[idx] = rv.Index(idx).Interface()
-	}
-	return values
+	return payloadutil.Slice(value)
 }
 
 func asString(value any) string {
-	if value == nil {
-		return ""
-	}
-	if s, ok := value.(string); ok {
-		return s
-	}
-	return fmt.Sprint(value)
+	return payloadutil.String(value)
 }
 
 func asBool(value any) bool {
-	if b, ok := value.(bool); ok {
-		return b
-	}
-	return false
+	return payloadutil.Bool(value)
 }
 
 func asInt(value any) int {
-	switch v := value.(type) {
-	case int:
-		return v
-	case int64:
-		return int(v)
-	case float64:
-		return int(v)
-	case float32:
-		return int(v)
-	default:
-		return 0
-	}
+	return payloadutil.Int(value)
 }
 
 func asFloat(value any) (float64, bool) {

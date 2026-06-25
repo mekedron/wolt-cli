@@ -3,10 +3,12 @@ name: Live smoke (daily)
 # Daily smoke against real Wolt consumer-api endpoints. Detects
 # upstream contract drift before users do. The read-only surface
 # (status/account/feed/venue/cart-show) always runs; a cart round-trip
-# (add a McDonald's Kamppi cheeseburger → checkout preview → remove)
-# runs because WOLT_SMOKE_CART=1 is set below. Checkout is preview-only —
-# no real order is ever placed, and the basket is torn down on exit.
-# No login, no stats sync.
+# (add a McDonald's Kamppi cheeseburger → CLI checkout preview → MCP
+# checkout preview → remove) runs because WOLT_SMOKE_CART=1 is set below.
+# The MCP step spawns wolt-mcp and drives its wolt_checkout_preview tool over
+# stdio — the exact path PR #23 fixed — so the daily run guards both the CLI
+# and MCP checkout-preview code. Checkout is preview-only — no real order is
+# ever placed, and the basket is torn down on exit. No login, no stats sync.
 #
 # Required repository secret:
 #   WOLT_SMOKE_CONFIG_JSON  contents of ~/.wolt/.wolt-config.json
@@ -76,6 +78,12 @@ jobs:
             -ldflags "-s -w -X main.version=${BUILD_VERSION}" \
             -o bin/wolt ./cmd/wolt
           ./bin/wolt --version
+
+      - name: Build wolt-mcp
+        # Drives the MCP checkout-preview smoke (the path PR #23 fixed). The
+        # live-smoke script also builds this on demand, but doing it here fails
+        # fast and keeps the build out of the timed smoke window.
+        run: go build -trimpath -o bin/wolt-mcp ./cmd/wolt-mcp
 
       - name: Verify smoke secret is set
         run: |

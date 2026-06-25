@@ -398,6 +398,8 @@ type stubWolt struct {
 	venueStaticFn      func(context.Context, string) (map[string]any, error)
 	venueDynamicFn     func(context.Context, string, woltgateway.VenuePageDynamicOptions) (map[string]any, error)
 	addToBasketFn      func(context.Context, map[string]any, woltgateway.AuthContext) (map[string]any, error)
+	basketsPageFn      func(context.Context, domain.Location, woltgateway.AuthContext) (map[string]any, error)
+	checkoutPreviewFn  func(context.Context, map[string]any, woltgateway.AuthContext) (map[string]any, error)
 }
 
 func (s *stubWolt) FrontPage(context.Context, domain.Location) (map[string]any, error) {
@@ -505,7 +507,10 @@ func (s *stubWolt) FavoriteVenueRemove(context.Context, string, woltgateway.Auth
 func (s *stubWolt) BasketCount(context.Context, woltgateway.AuthContext) (map[string]any, error) {
 	return map[string]any{}, nil
 }
-func (s *stubWolt) BasketsPage(context.Context, domain.Location, woltgateway.AuthContext) (map[string]any, error) {
+func (s *stubWolt) BasketsPage(ctx context.Context, loc domain.Location, auth woltgateway.AuthContext) (map[string]any, error) {
+	if s.basketsPageFn != nil {
+		return s.basketsPageFn(ctx, loc, auth)
+	}
 	return map[string]any{}, nil
 }
 func (s *stubWolt) AddToBasket(ctx context.Context, payload map[string]any, auth woltgateway.AuthContext) (map[string]any, error) {
@@ -517,7 +522,10 @@ func (s *stubWolt) AddToBasket(ctx context.Context, payload map[string]any, auth
 func (s *stubWolt) DeleteBaskets(context.Context, []string, woltgateway.AuthContext) (map[string]any, error) {
 	return map[string]any{}, nil
 }
-func (s *stubWolt) CheckoutPreview(context.Context, map[string]any, woltgateway.AuthContext) (map[string]any, error) {
+func (s *stubWolt) CheckoutPreview(ctx context.Context, payload map[string]any, auth woltgateway.AuthContext) (map[string]any, error) {
+	if s.checkoutPreviewFn != nil {
+		return s.checkoutPreviewFn(ctx, payload, auth)
+	}
 	return map[string]any{}, nil
 }
 func (s *stubWolt) RefreshAccessToken(context.Context, string, woltgateway.AuthContext) (woltgateway.TokenRefreshResult, error) {
