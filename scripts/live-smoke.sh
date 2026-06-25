@@ -47,7 +47,11 @@ readonly MCD_ITEM_QUERY
 # (the MCP handler used to POST a flat body Wolt rejected for a missing
 # purchase_plan). Built on demand if the workflow didn't pre-build it, so local
 # runs work the same. Only exercised inside the opt-in cart round-trip below.
-readonly WOLT_MCP_BIN="${WOLT_MCP_BIN:-./bin/wolt-mcp}"
+# Exported so the smoke client (and the wolt-mcp it spawns) inherit it; readonly
+# so nothing mutates it — but that's why we must NOT re-assign it as a
+# command-prefix env below (assigning to a readonly var aborts the script).
+export WOLT_MCP_BIN="${WOLT_MCP_BIN:-./bin/wolt-mcp}"
+readonly WOLT_MCP_BIN
 
 mkdir -p "${SMOKE_DIR}"
 
@@ -125,7 +129,8 @@ run_mcp_checkout_preview() {
   fi
 
   printf "[%s] %-22s ... " "$(date -u +%H:%M:%S)" "${label}"
-  if WOLT_MCP_BIN="${WOLT_MCP_BIN}" WOLT_SMOKE_LAT="${HEL_LAT}" WOLT_SMOKE_LON="${HEL_LON}" \
+  # WOLT_MCP_BIN is already exported above; only the per-call coords go here.
+  if WOLT_SMOKE_LAT="${HEL_LAT}" WOLT_SMOKE_LON="${HEL_LON}" \
      go run ./scripts/mcp-checkout-smoke "${venue}" >"${out}" 2>"${err}"; then
     printf "ok (%s bytes)\n" "$(wc -c <"${out}" | tr -d ' ')"
     pass=$((pass + 1))
