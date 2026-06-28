@@ -217,6 +217,78 @@ func ambiguousItemError(query, venueSlug string, candidates []itemNameMatch) err
 	)
 }
 
+// cartItemCandidate is a single orderable menu item resolved by the
+// cheapest-in-stock selector (id, display name, and base price in minor units).
+type cartItemCandidate struct {
+	ID    string
+	Name  string
+	Price int
+}
+
+// selectCheapestMenuItem picks the cheapest orderable item from a normalized
+// menu (the shape produced by observability.ExtractMenuItems / emitted by
+// `venue menu`). "Orderable" means in stock (not sold out) and carrying a real
+// positive base price — a zero price can't be posted to a basket. When query is
+// non-empty only items whose name contains it (case-insensitive) are
+// considered; an empty query takes the venue's cheapest orderable item. Ties on
+// price are broken by name so the choice is deterministic across runs. Returns
+// false when nothing orderable matched.
+//
+// Unlike resolveItemByName this never fails on multiple matches — it
+// deterministically takes the cheapest — which is what the live smoke needs to
+// add a real cheeseburger without pinning a volatile item id.
+func selectCheapestMenuItem(items []map[string]any, query string) (cartItemCandidate, bool) {
+	needle := strings.ToLower(strings.TrimSpace(query))
+	var best cartItemCandidate
+	found := false
+	for _, item := range items {
+		if asBool(item["is_sold_out"]) {
+			continue
+		}
+		price := asInt(asMap(item["base_price"])["amount"])
+		if price <= 0 {
+			continue
+		}
+		id := strings.TrimSpace(asString(item["item_id"]))
+		name := strings.TrimSpace(asString(item["name"]))
+		if id == "" || name == "" {
+			continue
+		}
+		if needle != "" && !strings.Contains(strings.ToLower(name), needle) {
+			continue
+		}
+		if !found || price < best.Price || (price == best.Price && name < best.Name) {
+			best = cartItemCandidate{ID: id, Name: name, Price: price}
+			found = true
+		}
+	}
+	return best, found
+}
+
+// resolveCheapestItem fetches a venue's assortment and returns its cheapest
+// orderable item, optionally constrained to names containing query. It powers
+// `cart add --cheapest`: a deterministic, sold-out-aware alternative to
+// resolveItemByName that never errors on ambiguity. Returns an explanatory
+// error only when nothing orderable matched.
+func resolveCheapestItem(ctx context.Context, deps Dependencies, venueSlug, venueIDForExtract, query string) (cartItemCandidate, error) {
+	if deps.Wolt == nil {
+		return cartItemCandidate{}, fmt.Errorf("menu lookup unavailable")
+	}
+	payload, err := deps.Wolt.AssortmentByVenueSlug(ctx, venueSlug)
+	if err != nil {
+		return cartItemCandidate{}, fmt.Errorf("venue menu lookup failed: %w", err)
+	}
+	items := observability.ExtractMenuItems(payload, venueIDForExtract, venueSlug)
+	candidate, ok := selectCheapestMenuItem(items, query)
+	if !ok {
+		if strings.TrimSpace(query) != "" {
+			return cartItemCandidate{}, fmt.Errorf("no in-stock item in %q matched %q; broaden --query or drop it to take the venue's cheapest item", venueSlug, query)
+		}
+		return cartItemCandidate{}, fmt.Errorf("no in-stock items found in %q", venueSlug)
+	}
+	return candidate, nil
+}
+
 func normalizeVenueInput(raw string) string {
 	value := strings.TrimSpace(raw)
 	if value == "" {

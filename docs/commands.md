@@ -246,8 +246,11 @@ wolt cart add <venue> <item-id|url>
               [--name <text>] [--price <minor>]
               [--currency <code>]
               [--venue-slug <slug>]
+              [--query "<item name>"] [--cheapest]
 wolt cart add <wolt-item-url>                # one-arg: venue read from URL
 wolt cart add <venue> --query "<item name>"  # resolves to item id via menu search
+wolt cart add <venue> --query "burger" --cheapest  # cheapest in-stock match
+wolt cart add <venue> --cheapest             # cheapest in-stock item in the venue
 wolt cart remove <item-id|url> [--count <n>] [--all] [--venue-id <id>]
 wolt cart clear [--venue-id <id>] [--all]
 ```
@@ -264,6 +267,15 @@ argument (no separate `<venue>`) since it carries both pieces.
 assortment item search `venue menu --query` uses, requires a single
 match, and errors with a "did you mean…" list when more than one item
 matches. Exact-name matches always beat substring hits.
+
+`--cheapest` swaps that strict resolution for a deterministic one: it
+takes the cheapest in-stock item, skipping sold-out and unpriced rows
+rather than erroring on ambiguity. Narrow it with `--query` (cheapest
+item whose name contains the text) or use it alone to add the venue's
+cheapest in-stock item. Handy for scripting where any orderable item
+will do — it's what the live smoke uses so a transient sold-out item
+(e.g. McDonald's lunch menu during breakfast hours) can't break the
+cart round-trip.
 
 The basket lives in your Wolt account (same draft you see in the Wolt
 sidebar). Mutations call `POST /order-xp/v1/baskets` and the bulk-delete

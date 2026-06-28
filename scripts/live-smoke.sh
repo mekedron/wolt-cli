@@ -37,7 +37,11 @@ readonly SMOKE_DIR="${SMOKE_DIR:-${TMPDIR:-/tmp}/wolt-smoke}"
 # when WOLT_SMOKE_CART=1 (CI sets it) so local runs stay read-only and
 # never touch your real cart. McDonald's Kamppi is a stable, always-open
 # central-Helsinki venue; the item is resolved from its live menu at run
-# time (cheapest in-stock name match) so we never pin a volatile item id.
+# time via `cart add --cheapest` (cheapest in-stock match) so we never pin
+# a volatile item id. When the name query matches nothing orderable — e.g.
+# the Quarter Pounders are sold out during breakfast hours, which flaked
+# issue #25 — we fall back to the venue's cheapest in-stock item so the
+# round-trip still exercises add/preview/remove instead of hard-failing.
 readonly RUN_CART_SMOKE="${WOLT_SMOKE_CART:-0}"
 readonly MCD_VENUE="${WOLT_SMOKE_CART_VENUE:-mcdonalds-kamppi-1}"
 MCD_ITEM_QUERY="$(printf '%s' "${WOLT_SMOKE_CART_ITEM_QUERY:-with cheese}" | tr '[:upper:]' '[:lower:]')"
@@ -141,6 +145,37 @@ run_mcp_checkout_preview() {
   fi
 }
 
+# cart_add_cheapest "<venue>" "<query>" — add the cheapest in-stock item to the
+# basket via the CLI's own resolver. Prefer the named query, but fall back to
+# the venue's cheapest in-stock item when the query matches nothing orderable
+# (sold out / off-menu), so a transient miss doesn't fail the round-trip. The
+# resolved line id + 24-char venue id come back in the add envelope, which the
+# preview and teardown steps below read. Writes the envelope to cart_add.json.
+cart_add_cheapest() {
+  local venue="$1" query="$2"
+  local label="cart add"
+  local out="${SMOKE_DIR}/cart_add.json"
+  local err="${SMOKE_DIR}/cart_add.err"
+  printf "[%s] %-22s ... " "$(date -u +%H:%M:%S)" "${label}"
+  if "${WOLT_BIN}" cart add "${venue}" --query "${query}" --cheapest --count 1 --format json >"${out}" 2>"${err}" \
+     || "${WOLT_BIN}" cart add "${venue}" --cheapest --count 1 --format json >"${out}" 2>"${err}"; then
+    local name price
+    name="$(jq -r '.data.item_name // "item"' "${out}" 2>/dev/null || echo item)"
+    price="$(jq -r '.data.item_price // 0' "${out}" 2>/dev/null || echo 0)"
+    printf "ok (%s, %s c)\n" "${name}" "${price}"
+    pass=$((pass + 1))
+    return 0
+  fi
+  printf "FAIL\n"
+  {
+    jq -r '.errors // empty | "code:    \(.code // "-")\nmessage: \(.message // "-")"' "${out}" 2>/dev/null
+    head -10 "${err}" 2>/dev/null
+  } | redact | sed 's/^/    | /' | head -20 || true
+  fail=$((fail + 1))
+  failures+=("${label}")
+  return 1
+}
+
 # seed_config_from_env — when CI hands us the full config blob, write
 # it to ~/.wolt/.wolt-config.json with owner-only perms. Roundtrip
 # through jq so we (a) validate it's well-formed JSON before disk
@@ -222,32 +257,12 @@ if [ "${RUN_CART_SMOKE}" = "1" ]; then
 
   run "mcd menu" "${WOLT_BIN}" venue menu "${MCD_VENUE}"
 
-  # Resolve the cheapest in-stock item whose name matches the query, so we
-  # add a real, orderable cheeseburger without hard-coding an item id.
-  cart_pick="$(jq -r --arg q "${MCD_ITEM_QUERY}" '
-    [ .data.items[]
-      | { id: .item_id,
-          name: (.name // ""),
-          price: (.base_price.amount // .base_price // 0),
-          sold_out: (.is_sold_out // false) }
-      | select(.sold_out | not)
-      | select(.price > 0)
-      | select((.name | ascii_downcase) | contains($q)) ]
-    | sort_by(.price) | (.[0] // empty)
-    | "\(.id)\t\(.price)\t\(.name)"
-  ' "${SMOKE_DIR}/mcd_menu.json" 2>/dev/null || true)"
-
-  if [ -n "${cart_pick}" ]; then
-    cart_item_id="$(printf '%s' "${cart_pick}" | cut -f1)"
-    cart_item_price="$(printf '%s' "${cart_pick}" | cut -f2)"
-    cart_item_name="$(printf '%s' "${cart_pick}" | cut -f3-)"
-    printf "[%s] %-22s ... %s (%s c)\n" "$(date -u +%H:%M:%S)" "cart item resolved" "${cart_item_name}" "${cart_item_price}"
-
-    run "cart add" "${WOLT_BIN}" cart add "${MCD_VENUE}" "${cart_item_id}" \
-      --price "${cart_item_price}" --name "${cart_item_name}" --count 1
-
-    # The add response carries the resolved 24-char venue id (issue #19
-    # fix). Scope the preview + teardown to it rather than the slug.
+  # Resolve + add the item through the CLI's own `cart add --cheapest`, with a
+  # fallback from the named query to the venue's cheapest item (see the helper).
+  if cart_add_cheapest "${MCD_VENUE}" "${MCD_ITEM_QUERY}"; then
+    # The add envelope carries the resolved line id + the 24-char venue id
+    # (issue #19 fix). Scope the preview + teardown to them, not the slug.
+    cart_item_id="$(jq -r '.data.line_id // ""' "${SMOKE_DIR}/cart_add.json" 2>/dev/null || true)"
     add_venue_id="$(jq -r '.data.venue_id // ""' "${SMOKE_DIR}/cart_add.json" 2>/dev/null || true)"
     if [ -n "${add_venue_id}" ]; then
       cart_venue_id="${add_venue_id}"
@@ -256,12 +271,14 @@ if [ "${RUN_CART_SMOKE}" = "1" ]; then
     run "checkout preview" "${WOLT_BIN}" checkout --venue-id "${cart_venue_id}"
     # Same basket, via the MCP tool — covers the handler the CLI path doesn't.
     run_mcp_checkout_preview "${cart_venue_id}"
-    run "cart remove" "${WOLT_BIN}" cart remove "${cart_item_id}" --all --venue-id "${cart_venue_id}"
-  else
-    printf "[%s] %-22s ... FAIL (no in-stock item matching %q in %s)\n" \
-      "$(date -u +%H:%M:%S)" "cart item resolve" "${MCD_ITEM_QUERY}" "${MCD_VENUE}"
-    fail=$((fail + 1))
-    failures+=("cart item resolve")
+    if [ -n "${cart_item_id}" ]; then
+      run "cart remove" "${WOLT_BIN}" cart remove "${cart_item_id}" --all --venue-id "${cart_venue_id}"
+    else
+      # No line id surfaced — fall back to clearing the venue basket so the
+      # account is left clean even though the targeted remove couldn't run.
+      "${WOLT_BIN}" cart clear --venue-id "${cart_venue_id}" --format json >/dev/null 2>&1 || true
+      printf "[%s] %-22s ... skipped (no line id in add envelope; basket cleared)\n" "$(date -u +%H:%M:%S)" "cart remove"
+    fi
   fi
 fi
 

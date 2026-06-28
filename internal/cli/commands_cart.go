@@ -116,6 +116,7 @@ func newCartAddCommand(deps Dependencies) *cobra.Command {
 	var currencyOverride string
 	var venueSlug string
 	var nameQuery string
+	var cheapest bool
 	var lat float64
 	var lon float64
 	var latSet bool
@@ -128,9 +129,11 @@ func newCartAddCommand(deps Dependencies) *cobra.Command {
 			"<item-id> accepts a 24-char Mongo ObjectID or a Wolt item URL\n" +
 			"(.../venue/<slug>/itemid-<id>). Omit <item-id> and pass\n" +
 			"--query \"<name>\" to look the item up by name in the venue menu\n" +
-			"(must match exactly one item). When the only positional arg is a\n" +
-			"Wolt item URL, the venue slug is read from the URL — no separate\n" +
-			"<venue> argument needed.",
+			"(must match exactly one item). Add --cheapest to take the cheapest\n" +
+			"in-stock match instead of erroring on ambiguity, or use --cheapest\n" +
+			"alone to add the venue's cheapest in-stock item. When the only\n" +
+			"positional arg is a Wolt item URL, the venue slug is read from the\n" +
+			"URL — no separate <venue> argument needed.",
 		Args: cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			format, err := parseOutputFormat(flags.Format)
@@ -185,31 +188,50 @@ func newCartAddCommand(deps Dependencies) *cobra.Command {
 				venueSlug = itemRef.VenueSlugHint
 			}
 			if itemID == "" {
-				if strings.TrimSpace(nameQuery) == "" {
-					return fmt.Errorf("either <item-id> or --query is required")
-				}
 				slugForLookup := strings.TrimSpace(venueSlug)
 				if slugForLookup == "" {
 					slugForLookup = strings.TrimSpace(venueArg)
 				}
-				if slugForLookup == "" {
-					return fmt.Errorf("--query requires a venue slug to search; pass the venue slug (or URL) as the first argument")
-				}
-				match, lookupErr := resolveItemByName(
-					cmd.Context(),
-					deps,
-					slugForLookup,
-					venueID,
-					nameQuery,
-					domain.ResolveAssortmentLanguage(flags.Locale),
-					auth,
-				)
-				if lookupErr != nil {
-					return lookupErr
-				}
-				itemID = match.ID
-				if strings.TrimSpace(nameOverride) == "" {
-					nameOverride = match.Name
+				switch {
+				case cheapest:
+					if slugForLookup == "" {
+						return fmt.Errorf("--cheapest requires a venue slug to search; pass the venue slug (or URL) as the first argument")
+					}
+					match, lookupErr := resolveCheapestItem(cmd.Context(), deps, slugForLookup, venueID, nameQuery)
+					if lookupErr != nil {
+						return lookupErr
+					}
+					itemID = match.ID
+					if strings.TrimSpace(nameOverride) == "" {
+						nameOverride = match.Name
+					}
+					// Carry the resolved price through so the add succeeds even if
+					// the per-item page lookup below comes back without one.
+					if priceOverride <= 0 {
+						priceOverride = match.Price
+					}
+				case strings.TrimSpace(nameQuery) != "":
+					if slugForLookup == "" {
+						return fmt.Errorf("--query requires a venue slug to search; pass the venue slug (or URL) as the first argument")
+					}
+					match, lookupErr := resolveItemByName(
+						cmd.Context(),
+						deps,
+						slugForLookup,
+						venueID,
+						nameQuery,
+						domain.ResolveAssortmentLanguage(flags.Locale),
+						auth,
+					)
+					if lookupErr != nil {
+						return lookupErr
+					}
+					itemID = match.ID
+					if strings.TrimSpace(nameOverride) == "" {
+						nameOverride = match.Name
+					}
+				default:
+					return fmt.Errorf("either <item-id> or --query is required")
 				}
 			}
 			if venueID == "" || itemID == "" {
@@ -489,7 +511,8 @@ func newCartAddCommand(deps Dependencies) *cobra.Command {
 	cmd.Flags().IntVar(&priceOverride, "price", 0, "Override item price in minor units.")
 	cmd.Flags().StringVar(&currencyOverride, "currency", "", "Override basket currency, for example EUR.")
 	cmd.Flags().StringVar(&venueSlug, "venue-slug", "", "Venue slug used to enrich item metadata/options when needed.")
-	cmd.Flags().StringVar(&nameQuery, "query", "", "Resolve <item-id> by searching the venue menu for an exact-name match. Errors when the query is ambiguous.")
+	cmd.Flags().StringVar(&nameQuery, "query", "", "Resolve <item-id> by searching the venue menu for an exact-name match. Errors when the query is ambiguous (use --cheapest to take the cheapest match instead).")
+	cmd.Flags().BoolVar(&cheapest, "cheapest", false, "Resolve <item-id> to the cheapest in-stock menu item, optionally narrowed by --query. Skips sold-out and unpriced items; picks deterministically rather than erroring on ambiguity.")
 	cmd.Flags().Float64Var(&lat, "lat", 0, "Latitude override for cart totals refresh. Provide together with --lon.")
 	cmd.Flags().Float64Var(&lon, "lon", 0, "Longitude override for cart totals refresh. Provide together with --lat.")
 	addGlobalFlags(cmd, &flags)
