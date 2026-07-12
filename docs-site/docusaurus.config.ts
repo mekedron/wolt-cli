@@ -86,19 +86,25 @@ const config: Config = {
         src: 'img/logo.png',
       },
       items: [
-        {to: '/#features', label: 'Features', position: 'left'},
-        {to: '/#install', label: 'Install', position: 'left'},
+        // Every `/#anchor` item resolves to pathname `/`, so on the home page
+        // Docusaurus would mark all of them active at once. A regex that can
+        // never match a pathname keeps them inactive, leaving Docs — the only
+        // item pointing at a real route — as the sole link that can light up.
+        ...[
+          {to: '/#features', label: 'Features'},
+          {to: '/#install', label: 'Install'},
+          {to: '/#example', label: 'Example'},
+          {to: '/#commands', label: 'Commands'},
+          {to: '/#agents', label: 'AI agents'},
+          {to: '/#faq', label: 'FAQ'},
+          {to: '/#support', label: 'Support'},
+        ].map((item) => ({...item, position: 'left' as const, activeBaseRegex: '^$'})),
         {
           type: 'docSidebar',
           sidebarId: 'tutorialSidebar',
           position: 'left',
           label: 'Docs',
         },
-        {to: '/#example', label: 'Example', position: 'left'},
-        {to: '/#commands', label: 'Commands', position: 'left'},
-        {to: '/#agents', label: 'AI agents', position: 'left'},
-        {to: '/#faq', label: 'FAQ', position: 'left'},
-        {to: '/#support', label: 'Support', position: 'left'},
         {
           href: 'https://buymeacoffee.com/mekedron',
           label: 'Donate',
