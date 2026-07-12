@@ -123,6 +123,7 @@
 
 /* Grid items default to min-width: auto and grow with content (long <pre>
    lines, nowrap labels). Force them shrinkable. */
+.wcli-home .hero__grid > *,
 .wcli-home .features__grid > *,
 .wcli-home .install__after > *,
 .wcli-home .steps > *,
@@ -246,6 +247,10 @@
    ============================================================ */
 
 .wcli-home .hero {
+  /* Infima owns `.hero` too and sets `display: flex`, which would turn
+     .hero__grid into a content-sized flex item and blow out the gutters. */
+  display: block;
+  color: var(--fg);
   position: relative;
   width: 100%;
   padding: clamp(56px, 9vw, 120px) var(--gutter) clamp(64px, 8vw, 110px);
