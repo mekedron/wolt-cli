@@ -273,12 +273,35 @@ func newCartAddCommand(deps Dependencies) *cobra.Command {
 			if ref := strings.TrimSpace(venueArg); ref != "" && !looksLikeObjectID(ref) {
 				slugCandidates = append(slugCandidates, normalizeVenueInput(ref))
 			}
-			if restaurant, restaurantErr := deps.Wolt.RestaurantByID(cmd.Context(), venueID); restaurantErr == nil && restaurant != nil {
-				if restaurantSlug := strings.TrimSpace(restaurant.Slug); restaurantSlug != "" {
-					slugCandidates = append(slugCandidates, restaurantSlug)
-				}
-			}
 			slugCandidates = dedupeStrings(slugCandidates)
+
+			// RestaurantByID is an extra upstream round-trip on the path of
+			// every add, so it is consulted lazily: only when no slug was given
+			// explicitly, or when the explicit ones did not resolve the item.
+			restaurantSlugTried := false
+			appendRestaurantSlug := func() bool {
+				if restaurantSlugTried {
+					return false
+				}
+				restaurantSlugTried = true
+				restaurant, restaurantErr := deps.Wolt.RestaurantByID(cmd.Context(), venueID)
+				if restaurantErr != nil || restaurant == nil {
+					return false
+				}
+				restaurantSlug := strings.TrimSpace(restaurant.Slug)
+				if restaurantSlug == "" {
+					return false
+				}
+				extended := dedupeStrings(append(slugCandidates, restaurantSlug))
+				if len(extended) == len(slugCandidates) {
+					return false
+				}
+				slugCandidates = extended
+				return true
+			}
+			if len(slugCandidates) == 0 {
+				appendRestaurantSlug()
+			}
 			if len(slugCandidates) == 0 {
 				return emitError(
 					cmd,
@@ -293,7 +316,8 @@ func newCartAddCommand(deps Dependencies) *cobra.Command {
 
 			currentAssortmentPayload := map[string]any{}
 			availabilityLookupSucceeded := false
-			for _, candidateSlug := range slugCandidates {
+			for index := 0; index < len(slugCandidates); index++ {
+				candidateSlug := slugCandidates[index]
 				payload, availabilityWarnings, availabilityErr := invokeWithAuthAutoRefresh(
 					cmd.Context(),
 					deps,
@@ -312,15 +336,19 @@ func newCartAddCommand(deps Dependencies) *cobra.Command {
 				warnings = append(warnings, availabilityWarnings...)
 				if availabilityErr != nil {
 					warnings = append(warnings, fmt.Sprintf("availability lookup failed for venue slug %s", candidateSlug))
-					continue
+				} else {
+					availabilityLookupSucceeded = true
+					if catalogitem.Find(payload, itemID) != nil {
+						currentAssortmentPayload = payload
+						venueSlug = candidateSlug
+						break
+					}
 				}
-				availabilityLookupSucceeded = true
-				if catalogitem.Find(payload, itemID) == nil {
-					continue
+				// Explicit candidates are exhausted without a hit; fall back to
+				// the slug Wolt reports for this venue id before giving up.
+				if index == len(slugCandidates)-1 {
+					appendRestaurantSlug()
 				}
-				currentAssortmentPayload = payload
-				venueSlug = candidateSlug
-				break
 			}
 			if !availabilityLookupSucceeded {
 				return emitErrorWithWarnings(

@@ -1469,6 +1469,10 @@ func TestVenueSearchScopedByVenue(t *testing.T) {
 				"disabled_info":    nil,
 				"promotions":       []any{"10% off"},
 				"option_group_ids": []any{"opt-1"},
+				"unit_info":        "1 l",
+				"images": []any{
+					map[string]any{"url": "https://imageproxy.wolt.com/assets/milk", "blurhash": "blur"},
+				},
 			},
 			map[string]any{
 				"id":                  "item-2",
@@ -1553,6 +1557,21 @@ func TestVenueSearchScopedByVenue(t *testing.T) {
 	first := asMapPayload(t, items[0])
 	if first["item_id"] != "item-1" {
 		t.Fatalf("expected item-1, got %v", first["item_id"])
+	}
+	// docs/output-contract.md declares availability and image metadata on
+	// VenueItemSearchResult rows; the CLI builds these rows itself, so it must
+	// emit them rather than leaving the contract to the MCP surface alone.
+	if first["is_available"] != true {
+		t.Fatalf("expected is_available true, got %v", first["is_available"])
+	}
+	if first["image_url"] != "https://imageproxy.wolt.com/assets/milk" {
+		t.Fatalf("expected image_url, got %v", first["image_url"])
+	}
+	if first["unit_info"] != "1 l" {
+		t.Fatalf("expected unit_info, got %v", first["unit_info"])
+	}
+	if _, exists := first["purchasable_balance"]; !exists {
+		t.Fatalf("expected purchasable_balance key in row: %v", first)
 	}
 	if first["category"] != "Dairy" {
 		t.Fatalf("expected Dairy category, got %v", first["category"])

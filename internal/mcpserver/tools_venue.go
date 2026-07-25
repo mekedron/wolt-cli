@@ -214,6 +214,9 @@ func (tc *ToolCtx) handleVenueItem(ctx context.Context, _ *mcp.CallToolRequest, 
 	} else if pageErr != nil {
 		return nil, VenueItemOutput{}, toolErr(pageErr)
 	}
+	if payload == nil {
+		payload = map[string]any{}
+	}
 	if currency := resolveVenueCurrency(ctx, tc, ref, nil, payload); currency != "" {
 		payload["currency"] = currency
 	}

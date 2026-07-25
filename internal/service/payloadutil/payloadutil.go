@@ -9,11 +9,15 @@ import (
 
 var currencyCodePattern = regexp.MustCompile(`(?:^|[^A-Z])([A-Z]{3})(?:[^A-Z]|$)`)
 
-var knownCurrencies = map[string]struct{}{
-	"AED": {}, "AZN": {}, "BGN": {}, "CHF": {}, "CZK": {}, "DKK": {},
-	"EUR": {}, "GBP": {}, "GEL": {}, "HUF": {}, "ILS": {}, "ISK": {},
-	"JPY": {}, "KZT": {}, "NOK": {}, "PLN": {}, "RON": {}, "RSD": {},
-	"SEK": {}, "TRY": {}, "UAH": {}, "USD": {},
+// inferableCurrencies gates the *heuristic* code scan in InferCurrency only, so
+// that ordinary three-letter words in a formatted label ("THE total") are not
+// mistaken for currency codes. It must never gate an explicitly typed currency
+// field — see NormalizeCurrency.
+var inferableCurrencies = map[string]struct{}{
+	"AED": {}, "ALL": {}, "AZN": {}, "BGN": {}, "CHF": {}, "CZK": {},
+	"DKK": {}, "EUR": {}, "GBP": {}, "GEL": {}, "HUF": {}, "ILS": {},
+	"ISK": {}, "JPY": {}, "KZT": {}, "MKD": {}, "NOK": {}, "PLN": {},
+	"RON": {}, "RSD": {}, "SEK": {}, "TRY": {}, "UAH": {}, "USD": {},
 }
 
 type OptionValueSpec struct {
@@ -120,18 +124,34 @@ func InferCurrency(formatted string) string {
 	}
 	match := currencyCodePattern.FindStringSubmatch(strings.ToUpper(formatted))
 	if len(match) == 2 {
-		return NormalizeCurrency(match[1])
+		if _, ok := inferableCurrencies[match[1]]; ok {
+			return match[1]
+		}
 	}
 	return ""
 }
 
-// NormalizeCurrency returns a supported uppercase ISO 4217 code or an empty
-// string. Restricting codes prevents ordinary three-letter words in formatted
-// labels from being mistaken for currencies.
+// NormalizeCurrency validates the *shape* of an explicitly stated currency and
+// returns it uppercased, or "" when the value is not an ISO 4217 alphabetic
+// code.
+//
+// It deliberately does not consult an allowlist. Wolt states the currency
+// explicitly in venue and basket payloads, and callers treat an empty result as
+// "currency unverifiable" and fail closed — so gating explicit values on a
+// hand-maintained list would take live markets offline whenever the list drifts
+// behind Wolt's footprint. Verified against production: Albania reports "ALL"
+// and North Macedonia reports "MKD", neither of which was on the original list.
+// Guessing a code out of a formatted label is the only place an allowlist
+// belongs; see inferableCurrencies.
 func NormalizeCurrency(value string) string {
 	code := strings.ToUpper(strings.TrimSpace(value))
-	if _, ok := knownCurrencies[code]; !ok {
+	if len(code) != 3 {
 		return ""
+	}
+	for _, r := range code {
+		if r < 'A' || r > 'Z' {
+			return ""
+		}
 	}
 	return code
 }

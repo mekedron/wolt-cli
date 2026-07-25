@@ -2,7 +2,6 @@ package catalogitem
 
 import (
 	"encoding/json"
-	"fmt"
 	"strconv"
 	"strings"
 
@@ -252,19 +251,4 @@ func number(value any) (float64, bool) {
 	default:
 		return 0, false
 	}
-}
-
-// UnavailableMessage creates a stable human-readable mutation error.
-func UnavailableMessage(itemID string, item map[string]any, availability Availability) string {
-	name := strings.TrimSpace(payloadutil.String(payloadutil.CoalesceAny(item["name"], item["title"])))
-	if name == "" {
-		name = strings.TrimSpace(itemID)
-	}
-	if name == "" {
-		name = "item"
-	}
-	if availability.Reason == "" {
-		return fmt.Sprintf("%s is unavailable", name)
-	}
-	return fmt.Sprintf("%s is unavailable: %s", name, availability.Reason)
 }

@@ -403,19 +403,31 @@ func BuildItemDetail(itemID string, venueID string, payload map[string]any, incl
 	return data, warnings
 }
 
+// CurrentItemMetadataKeys lists the availability and product-metadata fields
+// that every normalized item row carries. Row builders outside this package
+// use it so the CLI and MCP surfaces cannot drift apart, or from the documented
+// output contract.
+var CurrentItemMetadataKeys = []string{
+	"is_available",
+	"unavailable_reason",
+	"is_sold_out",
+	"purchasable_balance",
+	"image_url",
+	"image_urls",
+	"image_blurhash",
+	"unit_info",
+	"unit_price",
+	"sell_by_weight_config",
+}
+
+// CopyItemMetadata copies every present CurrentItemMetadataKeys entry from
+// source onto target.
+func CopyItemMetadata(target map[string]any, source map[string]any) {
+	copyItemMetadata(target, source)
+}
+
 func copyItemMetadata(target map[string]any, source map[string]any) {
-	for _, key := range []string{
-		"is_available",
-		"unavailable_reason",
-		"is_sold_out",
-		"purchasable_balance",
-		"image_url",
-		"image_urls",
-		"image_blurhash",
-		"unit_info",
-		"unit_price",
-		"sell_by_weight_config",
-	} {
+	for _, key := range CurrentItemMetadataKeys {
 		if value, exists := source[key]; exists {
 			target[key] = value
 		}

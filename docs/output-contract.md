@@ -343,6 +343,10 @@ the mutation when it is disabled, has zero purchasable balance, is missing
 from the current assortment, or cannot be validated. Explicit `--price`,
 `--currency`, and `--name` values do not bypass this check.
 
+`total.formatted_amount` is `null` for `clear`, where the emptied basket has no
+venue currency left to format against. It is never formatted with a guessed
+currency.
+
 ### `wolt checkout` — CheckoutPreview
 
 ```

@@ -1232,6 +1232,7 @@ func buildVenueItemSearchData(
 			"discounts":   item["discounts"],
 			"is_sold_out": item["is_sold_out"],
 		}
+		observability.CopyItemMetadata(row, item)
 		if hasAmountValue(originalPrice) {
 			row["original_price"] = originalPrice
 		}

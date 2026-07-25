@@ -132,6 +132,38 @@ func TestInferCurrency(t *testing.T) {
 	}
 }
 
+// TestNormalizeCurrencyKeepsUnlistedMarkets guards the regression where an
+// allowlist gated explicitly stated currencies: callers fail closed on an empty
+// result, so dropping a valid code takes a whole market offline. Verified
+// against production venue payloads — Albania reports "ALL", North Macedonia
+// reports "MKD".
+func TestNormalizeCurrencyKeepsUnlistedMarkets(t *testing.T) {
+	for _, code := range []string{"ALL", "MKD", "AMD", "KGS", "UZS", "GEL", "EUR"} {
+		if got := NormalizeCurrency(code); got != code {
+			t.Errorf("NormalizeCurrency(%q) = %q, want %q", code, got, code)
+		}
+	}
+	if got := NormalizeCurrency("  gel "); got != "GEL" {
+		t.Errorf("NormalizeCurrency trims and uppercases: got %q", got)
+	}
+	for _, invalid := range []string{"", "EU", "EUROS", "E1R", "12.50", "€"} {
+		if got := NormalizeCurrency(invalid); got != "" {
+			t.Errorf("NormalizeCurrency(%q) = %q, want empty", invalid, got)
+		}
+	}
+}
+
+func TestCurrencyFromPayloadsAcceptsUnlistedCodes(t *testing.T) {
+	venue := map[string]any{"venue": map[string]any{"currency": "ALL"}}
+	if got := CurrencyFromVenuePayload(venue); got != "ALL" {
+		t.Errorf("CurrencyFromVenuePayload = %q, want ALL", got)
+	}
+	basket := map[string]any{"currency": "MKD"}
+	if got := CurrencyFromBasket(basket); got != "MKD" {
+		t.Errorf("CurrencyFromBasket = %q, want MKD", got)
+	}
+}
+
 func TestExtractOptionSpecs(t *testing.T) {
 	payload := map[string]any{
 		"option_groups": []any{
