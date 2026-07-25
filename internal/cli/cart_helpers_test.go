@@ -104,6 +104,7 @@ func TestBuildItemPayloadFromAssortment(t *testing.T) {
 
 func TestBuildItemPayloadFromMenuPayload(t *testing.T) {
 	payload := map[string]any{
+		"venue": map[string]any{"currency": "GEL"},
 		"sections": []any{
 			map[string]any{
 				"name": "Deals",
@@ -139,8 +140,8 @@ func TestBuildItemPayloadFromMenuPayload(t *testing.T) {
 	if asInt(asMap(itemPayload["price"])["amount"]) != 299 {
 		t.Fatalf("expected item price 299, got %v", asMap(itemPayload["price"])["amount"])
 	}
-	if asString(asMap(itemPayload["price"])["currency"]) != "EUR" {
-		t.Fatalf("expected fallback currency EUR, got %v", asMap(itemPayload["price"])["currency"])
+	if asString(asMap(itemPayload["price"])["currency"]) != "GEL" {
+		t.Fatalf("expected venue currency GEL, got %v", asMap(itemPayload["price"])["currency"])
 	}
 	groups := asSlice(itemPayload["option_groups"])
 	if len(groups) != 1 {

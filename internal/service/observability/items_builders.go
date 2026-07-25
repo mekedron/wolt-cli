@@ -53,12 +53,14 @@ func BuildVenueMenu(venueID string, payloads []map[string]any, category string, 
 			applyCampaignPriceFraction(basePrice, originalPrice, campaign.maxFraction)
 		}
 		row := map[string]any{
-			"item_id":     item["item_id"],
-			"name":        item["name"],
-			"base_price":  basePrice,
-			"discounts":   discountLabels,
-			"is_sold_out": boolValue(item["is_sold_out"]),
+			"item_id":      item["item_id"],
+			"name":         item["name"],
+			"base_price":   basePrice,
+			"discounts":    discountLabels,
+			"is_available": boolValue(item["is_available"]),
+			"is_sold_out":  boolValue(item["is_sold_out"]),
 		}
+		copyItemMetadata(row, item)
 		if intValue(originalPrice["amount"]) > 0 {
 			row["original_price"] = originalPrice
 		}
@@ -295,8 +297,9 @@ func BuildItemSearchResult(
 					"currency":         emptyToNil(item.Venue.Currency),
 					"formatted_amount": nil,
 				},
-				"category":    "venue",
-				"is_sold_out": false,
+				"category":     "venue",
+				"is_available": true,
+				"is_sold_out":  false,
 			})
 		}
 	}
@@ -328,7 +331,7 @@ func BuildItemSearchResult(
 	for _, item := range menuItems {
 		basePrice := normalizeBasePrice(toMap(item["base_price"]), fallbackCurrency)
 		originalPrice := normalizeBasePrice(toMap(item["original_price"]), fallbackCurrency)
-		rows = append(rows, map[string]any{
+		row := map[string]any{
 			"item_id":        item["item_id"],
 			"venue_id":       coalesce(item["venue_id"], ""),
 			"venue_slug":     coalesce(item["venue_slug"], ""),
@@ -337,8 +340,11 @@ func BuildItemSearchResult(
 			"original_price": originalPrice,
 			"discounts":      item["discounts"],
 			"currency":       basePrice["currency"],
+			"is_available":   boolValue(item["is_available"]),
 			"is_sold_out":    boolValue(item["is_sold_out"]),
-		})
+		}
+		copyItemMetadata(row, item)
+		rows = append(rows, row)
 	}
 
 	return map[string]any{
@@ -393,5 +399,25 @@ func BuildItemDetail(itemID string, venueID string, payload map[string]any, incl
 		"option_groups": extractOptionGroups(payload),
 		"upsell_items":  upsellItems,
 	}
+	copyItemMetadata(data, sourceItem)
 	return data, warnings
+}
+
+func copyItemMetadata(target map[string]any, source map[string]any) {
+	for _, key := range []string{
+		"is_available",
+		"unavailable_reason",
+		"is_sold_out",
+		"purchasable_balance",
+		"image_url",
+		"image_urls",
+		"image_blurhash",
+		"unit_info",
+		"unit_price",
+		"sell_by_weight_config",
+	} {
+		if value, exists := source[key]; exists {
+			target[key] = value
+		}
+	}
 }

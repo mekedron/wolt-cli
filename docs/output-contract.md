@@ -253,7 +253,11 @@ count, total, offset, limit, total_pages, next_offset, page
 ```
 venue_id, wolt_plus
 categories[]
-items[]: { item_id, name, base_price, discounts }
+items[]: {
+  item_id, name, base_price, discounts,
+  is_available, unavailable_reason, purchasable_balance,
+  image_url, image_urls
+}
 
 # Optional
 items[].original_price          (campaign-adjusted)
@@ -265,7 +269,11 @@ count, offset, limit, total_pages, next_offset, page, sort
 
 ```
 venue_id, venue_slug, query, total
-items[]: { item_id, name, category, base_price, discounts, is_sold_out }
+items[]: {
+  item_id, name, category, base_price, discounts,
+  is_available, unavailable_reason, purchasable_balance,
+  image_url, image_urls
+}
 
 # Optional
 items[].original_price          (upstream pre-discount amount)
@@ -276,6 +284,11 @@ count, offset, limit, total_pages, next_offset, page, sort
 When upstream omits the currency, it is normalized from venue metadata.
 When `original_price` is present without a promo label, the CLI derives
 a synthetic discount (e.g. `21% off`).
+
+Availability is derived from Wolt's current `disabled_info` and
+`purchasable_balance` fields. `is_sold_out` remains as a deprecated,
+derived compatibility alias (`!is_available`); raw `is_sold_out` and
+`sold_out` fields are not expected from Wolt.
 
 ### `wolt venue hours <slug>` — VenueHours
 
@@ -289,12 +302,16 @@ opening_windows[]
 
 ```
 item_id, venue_id, name, description, price
+is_available, unavailable_reason, purchasable_balance
+image_url, image_urls, image_blurhash
 option_groups[]
 upsell_items[]
 ```
 
 `price.formatted_amount` is normalized from venue metadata when upstream
 omits the currency. `upsell_items[].price` follows the same rule.
+The exact current-item response is merged with the item page so current image
+and availability metadata are preserved alongside option groups.
 
 ### `wolt cart` — CartState
 
@@ -321,6 +338,11 @@ remove: basket_id, venue_id, line_id, removed_count
 clear:  basket_ids[], cleared_baskets
 ```
 
+Before `cart add`, the CLI always fetches the exact current item and refuses
+the mutation when it is disabled, has zero purchasable balance, is missing
+from the current assortment, or cannot be validated. Explicit `--price`,
+`--currency`, and `--name` values do not bypass this check.
+
 ### `wolt checkout` — CheckoutPreview
 
 ```
@@ -334,6 +356,9 @@ tip_config
 ```
 
 Preview-only. The CLI never calls the order placement endpoint.
+Every basket item is revalidated through the exact current-item endpoint
+before preview. Currency comes from structured item, basket, or venue metadata
+(including GEL); there is no implicit EUR fallback.
 
 ### `wolt stats` — StatsLaunch
 

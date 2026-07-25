@@ -115,6 +115,13 @@ func TestInferCurrency(t *testing.T) {
 		{"$9.99", "USD"},
 		{"PLN 20", "PLN"},
 		{"  €5 ", "EUR"},
+		{"GEL0.00", "GEL"},
+		{"GEL 16.45", "GEL"},
+		{"₾16.45", "GEL"},
+		{"SEK 149.00", "SEK"},
+		{"149,00 DKK", "DKK"},
+		{"NOK129.00", "NOK"},
+		{"the total", ""},
 		{"12.50", ""}, // no recognizable symbol
 		{"", ""},
 	}

@@ -288,6 +288,12 @@ resolved (an unknown slug, or one Wolt no longer serves) `cart add`
 fails with `WOLT_VENUE_UNRESOLVED` instead of reporting a success that
 never reaches your cart.
 
+It then refreshes the exact current item. A non-null `disabled_info`,
+zero `purchasable_balance`, or a missing current item blocks the mutation
+even when `--price`, `--currency`, and `--name` are supplied. Currency is
+resolved from current item, basket, or venue metadata; the command fails
+instead of silently defaulting to EUR.
+
 `--option` accepts both IDs and case-insensitive names:
 
 ```console

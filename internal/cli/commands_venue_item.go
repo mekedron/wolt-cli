@@ -9,6 +9,7 @@ import (
 
 	"github.com/mekedron/wolt-cli/internal/domain"
 	woltgateway "github.com/mekedron/wolt-cli/internal/gateway/wolt"
+	"github.com/mekedron/wolt-cli/internal/service/catalogitem"
 	"github.com/mekedron/wolt-cli/internal/service/observability"
 	"github.com/mekedron/wolt-cli/internal/service/output"
 	"github.com/spf13/cobra"
@@ -1057,6 +1058,7 @@ func resolveVenueItemPayloadBySlug(
 	assortmentPayload := map[string]any{}
 	venueContentPayloads := []map[string]any{}
 	venueContentLoaded := false
+	currentItem := map[string]any{}
 	loadVenueContent := func() {
 		if venueContentLoaded {
 			return
@@ -1079,6 +1081,11 @@ func resolveVenueItemPayloadBySlug(
 	} else {
 		warnings = append(warnings, "venue assortment endpoint unavailable")
 	}
+	if payload, err := deps.Wolt.AssortmentItemsByVenueSlug(ctx, venueSlug, []string{itemID}, auth); err == nil {
+		currentItem = catalogitem.Find(payload, itemID)
+	} else {
+		warnings = append(warnings, "current item endpoint unavailable")
+	}
 	if needsVenueContentFallback(assortmentPayload, venueID) {
 		loadVenueContent()
 	}
@@ -1087,6 +1094,9 @@ func resolveVenueItemPayloadBySlug(
 	if venueID != "" {
 		if itemPayload, err := deps.Wolt.VenueItemPage(ctx, venueID, itemID); err == nil {
 			payload = itemPayload
+			if len(currentItem) > 0 {
+				payload = catalogitem.MergeCurrentItem(payload, currentItem)
+			}
 			if fallback := buildItemPayloadFromAssortment(assortmentPayload, itemID); fallback != nil {
 				payload = mergeItemPayloadFallback(payload, fallback)
 			}
@@ -1100,6 +1110,9 @@ func resolveVenueItemPayloadBySlug(
 			warnings = append(warnings, "item endpoint unavailable")
 			if fallback := buildItemPayloadFromAssortment(assortmentPayload, itemID); fallback != nil {
 				payload = fallback
+			}
+			if len(currentItem) > 0 {
+				payload = catalogitem.MergeCurrentItem(payload, currentItem)
 			}
 			if !payloadContainsItem(payload, venueID, itemID) {
 				if len(venueContentPayloads) == 0 {
@@ -1117,6 +1130,14 @@ func resolveVenueItemPayloadBySlug(
 	}
 	if len(payload) == 0 && len(assortmentPayload) > 0 {
 		payload = assortmentPayload
+	}
+	if len(currentItem) > 0 {
+		payload = catalogitem.MergeCurrentItem(payload, currentItem)
+	}
+	if len(payload) > 0 {
+		if currency := currencyFromVenue(ctx, deps, venueSlug); currency != "" {
+			payload["currency"] = currency
+		}
 	}
 	if len(payload) == 0 {
 		warnings = append(warnings, "item payload fallback unavailable")

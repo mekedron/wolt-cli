@@ -7,7 +7,9 @@ import (
 
 	"github.com/mekedron/wolt-cli/internal/domain"
 	woltgateway "github.com/mekedron/wolt-cli/internal/gateway/wolt"
+	"github.com/mekedron/wolt-cli/internal/service/catalogitem"
 	"github.com/mekedron/wolt-cli/internal/service/output"
+	"github.com/mekedron/wolt-cli/internal/service/payloadutil"
 	"github.com/spf13/cobra"
 )
 
@@ -264,25 +266,98 @@ func newCartAddCommand(deps Dependencies) *cobra.Command {
 			}
 
 			warnings := []string{}
+			slugCandidates := []string{}
+			if overrideSlug := strings.TrimSpace(venueSlug); overrideSlug != "" {
+				slugCandidates = append(slugCandidates, overrideSlug)
+			}
+			if ref := strings.TrimSpace(venueArg); ref != "" && !looksLikeObjectID(ref) {
+				slugCandidates = append(slugCandidates, normalizeVenueInput(ref))
+			}
+			if restaurant, restaurantErr := deps.Wolt.RestaurantByID(cmd.Context(), venueID); restaurantErr == nil && restaurant != nil {
+				if restaurantSlug := strings.TrimSpace(restaurant.Slug); restaurantSlug != "" {
+					slugCandidates = append(slugCandidates, restaurantSlug)
+				}
+			}
+			slugCandidates = dedupeStrings(slugCandidates)
+			if len(slugCandidates) == 0 {
+				return emitError(
+					cmd,
+					format,
+					profile,
+					flags.Locale,
+					flags.Output,
+					"WOLT_ITEM_AVAILABILITY_UNKNOWN",
+					"Unable to resolve the venue slug, so current item availability could not be verified. Pass the venue slug or a Wolt venue/item URL.",
+				)
+			}
+
+			currentAssortmentPayload := map[string]any{}
+			availabilityLookupSucceeded := false
+			for _, candidateSlug := range slugCandidates {
+				payload, availabilityWarnings, availabilityErr := invokeWithAuthAutoRefresh(
+					cmd.Context(),
+					deps,
+					flags,
+					&auth,
+					func(authCtx woltgateway.AuthContext) (map[string]any, error) {
+						return deps.Wolt.AssortmentItemsByVenueSlug(
+							cmd.Context(),
+							candidateSlug,
+							[]string{itemID},
+							authCtx,
+						)
+					},
+				)
+				warnings = append(warnings, availabilityWarnings...)
+				if availabilityErr != nil {
+					warnings = append(warnings, fmt.Sprintf("availability lookup failed for venue slug %s", candidateSlug))
+					continue
+				}
+				availabilityLookupSucceeded = true
+				if catalogitem.Find(payload, itemID) == nil {
+					continue
+				}
+				currentAssortmentPayload = payload
+				venueSlug = candidateSlug
+				break
+			}
+			if !availabilityLookupSucceeded {
+				return emitErrorWithWarnings(
+					cmd,
+					format,
+					profile,
+					flags.Locale,
+					flags.Output,
+					"WOLT_ITEM_AVAILABILITY_UNKNOWN",
+					"Item was not added because current availability could not be verified.",
+					warnings,
+				)
+			}
+			availabilityIssues := catalogitem.ValidateItemIDs(currentAssortmentPayload, []string{itemID})
+			if len(availabilityIssues) > 0 {
+				return emitErrorWithWarnings(
+					cmd,
+					format,
+					profile,
+					flags.Locale,
+					flags.Output,
+					"WOLT_ITEM_UNAVAILABLE",
+					"Item was not added because current availability validation failed: "+
+						catalogitem.FormatValidationIssues(availabilityIssues),
+					warnings,
+				)
+			}
+
 			itemPayload := map[string]any{}
 			if payload, itemErr := deps.Wolt.VenueItemPage(cmd.Context(), venueID, itemID); itemErr == nil {
 				itemPayload = payload
 			} else {
 				warnings = append(warnings, "item endpoint unavailable")
 			}
+			if fallback := buildItemPayloadFromAssortment(currentAssortmentPayload, itemID); fallback != nil {
+				itemPayload = mergeItemPayloadFallback(itemPayload, fallback)
+			}
 			if needsAssortmentFallback(itemPayload) {
-				slugCandidates := []string{}
-				if overrideSlug := strings.TrimSpace(venueSlug); overrideSlug != "" {
-					slugCandidates = append(slugCandidates, overrideSlug)
-				}
-				if ref := strings.TrimSpace(venueID); ref != "" && !looksLikeObjectID(ref) {
-					slugCandidates = append(slugCandidates, ref)
-				}
-				if restaurant, err := deps.Wolt.RestaurantByID(cmd.Context(), venueID); err == nil && restaurant != nil {
-					if restaurantSlug := strings.TrimSpace(restaurant.Slug); restaurantSlug != "" {
-						slugCandidates = append(slugCandidates, restaurantSlug)
-					}
-				}
 				for _, candidateSlug := range dedupeStrings(slugCandidates) {
 					assortmentPayload := map[string]any{}
 					if payload, err := deps.Wolt.AssortmentByVenueSlug(cmd.Context(), candidateSlug); err == nil {
@@ -332,12 +407,15 @@ func newCartAddCommand(deps Dependencies) *cobra.Command {
 				)
 			}
 
-			currency := strings.TrimSpace(currencyOverride)
+			currency := payloadutil.NormalizeCurrency(currencyOverride)
 			if currency == "" {
-				currency = strings.TrimSpace(asString(asMap(itemPayload["price"])["currency"]))
+				currency = currencyFromItemPayload(itemPayload)
 			}
 			if currency == "" {
-				currency = "EUR"
+				currency = payloadutil.CurrencyFromVenuePayload(currentAssortmentPayload)
+			}
+			if currency == "" {
+				currency = currencyFromVenue(cmd.Context(), deps, venueSlug)
 			}
 
 			selectedOptions, err := parseOptionSelections(optionFlags)
@@ -374,6 +452,9 @@ func newCartAddCommand(deps Dependencies) *cobra.Command {
 			if preAddErr == nil {
 				selectedBasket, _, _ := selectBasketWithMeta(existingPage, venueID)
 				if selectedBasket != nil {
+					if currency == "" {
+						currency = payloadutil.CurrencyFromBasket(selectedBasket)
+					}
 					resolvedVenue := asMap(selectedBasket["venue"])
 					if resolvedVenueID := strings.TrimSpace(asString(resolvedVenue["id"])); resolvedVenueID != "" {
 						venueMutationID = resolvedVenueID
@@ -406,6 +487,17 @@ func newCartAddCommand(deps Dependencies) *cobra.Command {
 				}
 			} else {
 				warnings = append(warnings, "unable to load existing basket snapshot before add; upstream may replace existing lines")
+			}
+			if currency == "" {
+				return emitError(
+					cmd,
+					format,
+					profile,
+					flags.Locale,
+					flags.Output,
+					"WOLT_CURRENCY_UNKNOWN",
+					"Item was not added because the venue currency could not be verified.",
+				)
 			}
 
 			// Refuse to POST when the venue still hasn't resolved to a real
@@ -674,9 +766,25 @@ func newCartRemoveCommand(deps Dependencies) *cobra.Command {
 			basketID := asString(selected["id"])
 			venue := asMap(selected["venue"])
 			venueResolvedID := asString(venue["id"])
-			currency := inferCurrency(asString(selected["total"]))
+			currency := payloadutil.CurrencyFromBasket(selected)
 			if currency == "" {
-				currency = "EUR"
+				currency = currencyFromVenue(cmd.Context(), deps, asString(coalesceAny(
+					venue["slug"],
+					venue["venue_slug"],
+					venue["public_slug"],
+					venue["url_slug"],
+				)))
+			}
+			if currency == "" && nextCount > 0 {
+				return emitError(
+					cmd,
+					format,
+					profile,
+					flags.Locale,
+					flags.Output,
+					"WOLT_CURRENCY_UNKNOWN",
+					"Item quantity was not changed because the venue currency could not be verified.",
+				)
 			}
 
 			mutation := "remove"
@@ -900,7 +1008,7 @@ func newCartClearCommand(deps Dependencies) *cobra.Command {
 				"total_items":     0,
 				"total": map[string]any{
 					"amount":           0,
-					"formatted_amount": formatMinorAmount(0, "EUR"),
+					"formatted_amount": nil,
 				},
 			}
 			warnings = append(warnings, authWarnings...)
@@ -1003,7 +1111,7 @@ func buildCartState(page map[string]any, venueID string) (map[string]any, []stri
 
 	venue := asMap(selected["venue"])
 	totalFormatted := asString(selected["total"])
-	currency := inferCurrency(totalFormatted)
+	currency := payloadutil.CurrencyFromBasket(selected)
 	items := asSlice(selected["items"])
 	lines := make([]any, 0, len(items))
 	subtotalAmount := 0

@@ -36,23 +36,35 @@ func Build(
 
 	venue := payloadutil.Map(basket["venue"])
 	venueID := strings.TrimSpace(payloadutil.String(venue["id"]))
-	currency := resolveCheckoutCurrency(basket)
-	country := strings.TrimSpace(payloadutil.String(venue["country"]))
 	warnings := []string{}
 	itemDetails := map[string]map[string]any{}
 	categoryIDsByItemID := map[string]string{}
 	assortmentPayload := map[string]any{}
+	staticPayload := map[string]any{}
 
 	venueSlug := resolveBasketVenueSlug(venue)
+	if venueSlug != "" && venuePageStatic != nil {
+		if payload, err := venuePageStatic(ctx, venueSlug); err == nil {
+			staticPayload = payload
+			mergeCheckoutCategoryIndexes(categoryIDsByItemID, buildCheckoutCategoryIDIndex(payload))
+		}
+	}
+	currency := resolveCheckoutCurrency(basket, staticPayload)
+	if currency == "" {
+		return nil, warnings, fmt.Errorf("unable to resolve venue currency for checkout preview")
+	}
+	country := strings.TrimSpace(payloadutil.String(venue["country"]))
+	if country == "" {
+		staticVenue := payloadutil.Map(staticPayload["venue"])
+		country = strings.TrimSpace(payloadutil.String(staticVenue["country"]))
+	}
+
 	if venueSlug != "" && wolt != nil {
 		if payload, err := wolt.AssortmentByVenueSlug(ctx, venueSlug); err == nil {
 			assortmentPayload = payload
 			mergeCheckoutCategoryIndexes(categoryIDsByItemID, buildCheckoutCategoryIDIndex(payload))
 		} else {
 			warnings = append(warnings, fmt.Sprintf("unable to load venue assortment payload for category mapping (slug=%s)", venueSlug))
-		}
-		if payload, err := venuePageStatic(ctx, venueSlug); err == nil {
-			mergeCheckoutCategoryIndexes(categoryIDsByItemID, buildCheckoutCategoryIDIndex(payload))
 		}
 	}
 
@@ -149,24 +161,14 @@ func Build(
 	}, warnings, nil
 }
 
-// resolveCheckoutCurrency picks the basket currency, preferring the value Wolt
-// states explicitly (basket.currency / basket.total_price.currency) over a guess
-// from the formatted total. InferCurrency only recognises a few symbols (EUR,
-// USD, PLN), so inferring alone sends EUR for markets like SEK/DKK/NOK whose
-// total is absent, structured, or uses an unrecognised symbol — which can make
-// Wolt reject or mis-price the preview. Inference and the EUR default remain as
-// last resorts so behaviour is unchanged when no explicit currency is present.
-func resolveCheckoutCurrency(basket map[string]any) string {
-	if c := strings.TrimSpace(payloadutil.String(payloadutil.CoalesceAny(
-		basket["currency"],
-		payloadutil.Map(basket["total_price"])["currency"],
-	))); c != "" {
-		return c
+// resolveCheckoutCurrency never guesses a market-wide default. Sending EUR for
+// a GEL/SEK/DKK basket can mis-price or invalidate the request, so checkout
+// fails closed when neither the basket nor venue payload states a currency.
+func resolveCheckoutCurrency(basket map[string]any, venuePayload map[string]any) string {
+	if currency := payloadutil.CurrencyFromBasket(basket); currency != "" {
+		return currency
 	}
-	if c := payloadutil.InferCurrency(payloadutil.String(basket["total"])); c != "" {
-		return c
-	}
-	return "EUR"
+	return payloadutil.CurrencyFromVenuePayload(venuePayload)
 }
 
 func resolveCheckoutCategoryID(item map[string]any, detail map[string]any, itemID string, fallback map[string]string) string {

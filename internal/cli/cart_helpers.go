@@ -149,7 +149,7 @@ func buildItemPayloadFromAssortment(assortment map[string]any, itemID string) ma
 		asMap(assortment["venue"])["currency"],
 	)))
 	if currency == "" {
-		currency = "EUR"
+		currency = payloadutil.CurrencyFromVenuePayload(assortment)
 	}
 
 	optionGroupIDs := extractAssortmentOptionGroupIDs(item)
@@ -179,7 +179,17 @@ func buildItemPayloadFromAssortment(assortment map[string]any, itemID string) ma
 		"amount":   priceAmount,
 		"currency": currency,
 	}
-	return map[string]any{
+	itemRow := map[string]any{
+		"id":            targetItemID,
+		"item_id":       targetItemID,
+		"name":          item["name"],
+		"description":   coalesceAny(item["description"], ""),
+		"price":         price,
+		"base_price":    price,
+		"option_groups": optionGroups,
+		"options":       optionGroups,
+	}
+	result := map[string]any{
 		"item_id":       targetItemID,
 		"id":            targetItemID,
 		"name":          item["name"],
@@ -188,19 +198,23 @@ func buildItemPayloadFromAssortment(assortment map[string]any, itemID string) ma
 		"base_price":    price,
 		"option_groups": optionGroups,
 		"options":       optionGroups,
-		"items": []any{
-			map[string]any{
-				"id":            targetItemID,
-				"item_id":       targetItemID,
-				"name":          item["name"],
-				"description":   coalesceAny(item["description"], ""),
-				"price":         price,
-				"base_price":    price,
-				"option_groups": optionGroups,
-				"options":       optionGroups,
-			},
-		},
+		"items":         []any{itemRow},
 	}
+	for _, key := range []string{
+		"images",
+		"disabled_info",
+		"purchasable_balance",
+		"unit_info",
+		"unit_price",
+		"sell_by_weight_config",
+		"available_times",
+	} {
+		if value, exists := item[key]; exists {
+			result[key] = value
+			itemRow[key] = value
+		}
+	}
+	return result
 }
 
 func extractAssortmentOptionGroupIDs(item map[string]any) []string {

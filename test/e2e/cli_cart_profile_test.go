@@ -731,6 +731,16 @@ func TestCartAddUsesVenueSlugAssortmentFallback(t *testing.T) {
 			venueItemPageFunc: func(context.Context, string, string) (map[string]any, error) {
 				return nil, errors.New("item endpoint unavailable")
 			},
+			assortmentItemsFn: func(context.Context, string, []string, woltgateway.AuthContext) (map[string]any, error) {
+				return map[string]any{"items": []any{
+					map[string]any{
+						"id":                  "item-1",
+						"name":                "Classics set",
+						"price":               1700,
+						"purchasable_balance": 10,
+					},
+				}}, nil
+			},
 			restaurantByIDFunc: func(context.Context, string) (*domain.Restaurant, error) {
 				return nil, errors.New("restaurant endpoint unavailable")
 			},
@@ -1003,6 +1013,61 @@ func TestCartAddRejectsUnresolvedVenue(t *testing.T) {
 	}
 }
 
+func TestCartAddBlocksUnavailableItemEvenWithOverrides(t *testing.T) {
+	const venueID = "5f9a1b2c3d4e5f6071829304"
+	const itemID = "627cb2c7e2a6f0a1b2c3d4e5"
+	addCalled := false
+	deps := cli.Dependencies{
+		Wolt: &mockWolt{
+			venuePageStaticFunc: func(context.Context, string) (map[string]any, error) {
+				return map[string]any{"venue": map[string]any{"id": venueID, "currency": "GEL"}}, nil
+			},
+			assortmentItemsFn: func(context.Context, string, []string, woltgateway.AuthContext) (map[string]any, error) {
+				return map[string]any{"items": []any{
+					map[string]any{
+						"id":                  itemID,
+						"name":                "Chicken thigh",
+						"disabled_info":       map[string]any{"disable_text": "Sold out"},
+						"purchasable_balance": 0,
+					},
+				}}, nil
+			},
+			addToBasketFunc: func(context.Context, map[string]any, woltgateway.AuthContext) (map[string]any, error) {
+				addCalled = true
+				return map[string]any{}, nil
+			},
+		},
+		Profiles: &mockProfiles{profile: domain.Profile{
+			Name: "default", IsDefault: true, Location: domain.Location{Lat: 41.7, Lon: 44.8},
+		}},
+		Location: &mockLocation{},
+		Config:   &mockConfig{},
+		Version:  "1.1.1",
+	}
+
+	exitCode, out := runCLIWithDeps(
+		t,
+		deps,
+		"cart", "add",
+		"test-venue",
+		itemID,
+		"--price", "1645",
+		"--currency", "GEL",
+		"--name", "Chicken thigh",
+		"--wtoken", "token",
+		"--format", "json",
+	)
+	if exitCode == 0 {
+		t.Fatalf("expected unavailable item to be rejected; output:\n%s", out)
+	}
+	if !strings.Contains(out, "WOLT_ITEM_UNAVAILABLE") || !strings.Contains(out, "Sold out") {
+		t.Fatalf("expected availability error, got:\n%s", out)
+	}
+	if addCalled {
+		t.Fatal("AddToBasket must not be called when the exact current item is unavailable")
+	}
+}
+
 func TestCartRemoveJSON(t *testing.T) {
 	seenPayload := map[string]any{}
 	deps := cli.Dependencies{
@@ -1171,7 +1236,7 @@ func TestCheckoutPreviewJSON(t *testing.T) {
 						map[string]any{
 							"id":    "basket-1",
 							"total": "€17.00",
-							"venue": map[string]any{"id": "venue-1", "country": "FIN"},
+							"venue": map[string]any{"id": "venue-1", "country": "FIN", "slug": "venue-1-slug"},
 							"items": []any{
 								map[string]any{
 									"id":    "item-1",
@@ -1373,7 +1438,7 @@ func TestCheckoutPreviewFallsBackCategoryToItemID(t *testing.T) {
 						map[string]any{
 							"id":    "basket-1",
 							"total": "€17.00",
-							"venue": map[string]any{"id": "venue-1", "country": "FIN"},
+							"venue": map[string]any{"id": "venue-1", "country": "FIN", "slug": "venue-1-slug"},
 							"items": []any{
 								map[string]any{
 									"id":      "693f837c465e0fe77eef4630",
@@ -1443,7 +1508,7 @@ func TestCheckoutPreviewMultipleBasketsSelectionWarning(t *testing.T) {
 						map[string]any{
 							"id":    "basket-1",
 							"total": "€17.00",
-							"venue": map[string]any{"id": "venue-1", "country": "FIN"},
+							"venue": map[string]any{"id": "venue-1", "country": "FIN", "slug": "venue-1-slug"},
 							"items": []any{
 								map[string]any{"id": "item-1", "count": 1, "price": 1700, "options": []any{}},
 							},
@@ -1451,7 +1516,7 @@ func TestCheckoutPreviewMultipleBasketsSelectionWarning(t *testing.T) {
 						map[string]any{
 							"id":    "basket-2",
 							"total": "€12.00",
-							"venue": map[string]any{"id": "venue-2", "country": "FIN"},
+							"venue": map[string]any{"id": "venue-2", "country": "FIN", "slug": "venue-2-slug"},
 							"items": []any{
 								map[string]any{"id": "item-2", "count": 1, "price": 1200, "options": []any{}},
 							},

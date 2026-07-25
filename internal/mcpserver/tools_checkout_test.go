@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/mekedron/wolt-cli/internal/domain"
@@ -19,6 +20,9 @@ func TestHandleCheckoutPreviewSendsPurchasePlan(t *testing.T) {
 	var captured map[string]any
 	checkoutCalled := false
 	wolt := &stubWolt{
+		restaurantFn: func(context.Context, string) (*domain.Restaurant, error) {
+			return &domain.Restaurant{ID: venueID, Slug: "test-venue"}, nil
+		},
 		basketsPageFn: func(context.Context, domain.Location, woltgateway.AuthContext) (map[string]any, error) {
 			return map[string]any{
 				"baskets": []any{
@@ -78,6 +82,60 @@ func TestHandleCheckoutPreviewSendsPurchasePlan(t *testing.T) {
 		if _, exists := captured[banned]; exists {
 			t.Errorf("upstream payload must not contain top-level %q (old rejected MCP shape)", banned)
 		}
+	}
+}
+
+func TestHandleCheckoutPreviewBlocksUnavailableBasketItem(t *testing.T) {
+	const venueID = "5f9a1b2c3d4e5f6071829304"
+	const itemID = "627cb2c7e2a6f0a1b2c3d4e5"
+
+	checkoutCalled := false
+	wolt := &stubWolt{
+		venueStaticFn: func(context.Context, string) (map[string]any, error) {
+			return map[string]any{"venue": map[string]any{"id": venueID, "currency": "GEL"}}, nil
+		},
+		basketsPageFn: func(context.Context, domain.Location, woltgateway.AuthContext) (map[string]any, error) {
+			return map[string]any{"baskets": []any{
+				map[string]any{
+					"venue": map[string]any{"id": venueID, "slug": "test-venue"},
+					"total": "GEL5.00",
+					"items": []any{map[string]any{
+						"id": itemID, "name": "Unavailable chicken", "count": 1, "price": 500,
+					}},
+				},
+			}}, nil
+		},
+		assortmentItemsFn: func(context.Context, string, []string, woltgateway.AuthContext) (map[string]any, error) {
+			return map[string]any{"items": []any{
+				map[string]any{
+					"id":                  itemID,
+					"name":                "Unavailable chicken",
+					"disabled_info":       map[string]any{"disable_text": "Sold out"},
+					"purchasable_balance": 0,
+				},
+			}}, nil
+		},
+		checkoutPreviewFn: func(context.Context, map[string]any, woltgateway.AuthContext) (map[string]any, error) {
+			checkoutCalled = true
+			return map[string]any{}, nil
+		},
+	}
+	tc := newToolCtx(Deps{
+		Wolt:     wolt,
+		Profiles: &stubProfiles{profile: domain.Profile{Name: "default", WToken: "token"}},
+		Location: &stubLocation{},
+		Config:   &stubConfig{},
+	})
+
+	_, _, err := tc.handleCheckoutPreview(context.Background(), nil, CheckoutPreviewInput{
+		LocationInput: LocationInput{Lat: 41.7, Lon: 44.8},
+		Venue:         "test-venue",
+	})
+	if err == nil || !strings.Contains(err.Error(), "Sold out") {
+		t.Fatalf("expected Sold out validation error, got %v", err)
+	}
+	if checkoutCalled {
+		t.Fatal("CheckoutPreview must not be called when a basket item is unavailable")
 	}
 }
 

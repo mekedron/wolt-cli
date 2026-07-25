@@ -8,6 +8,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/mekedron/wolt-cli/internal/domain"
+	"github.com/mekedron/wolt-cli/internal/service/catalogitem"
 	"github.com/mekedron/wolt-cli/internal/service/observability"
 )
 
@@ -24,7 +25,7 @@ func registerVenueTools(srv *mcp.Server, tc *ToolCtx) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "wolt_venue_menu",
 		Title:       "Venue menu",
-		Description: "Browse a venue's menu. Returns normalized items with prices, discounts, sold-out flags. Supports query/category filters and pagination.",
+		Description: "Browse a venue's menu. Returns normalized items with prices, image URLs, discounts, and current availability. Supports query/category filters and pagination.",
 		Annotations: readOnly,
 	}, tc.handleVenueMenu)
 
@@ -38,7 +39,7 @@ func registerVenueTools(srv *mcp.Server, tc *ToolCtx) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "wolt_venue_item",
 		Title:       "Item detail",
-		Description: "Fetch one item's full payload (name, price, options, sold-out, description). Useful before adding to a cart so you know the item id, price, and currency.",
+		Description: "Fetch one item's current payload (name, price, image URLs, options, availability, description). Useful before adding to a cart.",
 		Annotations: readOnly,
 	}, tc.handleVenueItem)
 
@@ -194,9 +195,26 @@ func (tc *ToolCtx) handleVenueItem(ctx context.Context, _ *mcp.CallToolRequest, 
 	if strings.TrimSpace(in.ItemID) == "" {
 		return nil, VenueItemOutput{}, toolErrf("item_id is required")
 	}
-	payload, err := tc.wolt.VenueItemPage(ctx, ref.ID, in.ItemID)
-	if err != nil {
-		return nil, VenueItemOutput{}, toolErr(err)
+	payload, pageErr := tc.wolt.VenueItemPage(ctx, ref.ID, in.ItemID)
+	var currentItem map[string]any
+	if strings.TrimSpace(ref.Slug) != "" {
+		currentPayload, currentErr := tc.wolt.AssortmentItemsByVenueSlug(
+			ctx,
+			ref.Slug,
+			[]string{in.ItemID},
+			tc.optionalAuth(ctx),
+		)
+		if currentErr == nil {
+			currentItem = catalogitem.Find(currentPayload, in.ItemID)
+		}
+	}
+	if currentItem != nil {
+		payload = catalogitem.MergeCurrentItem(payload, currentItem)
+	} else if pageErr != nil {
+		return nil, VenueItemOutput{}, toolErr(pageErr)
+	}
+	if currency := resolveVenueCurrency(ctx, tc, ref, nil, payload); currency != "" {
+		payload["currency"] = currency
 	}
 	data, _ := observability.BuildItemDetail(in.ItemID, ref.ID, payload, false)
 	return nil, VenueItemOutput{

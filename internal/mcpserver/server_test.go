@@ -357,6 +357,131 @@ func TestHandleCartAddRejectsUnresolvedVenue(t *testing.T) {
 	}
 }
 
+func TestHandleCartAddBlocksUnavailableItemEvenWithOverrides(t *testing.T) {
+	const venueID = "5f9a1b2c3d4e5f6071829304"
+	const itemID = "627cb2c7e2a6f0a1b2c3d4e5"
+	addCalled := false
+	wolt := &stubWolt{
+		venueStaticFn: func(context.Context, string) (map[string]any, error) {
+			return map[string]any{"venue": map[string]any{"id": venueID, "currency": "GEL"}}, nil
+		},
+		assortmentItemsFn: func(context.Context, string, []string, woltgateway.AuthContext) (map[string]any, error) {
+			return map[string]any{"items": []any{
+				map[string]any{
+					"id":                  itemID,
+					"name":                "Chicken thigh",
+					"disabled_info":       map[string]any{"disable_text": "Sold out"},
+					"purchasable_balance": 0,
+				},
+			}}, nil
+		},
+		addToBasketFn: func(context.Context, map[string]any, woltgateway.AuthContext) (map[string]any, error) {
+			addCalled = true
+			return map[string]any{}, nil
+		},
+	}
+	tc := newToolCtx(Deps{
+		Wolt:     wolt,
+		Profiles: &stubProfiles{profile: domain.Profile{Name: "default", WToken: "token"}},
+		Location: &stubLocation{},
+		Config:   &stubConfig{},
+	})
+
+	_, _, err := tc.handleCartAdd(context.Background(), nil, CartAddInput{
+		LocationInput: LocationInput{Lat: 41.7, Lon: 44.8},
+		Venue:         "test-venue",
+		ItemID:        itemID,
+		Price:         1645,
+		Currency:      "GEL",
+		Name:          "Chicken thigh",
+	})
+	if err == nil || !strings.Contains(err.Error(), "Sold out") {
+		t.Fatalf("expected Sold out validation error, got %v", err)
+	}
+	if addCalled {
+		t.Fatal("AddToBasket must not be called when the exact current item is unavailable")
+	}
+}
+
+func TestHandleCartAddUsesVenueGELCurrency(t *testing.T) {
+	const venueID = "5f9a1b2c3d4e5f6071829304"
+	const itemID = "627cb2c7e2a6f0a1b2c3d4e5"
+	var captured map[string]any
+	wolt := &stubWolt{
+		venueStaticFn: func(context.Context, string) (map[string]any, error) {
+			return map[string]any{"venue": map[string]any{"id": venueID, "currency": "GEL"}}, nil
+		},
+		assortmentItemsFn: func(context.Context, string, []string, woltgateway.AuthContext) (map[string]any, error) {
+			return map[string]any{"items": []any{
+				map[string]any{
+					"id":                  itemID,
+					"name":                "Chicken thigh",
+					"price":               1645,
+					"purchasable_balance": 8,
+				},
+			}}, nil
+		},
+		addToBasketFn: func(_ context.Context, payload map[string]any, _ woltgateway.AuthContext) (map[string]any, error) {
+			captured = payload
+			return map[string]any{"id": "basket-1"}, nil
+		},
+	}
+	tc := newToolCtx(Deps{
+		Wolt:     wolt,
+		Profiles: &stubProfiles{profile: domain.Profile{Name: "default", WToken: "token"}},
+		Location: &stubLocation{},
+		Config:   &stubConfig{},
+	})
+
+	_, _, err := tc.handleCartAdd(context.Background(), nil, CartAddInput{
+		LocationInput: LocationInput{Lat: 41.7, Lon: 44.8},
+		Venue:         "test-venue",
+		ItemID:        itemID,
+	})
+	if err != nil {
+		t.Fatalf("handleCartAdd: %v", err)
+	}
+	if captured["currency"] != "GEL" {
+		t.Fatalf("currency = %v, want GEL", captured["currency"])
+	}
+}
+
+func TestHandleVenueItemReturnsCurrentImageAndAvailability(t *testing.T) {
+	const venueID = "5f9a1b2c3d4e5f6071829304"
+	const itemID = "627cb2c7e2a6f0a1b2c3d4e5"
+	wolt := &stubWolt{
+		venueStaticFn: func(context.Context, string) (map[string]any, error) {
+			return map[string]any{"venue": map[string]any{"id": venueID, "currency": "GEL"}}, nil
+		},
+		assortmentItemsFn: func(context.Context, string, []string, woltgateway.AuthContext) (map[string]any, error) {
+			return map[string]any{"items": []any{
+				map[string]any{
+					"id":                  itemID,
+					"name":                "Chicken thigh",
+					"price":               1645,
+					"images":              []any{map[string]any{"url": "https://example.test/chicken.jpg", "blurhash": "abc"}},
+					"purchasable_balance": 8,
+				},
+			}}, nil
+		},
+	}
+	tc := newToolCtx(Deps{Wolt: wolt, Profiles: &stubProfiles{}, Location: &stubLocation{}, Config: &stubConfig{}})
+
+	_, out, err := tc.handleVenueItem(context.Background(), nil, VenueItemInput{
+		Venue:  "test-venue",
+		ItemID: itemID,
+	})
+	if err != nil {
+		t.Fatalf("handleVenueItem: %v", err)
+	}
+	if out.Item["image_url"] != "https://example.test/chicken.jpg" {
+		t.Fatalf("image_url = %v", out.Item["image_url"])
+	}
+	if out.Item["is_available"] != true {
+		t.Fatalf("is_available = %v, want true", out.Item["is_available"])
+	}
+}
+
 // ---------------- helpers ----------------
 
 func connectInMemory(t *testing.T, deps Deps) (*mcp.Server, *mcp.ClientSession) {
@@ -395,6 +520,7 @@ type stubWolt struct {
 	userMeFn           func(context.Context, woltgateway.AuthContext) (map[string]any, error)
 	restaurantFn       func(context.Context, string) (*domain.Restaurant, error)
 	assortmentSearchFn func(context.Context, string, string, string, woltgateway.AuthContext) (map[string]any, error)
+	assortmentItemsFn  func(context.Context, string, []string, woltgateway.AuthContext) (map[string]any, error)
 	venueStaticFn      func(context.Context, string) (map[string]any, error)
 	venueDynamicFn     func(context.Context, string, woltgateway.VenuePageDynamicOptions) (map[string]any, error)
 	addToBasketFn      func(context.Context, map[string]any, woltgateway.AuthContext) (map[string]any, error)
@@ -444,8 +570,11 @@ func (s *stubWolt) AssortmentByVenueSlug(context.Context, string) (map[string]an
 func (s *stubWolt) AssortmentCategoryByVenueSlug(context.Context, string, string, string, woltgateway.AuthContext) (map[string]any, error) {
 	return map[string]any{}, nil
 }
-func (s *stubWolt) AssortmentItemsByVenueSlug(context.Context, string, []string, woltgateway.AuthContext) (map[string]any, error) {
-	return map[string]any{}, nil
+func (s *stubWolt) AssortmentItemsByVenueSlug(ctx context.Context, slug string, itemIDs []string, auth woltgateway.AuthContext) (map[string]any, error) {
+	if s.assortmentItemsFn != nil {
+		return s.assortmentItemsFn(ctx, slug, itemIDs, auth)
+	}
+	return availableStubItems(itemIDs), nil
 }
 func (s *stubWolt) AssortmentItemsSearchByVenueSlug(ctx context.Context, slug string, query string, language string, auth woltgateway.AuthContext) (map[string]any, error) {
 	if s.assortmentSearchFn != nil {
@@ -530,6 +659,18 @@ func (s *stubWolt) CheckoutPreview(ctx context.Context, payload map[string]any, 
 }
 func (s *stubWolt) RefreshAccessToken(context.Context, string, woltgateway.AuthContext) (woltgateway.TokenRefreshResult, error) {
 	return woltgateway.TokenRefreshResult{}, nil
+}
+
+func availableStubItems(itemIDs []string) map[string]any {
+	items := make([]any, 0, len(itemIDs))
+	for _, itemID := range itemIDs {
+		items = append(items, map[string]any{
+			"id":                  itemID,
+			"name":                itemID,
+			"purchasable_balance": 10,
+		})
+	}
+	return map[string]any{"items": items}
 }
 
 type stubProfiles struct {

@@ -1113,8 +1113,8 @@ func TestVenueMenuSupportsPageSortAndFilters(t *testing.T) {
 	}
 	assortmentPayload := map[string]any{
 		"items": []any{
-			map[string]any{"id": "item-a", "name": "Alpha", "price": 700, "is_sold_out": false, "promotions": []any{"20% off"}},
-			map[string]any{"id": "item-b", "name": "Beta", "price": 900, "is_sold_out": false, "promotions": []any{"10% off"}},
+			map[string]any{"id": "item-a", "name": "Alpha", "price": 700, "disabled_info": nil, "promotions": []any{"20% off"}},
+			map[string]any{"id": "item-b", "name": "Beta", "price": 900, "disabled_info": nil, "promotions": []any{"10% off"}},
 		},
 	}
 
@@ -1466,16 +1466,17 @@ func TestVenueSearchScopedByVenue(t *testing.T) {
 				"name":             "Milk 1L",
 				"price":            map[string]any{"amount": 199, "currency": "EUR"},
 				"category_name":    "Dairy",
-				"is_sold_out":      false,
+				"disabled_info":    nil,
 				"promotions":       []any{"10% off"},
 				"option_group_ids": []any{"opt-1"},
 			},
 			map[string]any{
-				"id":            "item-2",
-				"name":          "Bread",
-				"price":         map[string]any{"amount": 249, "currency": "EUR"},
-				"category_name": "Bakery",
-				"is_sold_out":   true,
+				"id":                  "item-2",
+				"name":                "Bread",
+				"price":               map[string]any{"amount": 249, "currency": "EUR"},
+				"category_name":       "Bakery",
+				"disabled_info":       map[string]any{"disable_text": "Sold out"},
+				"purchasable_balance": 0,
 			},
 		},
 	}

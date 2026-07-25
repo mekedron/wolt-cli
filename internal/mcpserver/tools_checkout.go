@@ -2,11 +2,13 @@ package mcpserver
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	woltgateway "github.com/mekedron/wolt-cli/internal/gateway/wolt"
+	"github.com/mekedron/wolt-cli/internal/service/catalogitem"
 	"github.com/mekedron/wolt-cli/internal/service/checkoutpayload"
 )
 
@@ -25,7 +27,7 @@ type CheckoutPreviewInput struct {
 	LocationInput
 	Venue        string `json:"venue"                    jsonschema:"venue slug, id, or url"`
 	DeliveryMode string `json:"delivery_mode,omitempty"  jsonschema:"standard | priority | schedule"`
-	Tip          int    `json:"tip,omitempty"            jsonschema:"tip in minor units (e.g. 200 = EUR 2.00)"`
+	Tip          int    `json:"tip,omitempty"            jsonschema:"tip in minor units (e.g. 200 = 2.00 in the venue currency)"`
 	PromoCode    string `json:"promo_code,omitempty"     jsonschema:"promo code to apply"`
 }
 
@@ -62,6 +64,32 @@ func (tc *ToolCtx) handleCheckoutPreview(ctx context.Context, _ *mcp.CallToolReq
 	basket := selectBasketForVenue(basketsPage, ref.ID)
 	if basket == nil {
 		return nil, CheckoutPreviewOutput{}, toolErrf("no basket found for venue %s; add items first via wolt_cart_add", ref.ID)
+	}
+	venueSlug := strings.TrimSpace(ref.Slug)
+	if venueSlug == "" {
+		return nil, CheckoutPreviewOutput{}, toolErrf(
+			"checkout preview blocked because the venue slug could not be resolved for current item validation",
+		)
+	}
+	basketVenue := asMap(basket["venue"])
+	if basketVenue == nil {
+		basketVenue = map[string]any{}
+		basket["venue"] = basketVenue
+	}
+	basketVenue["slug"] = venueSlug
+	basketItemIDs := catalogitem.BasketItemIDs(basket)
+	currentItems, err := invokeWithRefresh(ctx, tc, &auth, func(a woltgateway.AuthContext) (map[string]any, error) {
+		return tc.wolt.AssortmentItemsByVenueSlug(ctx, venueSlug, basketItemIDs, a)
+	})
+	if err != nil {
+		return nil, CheckoutPreviewOutput{}, toolErr(fmt.Errorf("current basket availability lookup failed: %w", err))
+	}
+	issues := catalogitem.ValidateItemIDs(currentItems, basketItemIDs)
+	if len(issues) > 0 {
+		return nil, CheckoutPreviewOutput{}, toolErrf(
+			"checkout preview blocked because the basket contains unavailable items: %s",
+			catalogitem.FormatValidationIssues(issues),
+		)
 	}
 
 	deliveryMode := strings.TrimSpace(in.DeliveryMode)
