@@ -300,8 +300,9 @@ func newCartAddCommand(deps Dependencies) *cobra.Command {
 					flags,
 					&auth,
 					func(authCtx woltgateway.AuthContext) (map[string]any, error) {
-						return deps.Wolt.AssortmentItemsByVenueSlug(
+						return requestAssortmentItemsPayload(
 							cmd.Context(),
+							deps,
 							candidateSlug,
 							[]string{itemID},
 							authCtx,

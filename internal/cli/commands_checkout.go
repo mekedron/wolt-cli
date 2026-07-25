@@ -138,7 +138,13 @@ func newCheckoutPreviewCommand(deps Dependencies) *cobra.Command {
 				flags,
 				&auth,
 				func(authCtx woltgateway.AuthContext) (map[string]any, error) {
-					return deps.Wolt.AssortmentItemsByVenueSlug(cmd.Context(), venueSlug, basketItemIDs, authCtx)
+					return requestAssortmentItemsPayload(
+						cmd.Context(),
+						deps,
+						venueSlug,
+						basketItemIDs,
+						authCtx,
+					)
 				},
 			)
 			if validationErr != nil {

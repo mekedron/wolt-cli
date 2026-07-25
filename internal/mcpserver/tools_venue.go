@@ -198,8 +198,9 @@ func (tc *ToolCtx) handleVenueItem(ctx context.Context, _ *mcp.CallToolRequest, 
 	payload, pageErr := tc.wolt.VenueItemPage(ctx, ref.ID, in.ItemID)
 	var currentItem map[string]any
 	if strings.TrimSpace(ref.Slug) != "" {
-		currentPayload, currentErr := tc.wolt.AssortmentItemsByVenueSlug(
+		currentPayload, currentErr := requestAssortmentItems(
 			ctx,
+			tc,
 			ref.Slug,
 			[]string{in.ItemID},
 			tc.optionalAuth(ctx),

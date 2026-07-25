@@ -172,7 +172,7 @@ func (tc *ToolCtx) handleCartAdd(ctx context.Context, _ *mcp.CallToolRequest, in
 		)
 	}
 	currentAssortment, err := invokeWithRefresh(ctx, tc, &auth, func(a woltgateway.AuthContext) (map[string]any, error) {
-		return tc.wolt.AssortmentItemsByVenueSlug(ctx, venueSlug, []string{in.ItemID}, a)
+		return requestAssortmentItems(ctx, tc, venueSlug, []string{in.ItemID}, a)
 	})
 	if err != nil {
 		return nil, CartAddOutput{}, toolErr(fmt.Errorf("current item availability lookup failed: %w", err))

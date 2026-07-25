@@ -365,7 +365,10 @@ func TestHandleCartAddBlocksUnavailableItemEvenWithOverrides(t *testing.T) {
 		venueStaticFn: func(context.Context, string) (map[string]any, error) {
 			return map[string]any{"venue": map[string]any{"id": venueID, "currency": "GEL"}}, nil
 		},
-		assortmentItemsFn: func(context.Context, string, []string, woltgateway.AuthContext) (map[string]any, error) {
+		assortmentItemsFn: func(_ context.Context, _ string, _ []string, auth woltgateway.AuthContext) (map[string]any, error) {
+			if auth.HasCredentials() {
+				return nil, errors.New("authenticated public catalog read rejected")
+			}
 			return map[string]any{"items": []any{
 				map[string]any{
 					"id":                  itemID,

@@ -1081,7 +1081,7 @@ func resolveVenueItemPayloadBySlug(
 	} else {
 		warnings = append(warnings, "venue assortment endpoint unavailable")
 	}
-	if payload, err := deps.Wolt.AssortmentItemsByVenueSlug(ctx, venueSlug, []string{itemID}, auth); err == nil {
+	if payload, err := requestAssortmentItemsPayload(ctx, deps, venueSlug, []string{itemID}, auth); err == nil {
 		currentItem = catalogitem.Find(payload, itemID)
 	} else {
 		warnings = append(warnings, "current item endpoint unavailable")

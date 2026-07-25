@@ -79,7 +79,7 @@ func (tc *ToolCtx) handleCheckoutPreview(ctx context.Context, _ *mcp.CallToolReq
 	basketVenue["slug"] = venueSlug
 	basketItemIDs := catalogitem.BasketItemIDs(basket)
 	currentItems, err := invokeWithRefresh(ctx, tc, &auth, func(a woltgateway.AuthContext) (map[string]any, error) {
-		return tc.wolt.AssortmentItemsByVenueSlug(ctx, venueSlug, basketItemIDs, a)
+		return requestAssortmentItems(ctx, tc, venueSlug, basketItemIDs, a)
 	})
 	if err != nil {
 		return nil, CheckoutPreviewOutput{}, toolErr(fmt.Errorf("current basket availability lookup failed: %w", err))
