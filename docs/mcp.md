@@ -116,9 +116,9 @@ persists the rotated tokens, and retries the original call once.
 | Tool | What it does |
 |---|---|
 | `wolt_venue_detail` ✓ | Address, rating, delivery methods, opening windows, tags |
-| `wolt_venue_menu` ✓ | Browse a venue's menu (paginated, filterable) |
+| `wolt_venue_menu` ✓ | Browse a venue's menu with image URLs and current availability (paginated, filterable) |
 | `wolt_venue_hours` ✓ | Opening windows in the venue's timezone |
-| `wolt_venue_item` ✓ | Full payload for one item (price, options, sold-out) |
+| `wolt_venue_item` ✓ | Current item payload (price, options, image URLs, availability) |
 | `wolt_venue_search_items` ✓ | Free-text item search within a venue |
 
 ### Account (auth required)
@@ -152,6 +152,12 @@ persists the rotated tokens, and retries the original call once.
 
 > **Note:** No tool places an actual order. Final checkout still happens in the
 > official Wolt app or web UI. `wolt_checkout_preview` is a pricing preview only.
+
+`wolt_cart_add` always revalidates the exact item before mutating the basket;
+caller-supplied display metadata cannot bypass an unavailable item.
+`wolt_checkout_preview` revalidates every basket item before sending the
+preview request. Both operations fail closed if availability or venue
+currency cannot be verified.
 
 ## Location precedence
 

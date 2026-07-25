@@ -126,7 +126,21 @@ func (m *mockWolt) AssortmentItemsByVenueSlug(
 	auth woltgateway.AuthContext,
 ) (map[string]any, error) {
 	if m.assortmentItemsFn == nil {
-		return nil, errors.New("assortment items by venue slug not mocked")
+		// Authenticated cart/checkout tests pass the stable fixture token
+		// explicitly. Read-only item tests intentionally keep the endpoint
+		// unmocked so their item-page fixtures remain authoritative.
+		if auth.WToken != "token" {
+			return nil, errors.New("assortment items by venue slug not mocked")
+		}
+		items := make([]any, 0, len(itemIDs))
+		for _, itemID := range itemIDs {
+			items = append(items, map[string]any{
+				"id":                  itemID,
+				"name":                itemID,
+				"purchasable_balance": 10,
+			})
+		}
+		return map[string]any{"items": items}, nil
 	}
 	return m.assortmentItemsFn(ctx, slug, itemIDs, auth)
 }

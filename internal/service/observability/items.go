@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/mekedron/wolt-cli/internal/service/catalogitem"
 )
 
 func walkObjects(node any) []map[string]any {
@@ -401,7 +403,15 @@ func ExtractMenuItems(payload map[string]any, venueID string, venueSlug string) 
 			continue
 		}
 
-		signalKeys := []string{"option_group_ids", "option_groups", "base_price", "price", "is_sold_out", "sold_out", "item_id"}
+		signalKeys := []string{
+			"option_group_ids",
+			"option_groups",
+			"base_price",
+			"price",
+			"disabled_info",
+			"purchasable_balance",
+			"item_id",
+		}
 		if hasAnyKeys(obj, "options") {
 			signalKeys = append(signalKeys, "options")
 		}
@@ -431,7 +441,12 @@ func ExtractMenuItems(payload map[string]any, venueID string, venueSlug string) 
 			itemCategoryMap[resolvedItemID],
 			"uncategorized",
 		))
-		isSoldOut := boolValue(coalesce(obj["is_sold_out"], obj["sold_out"]))
+		availability := catalogitem.ResolveAvailability(obj)
+		imageURLs := catalogitem.ImageURLs(obj)
+		var imageURL any
+		if len(imageURLs) > 0 {
+			imageURL = imageURLs[0]
+		}
 
 		var formatted any
 		if value := formatAmount(amount, currency); value != nil {
@@ -489,8 +504,22 @@ func ExtractMenuItems(payload map[string]any, venueID string, venueSlug string) 
 			},
 			"option_group_ids": extractOptionGroupIDs(obj),
 			"category":         categoryName,
-			"is_sold_out":      isSoldOut,
-			"discounts":        discounts,
+			"is_available":     availability.IsAvailable,
+			"unavailable_reason": emptyToNil(
+				availability.Reason,
+			),
+			// Deprecated compatibility alias. The value is derived from the
+			// current Wolt disabled_info / purchasable_balance schema; raw
+			// is_sold_out and sold_out fields are no longer consulted.
+			"is_sold_out":           !availability.IsAvailable,
+			"purchasable_balance":   availability.PurchasableBalance,
+			"image_url":             imageURL,
+			"image_urls":            imageURLs,
+			"image_blurhash":        emptyToNil(catalogitem.ImageBlurhash(obj)),
+			"unit_info":             obj["unit_info"],
+			"unit_price":            obj["unit_price"],
+			"sell_by_weight_config": obj["sell_by_weight_config"],
+			"discounts":             discounts,
 		})
 	}
 

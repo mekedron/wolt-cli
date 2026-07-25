@@ -65,7 +65,9 @@ func applyItemRowFilters(rows []any, filters itemRowFilters) []any {
 		if row == nil {
 			continue
 		}
-		if filters.HideSoldOut && asBool(row["is_sold_out"]) {
+		available, hasAvailability := row["is_available"]
+		if filters.HideSoldOut &&
+			((hasAvailability && !asBool(available)) || (!hasAvailability && asBool(row["is_sold_out"]))) {
 			continue
 		}
 		if filters.DiscountsOnly && !itemHasDiscount(row) {

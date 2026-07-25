@@ -205,15 +205,17 @@ func TestBuildRejectsMissingBasePrice(t *testing.T) {
 	}
 }
 
-func TestBuildCurrencyInferenceAndDefault(t *testing.T) {
+func TestBuildCurrencyInferenceFailsClosedWithoutCurrency(t *testing.T) {
 	cases := []struct {
-		total string
-		want  string
+		total   string
+		want    string
+		wantErr bool
 	}{
-		{"$9.99", "USD"},
-		{"€4.00", "EUR"},
-		{"", "EUR"},      // no symbol -> default EUR
-		{"12.00", "EUR"}, // unrecognised -> default EUR
+		{"$9.99", "USD", false},
+		{"€4.00", "EUR", false},
+		{"GEL0.00", "GEL", false},
+		{"", "", true},
+		{"12.00", "", true},
 	}
 	for _, c := range cases {
 		basket := basketWithItem(c.total, map[string]any{
@@ -221,6 +223,12 @@ func TestBuildCurrencyInferenceAndDefault(t *testing.T) {
 		})
 		payload, _, err := Build(context.Background(), nil, nil, basket,
 			domain.Location{}, "standard", 0, "")
+		if c.wantErr {
+			if err == nil || !strings.Contains(err.Error(), "currency") {
+				t.Fatalf("total %q: expected currency error, got %v", c.total, err)
+			}
+			continue
+		}
 		if err != nil {
 			t.Fatalf("total %q: %v", c.total, err)
 		}
@@ -228,6 +236,32 @@ func TestBuildCurrencyInferenceAndDefault(t *testing.T) {
 		if venue["currency"] != c.want {
 			t.Errorf("total %q: currency = %v, want %v", c.total, venue["currency"], c.want)
 		}
+	}
+}
+
+func TestBuildUsesVenueCurrencyWhenBasketOmitsIt(t *testing.T) {
+	basket := basketWithItem("", map[string]any{
+		"id": "627cb2c7e2a6f0a1b2c3d4e5", "count": 1, "price": 500, "category_id": "cat",
+	})
+	basket["venue"].(map[string]any)["slug"] = "biubiu-moscow-ave"
+	payload, _, err := Build(
+		context.Background(),
+		nil,
+		func(context.Context, string) (map[string]any, error) {
+			return map[string]any{"venue": map[string]any{"currency": "GEL"}}, nil
+		},
+		basket,
+		domain.Location{},
+		"standard",
+		0,
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	venue := purchasePlan(t, payload)["venue"].(map[string]any)
+	if venue["currency"] != "GEL" {
+		t.Fatalf("currency = %v, want GEL", venue["currency"])
 	}
 }
 

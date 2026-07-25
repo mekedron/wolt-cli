@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	woltgateway "github.com/mekedron/wolt-cli/internal/gateway/wolt"
+	"github.com/mekedron/wolt-cli/internal/service/catalogitem"
 	"github.com/mekedron/wolt-cli/internal/service/checkoutpayload"
 	"github.com/mekedron/wolt-cli/internal/service/output"
 	"github.com/spf13/cobra"
@@ -97,6 +98,81 @@ func newCheckoutPreviewCommand(deps Dependencies) *cobra.Command {
 					"No basket found for checkout preview.",
 				)
 			}
+			basketVenue := asMap(basket["venue"])
+			venueSlug := strings.TrimSpace(asString(coalesceAny(
+				basketVenue["slug"],
+				basketVenue["venue_slug"],
+				basketVenue["public_slug"],
+				basketVenue["url_slug"],
+			)))
+			if venueSlug == "" && strings.TrimSpace(venueID) != "" && !looksLikeObjectID(venueID) {
+				venueSlug = normalizeVenueInput(venueID)
+			}
+			if venueSlug == "" {
+				basketVenueID := strings.TrimSpace(asString(basketVenue["id"]))
+				if restaurant, restaurantErr := deps.Wolt.RestaurantByID(cmd.Context(), basketVenueID); restaurantErr == nil && restaurant != nil {
+					venueSlug = strings.TrimSpace(restaurant.Slug)
+				}
+			}
+			if venueSlug == "" {
+				return emitError(
+					cmd,
+					format,
+					profile,
+					flags.Locale,
+					flags.Output,
+					"WOLT_ITEM_AVAILABILITY_UNKNOWN",
+					"Checkout was not previewed because the venue slug could not be resolved for current item validation.",
+				)
+			}
+			if basketVenue == nil {
+				basketVenue = map[string]any{}
+				basket["venue"] = basketVenue
+			}
+			basketVenue["slug"] = venueSlug
+
+			basketItemIDs := catalogitem.BasketItemIDs(basket)
+			currentItems, validationWarnings, validationErr := invokeWithAuthAutoRefresh(
+				cmd.Context(),
+				deps,
+				flags,
+				&auth,
+				func(authCtx woltgateway.AuthContext) (map[string]any, error) {
+					return requestAssortmentItemsPayload(
+						cmd.Context(),
+						deps,
+						venueSlug,
+						basketItemIDs,
+						authCtx,
+					)
+				},
+			)
+			if validationErr != nil {
+				return emitUpstreamError(
+					cmd,
+					format,
+					profile,
+					flags.Locale,
+					flags.Output,
+					flags.Verbose,
+					validationErr,
+					validationWarnings...,
+				)
+			}
+			availabilityIssues := catalogitem.ValidateItemIDs(currentItems, basketItemIDs)
+			if len(availabilityIssues) > 0 {
+				return emitErrorWithWarnings(
+					cmd,
+					format,
+					profile,
+					flags.Locale,
+					flags.Output,
+					"WOLT_CART_ITEMS_UNAVAILABLE",
+					"Checkout was not previewed because the basket contains unavailable items: "+
+						catalogitem.FormatValidationIssues(availabilityIssues),
+					validationWarnings,
+				)
+			}
 
 			checkoutPayload, checkoutWarnings, err := checkoutpayload.Build(
 				cmd.Context(),
@@ -141,7 +217,9 @@ func newCheckoutPreviewCommand(deps Dependencies) *cobra.Command {
 				payableFormatted = findTotalFormattedAmount(payload)
 			}
 			if payableFormatted == "" {
-				payableFormatted = formatMinorAmount(payableAmount, inferCurrency(asString(asMap(basket)["total"])))
+				purchasePlan := asMap(checkoutPayload["purchase_plan"])
+				purchaseVenue := asMap(purchasePlan["venue"])
+				payableFormatted = formatMinorAmount(payableAmount, asString(purchaseVenue["currency"]))
 			}
 			data := map[string]any{
 				"basket_id":  asString(basket["id"]),

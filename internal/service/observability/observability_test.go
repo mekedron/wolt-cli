@@ -442,6 +442,53 @@ func TestExtractMenuItemsDerivesDiscountFromOriginalPrice(t *testing.T) {
 	}
 }
 
+func TestExtractMenuItemsUsesCurrentAvailabilityAndProductMetadata(t *testing.T) {
+	payload := map[string]any{
+		"items": []any{
+			map[string]any{
+				"id":                  "item-1",
+				"name":                "Boneless chicken thigh",
+				"price":               1645,
+				"disabled_info":       map[string]any{"disable_text": "Sold out"},
+				"purchasable_balance": 0,
+				"unit_info":           "500 g",
+				"unit_price":          map[string]any{"price": 1645, "unit": "kilogram"},
+				"sell_by_weight_config": map[string]any{
+					"grams_per_step": 500,
+					"price_per_kg":   1645,
+				},
+				"images": []any{
+					map[string]any{
+						"url":      "https://imageproxy.wolt.com/assets/chicken",
+						"blurhash": "blur",
+					},
+				},
+			},
+		},
+	}
+
+	items := observability.ExtractMenuItems(payload, "venue-1", "venue-slug")
+	if len(items) != 1 {
+		t.Fatalf("expected one item, got %d", len(items))
+	}
+	item := items[0]
+	if available, _ := item["is_available"].(bool); available {
+		t.Fatalf("expected item to be unavailable: %#v", item)
+	}
+	if reason := item["unavailable_reason"]; reason != "Sold out" {
+		t.Fatalf("unavailable_reason = %v, want Sold out", reason)
+	}
+	if legacy, _ := item["is_sold_out"].(bool); !legacy {
+		t.Fatalf("expected compatibility is_sold_out alias to be true")
+	}
+	if imageURL := item["image_url"]; imageURL != "https://imageproxy.wolt.com/assets/chicken" {
+		t.Fatalf("image_url = %v", imageURL)
+	}
+	if unitInfo := item["unit_info"]; unitInfo != "500 g" {
+		t.Fatalf("unit_info = %v", unitInfo)
+	}
+}
+
 func TestBuildDiscoveryFeedDetectsWoltPlusFromIcon(t *testing.T) {
 	section := domain.Section{
 		Name:  "popular",

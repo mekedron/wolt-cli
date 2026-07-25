@@ -14,6 +14,7 @@ type testWoltAPI struct {
 	venuePageStaticFn    func(context.Context, string) (map[string]any, error)
 	venuePageDynamicFn   func(context.Context, string, woltgateway.VenuePageDynamicOptions) (map[string]any, error)
 	assortmentBySlugFn   func(context.Context, string) (map[string]any, error)
+	assortmentItemsFn    func(context.Context, string, []string, woltgateway.AuthContext) (map[string]any, error)
 }
 
 func (m *testWoltAPI) FrontPage(context.Context, domain.Location) (map[string]any, error) {
@@ -64,8 +65,11 @@ func (m *testWoltAPI) AssortmentCategoryByVenueSlug(context.Context, string, str
 	return map[string]any{}, nil
 }
 
-func (m *testWoltAPI) AssortmentItemsByVenueSlug(context.Context, string, []string, woltgateway.AuthContext) (map[string]any, error) {
-	return map[string]any{}, nil
+func (m *testWoltAPI) AssortmentItemsByVenueSlug(ctx context.Context, slug string, itemIDs []string, auth woltgateway.AuthContext) (map[string]any, error) {
+	if m.assortmentItemsFn != nil {
+		return m.assortmentItemsFn(ctx, slug, itemIDs, auth)
+	}
+	return availableTestItems(itemIDs), nil
 }
 
 func (m *testWoltAPI) AssortmentItemsSearchByVenueSlug(context.Context, string, string, string, woltgateway.AuthContext) (map[string]any, error) {
@@ -168,6 +172,18 @@ func (m *testWoltAPI) RefreshAccessToken(ctx context.Context, refreshToken strin
 
 type testProfiles struct {
 	profile domain.Profile
+}
+
+func availableTestItems(itemIDs []string) map[string]any {
+	items := make([]any, 0, len(itemIDs))
+	for _, itemID := range itemIDs {
+		items = append(items, map[string]any{
+			"id":                  itemID,
+			"name":                itemID,
+			"purchasable_balance": 10,
+		})
+	}
+	return map[string]any{"items": items}
 }
 
 func (m *testProfiles) Find(context.Context, string) (domain.Profile, error) {

@@ -7,6 +7,7 @@ import (
 
 	woltgateway "github.com/mekedron/wolt-cli/internal/gateway/wolt"
 	"github.com/mekedron/wolt-cli/internal/service/observability"
+	"github.com/mekedron/wolt-cli/internal/service/payloadutil"
 )
 
 const defaultVenueContentPageLimit = 3
@@ -99,7 +100,7 @@ func buildItemPayloadFromMenuPayload(payload map[string]any, venueID string, ite
 		currency = inferCurrency(asString(basePrice["formatted_amount"]))
 	}
 	if currency == "" {
-		currency = "EUR"
+		currency = payloadutil.CurrencyFromVenuePayload(payload)
 	}
 
 	price := map[string]any{

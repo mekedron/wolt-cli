@@ -242,7 +242,8 @@ func selectCheapestMenuItem(items []map[string]any, query string) (cartItemCandi
 	var best cartItemCandidate
 	found := false
 	for _, item := range items {
-		if asBool(item["is_sold_out"]) {
+		if available, exists := item["is_available"]; (exists && !asBool(available)) ||
+			(!exists && asBool(item["is_sold_out"])) {
 			continue
 		}
 		price := asInt(asMap(item["base_price"])["amount"])

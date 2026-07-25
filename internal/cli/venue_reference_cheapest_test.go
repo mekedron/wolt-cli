@@ -10,12 +10,19 @@ import (
 // menuItem builds a normalized menu row in the shape produced by
 // observability.ExtractMenuItems (and consumed by selectCheapestMenuItem).
 func menuItem(id, name string, price int, soldOut bool) map[string]any {
-	return map[string]any{
-		"item_id":     id,
-		"name":        name,
-		"base_price":  map[string]any{"amount": price, "currency": "EUR"},
-		"is_sold_out": soldOut,
+	item := map[string]any{
+		"item_id":      id,
+		"name":         name,
+		"base_price":   map[string]any{"amount": price, "currency": "EUR"},
+		"is_available": !soldOut,
+		"is_sold_out":  soldOut,
 	}
+	if soldOut {
+		item["disabled_info"] = map[string]any{"disable_text": "Sold out"}
+	} else {
+		item["disabled_info"] = nil
+	}
+	return item
 }
 
 func TestSelectCheapestMenuItem(t *testing.T) {

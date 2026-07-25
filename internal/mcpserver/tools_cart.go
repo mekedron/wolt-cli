@@ -9,6 +9,8 @@ import (
 
 	"github.com/mekedron/wolt-cli/internal/domain"
 	woltgateway "github.com/mekedron/wolt-cli/internal/gateway/wolt"
+	"github.com/mekedron/wolt-cli/internal/service/catalogitem"
+	"github.com/mekedron/wolt-cli/internal/service/payloadutil"
 )
 
 func registerCartTools(srv *mcp.Server, tc *ToolCtx) {
@@ -35,7 +37,7 @@ func registerCartTools(srv *mcp.Server, tc *ToolCtx) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "wolt_cart_add",
 		Title:       "Add an item to a basket",
-		Description: "Add an item to a venue's basket. Merges with existing basket items (does not replace them). If price is omitted, looks the item up via the menu and uses its current price.",
+		Description: "Add an item after revalidating its current availability. Merges with existing basket items (does not replace them) and resolves current price and venue currency.",
 		Annotations: mutateAdd,
 	}, tc.handleCartAdd)
 
@@ -162,33 +164,61 @@ func (tc *ToolCtx) handleCartAdd(ctx context.Context, _ *mcp.CallToolRequest, in
 			in.Venue,
 		)
 	}
+	venueSlug := strings.TrimSpace(ref.Slug)
+	if venueSlug == "" {
+		return nil, CartAddOutput{}, toolErrf(
+			"current item availability could not be verified for venue %s; pass a venue slug or Wolt venue/item URL",
+			ref.ID,
+		)
+	}
+	currentAssortment, err := invokeWithRefresh(ctx, tc, &auth, func(a woltgateway.AuthContext) (map[string]any, error) {
+		return requestAssortmentItems(ctx, tc, venueSlug, []string{in.ItemID}, a)
+	})
+	if err != nil {
+		return nil, CartAddOutput{}, toolErr(fmt.Errorf("current item availability lookup failed: %w", err))
+	}
+	issues := catalogitem.ValidateItemIDs(currentAssortment, []string{in.ItemID})
+	if len(issues) > 0 {
+		return nil, CartAddOutput{}, toolErrf(
+			"item was NOT added because current availability validation failed: %s",
+			catalogitem.FormatValidationIssues(issues),
+		)
+	}
+	currentItem := catalogitem.Find(currentAssortment, in.ItemID)
 
-	// Resolve price/name from the item page if not provided.
+	// Availability is always checked above, even when callers provide all
+	// display metadata explicitly. Resolve missing values from the fresh
+	// assortment item first and use the item page only as a fallback.
 	price := in.Price
-	currency := strings.TrimSpace(in.Currency)
+	currency := payloadutil.NormalizeCurrency(in.Currency)
 	name := strings.TrimSpace(in.Name)
-	if price <= 0 || currency == "" || name == "" {
-		itemPayload, itemErr := tc.wolt.VenueItemPage(ctx, ref.ID, in.ItemID)
-		if itemErr != nil {
-			return nil, CartAddOutput{}, toolErr(fmt.Errorf("item lookup failed (pass price/currency/name explicitly to skip): %w", itemErr))
-		}
+	itemPayload := map[string]any{}
+	if price <= 0 {
+		price = asInt(currentItem["price"])
 		if price <= 0 {
-			price = asInt(asMap(itemPayload["price"])["amount"])
+			price = asInt(asMap(currentItem["price"])["amount"])
 		}
-		if currency == "" {
-			currency = asString(asMap(itemPayload["price"])["currency"])
-		}
-		if name == "" {
-			name = asString(coalesceAny(itemPayload["name"], itemPayload["title"]))
+	}
+	if name == "" {
+		name = asString(coalesceAny(currentItem["name"], currentItem["title"]))
+	}
+	if price <= 0 || currency == "" || name == "" {
+		if fetched, itemErr := tc.wolt.VenueItemPage(ctx, ref.ID, in.ItemID); itemErr == nil {
+			itemPayload = fetched
+			if price <= 0 {
+				price = asInt(asMap(itemPayload["price"])["amount"])
+			}
+			if currency == "" {
+				currency = payloadutil.NormalizeCurrency(asString(asMap(itemPayload["price"])["currency"]))
+			}
+			if name == "" {
+				name = asString(coalesceAny(itemPayload["name"], itemPayload["title"]))
+			}
 		}
 	}
 	if price <= 0 {
 		return nil, CartAddOutput{}, toolErrf("could not determine item price; pass `price` in minor units")
 	}
-	if currency == "" {
-		currency = "EUR"
-	}
-
 	loc, _, err := tc.resolveLocation(ctx, in.LocationInput)
 	if err != nil {
 		return nil, CartAddOutput{}, toolErr(err)
@@ -208,10 +238,22 @@ func (tc *ToolCtx) handleCartAdd(ctx context.Context, _ *mcp.CallToolRequest, in
 	// Fetch existing basket to preserve other lines (Wolt's AddToBasket replaces
 	// the items array wholesale).
 	mergedItems := []any{newLine}
-	if existingPage, e := tc.wolt.BasketsPage(ctx, loc, auth); e == nil {
-		if basket := selectBasketForVenue(existingPage, ref.ID); basket != nil {
-			mergedItems = mergeBasketItems(basket, in.ItemID, count, newLine)
+	var existingBasket map[string]any
+	if existingPage, e := invokeWithRefresh(ctx, tc, &auth, func(a woltgateway.AuthContext) (map[string]any, error) {
+		return tc.wolt.BasketsPage(ctx, loc, a)
+	}); e == nil {
+		existingBasket = selectBasketForVenue(existingPage, ref.ID)
+		if existingBasket != nil {
+			mergedItems = mergeBasketItems(existingBasket, in.ItemID, count, newLine)
 		}
+	}
+	if currency == "" {
+		currency = resolveVenueCurrency(ctx, tc, ref, existingBasket, currentAssortment, itemPayload)
+	}
+	if currency == "" {
+		return nil, CartAddOutput{}, toolErrf(
+			"item was NOT added because the venue currency could not be verified",
+		)
 	}
 
 	addPayload := map[string]any{
@@ -275,9 +317,11 @@ func (tc *ToolCtx) handleCartRemove(ctx context.Context, _ *mcp.CallToolRequest,
 	if basket == nil {
 		return nil, CartRemoveOutput{}, toolErrf("no basket found for venue %s", ref.ID)
 	}
-	currency := strings.TrimSpace(asString(coalesceAny(basket["currency"], asMap(basket["total_price"])["currency"])))
+	currency := resolveVenueCurrency(ctx, tc, ref, basket)
 	if currency == "" {
-		currency = "EUR"
+		return nil, CartRemoveOutput{}, toolErrf(
+			"item quantity was not changed because the venue currency could not be verified",
+		)
 	}
 
 	removed := 0
