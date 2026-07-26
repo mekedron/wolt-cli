@@ -11,9 +11,8 @@ import (
 )
 
 const (
-	// chromeProbeTimeout bounds how long we wait to determine whether Chrome
-	// is reachable on the debug port. Kept short so opportunistic syncs don't
-	// add noticeable latency when Chrome is closed.
+	// chromeProbeTimeout bounds the complete opportunistic Chrome scrape. Kept
+	// short so syncs don't add noticeable latency when Chrome is closed.
 	chromeProbeTimeout = 500 * time.Millisecond
 	// envDisableChromeSync, when non-empty, suppresses the opportunistic
 	// re-sync from a running Chrome. Tests set it to keep results
@@ -44,9 +43,6 @@ func pullAuthFromRunningChrome(ctx context.Context, browserURL string) (woltgate
 
 	scrapeCtx, cancel := context.WithTimeout(ctx, chromeProbeTimeout)
 	defer cancel()
-	if !chromeDevToolsReady(scrapeCtx, browserURL) {
-		return woltgateway.AuthContext{}, false, nil
-	}
 
 	auth, err := readAuthFromChrome(scrapeCtx, browserURL)
 	if err != nil {

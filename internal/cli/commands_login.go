@@ -612,9 +612,12 @@ func (c *cdpClient) call(
 		}
 	}
 	stopCancel := context.AfterFunc(ctx, func() {
-		deadline := time.Now()
-		_ = c.conn.SetWriteDeadline(deadline)
-		_ = c.conn.SetReadDeadline(deadline)
+		// Gorilla permits Close concurrently with reads and writes, while
+		// SetReadDeadline and SetWriteDeadline count as read/write methods and
+		// would race with an in-flight ReadJSON or WriteJSON. A canceled CDP
+		// request cannot safely reuse its message stream, so close it to
+		// unblock either operation.
+		_ = c.conn.Close()
 	})
 	defer stopCancel()
 
