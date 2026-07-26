@@ -1,10 +1,7 @@
 // Command mcp-venue-smoke drives the wolt-mcp server's read-only venue tools
-// against the live Wolt backend. It exists because the MCP surface can rot
-// independently of the CLI: wolt_venue_detail and wolt_venue_hours are built on
-// Wolt's rich restaurant document, which is retired upstream (HTTP 410), and
-// both tools returned "venue not found" for every venue while the equivalent
-// CLI commands kept working off their static-payload fallback. Nothing in the
-// smoke covered them, so the breakage was invisible.
+// against the live Wolt backend. It validates the structured detail and hours
+// contracts without assuming that a venue is currently open or has a
+// particular weekly schedule.
 //
 // A non-zero exit means an MCP venue tool stopped returning usable data.
 //
@@ -12,10 +9,10 @@
 //
 // Usage:
 //
-//	mcp-venue-smoke <venue-slug-or-id>
+//	mcp-venue-smoke <venue-slug-id-or-url>
 //
-// Both identifier forms are exercised when the venue resolves to an id, because
-// they take different resolution paths inside the server.
+// Slug and id forms are always exercised after resolution; the canonical URL
+// form is exercised when Wolt surfaces one.
 //
 // Environment:
 //
@@ -34,6 +31,8 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/mekedron/wolt-cli/internal/domain"
 )
 
 func main() {
@@ -45,7 +44,7 @@ func main() {
 
 func run() error {
 	if len(os.Args) != 2 || strings.TrimSpace(os.Args[1]) == "" {
-		return fmt.Errorf("usage: mcp-venue-smoke <venue-slug-or-id>")
+		return fmt.Errorf("usage: mcp-venue-smoke <venue-slug-id-or-url>")
 	}
 	venue := strings.TrimSpace(os.Args[1])
 
@@ -77,35 +76,100 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	venueData := mapField(detail, "venue")
-	if strings.TrimSpace(asString(venueData["name"])) == "" {
-		return fmt.Errorf("wolt_venue_detail returned no venue name: %s", compact(detail))
-	}
-
-	hours, err := callTool(ctx, session, "wolt_venue_hours", map[string]any{"venue": venue})
+	identity, err := venueIdentityFromDetail(detail)
 	if err != nil {
 		return err
 	}
-	windows, _ := mapField(hours, "hours")["opening_windows"].([]any)
-	if len(windows) == 0 {
-		return fmt.Errorf("wolt_venue_hours returned no opening windows: %s", compact(hours))
-	}
 
-	// The id form takes a different resolution path than the slug form, so it is
-	// exercised too once the detail call has surfaced a real venue id.
-	if venueID := strings.TrimSpace(asString(venueData["venue_id"])); venueID != "" && venueID != venue {
-		byID, hoursErr := callTool(ctx, session, "wolt_venue_hours", map[string]any{"venue": venueID})
+	for _, ref := range uniqueVenueReferences(venue, identity.Slug, identity.ID, identity.CanonicalURL) {
+		hours, hoursErr := callTool(ctx, session, "wolt_venue_hours", map[string]any{"venue": ref})
 		if hoursErr != nil {
-			return fmt.Errorf("venue id form: %w", hoursErr)
+			return fmt.Errorf("venue reference %q: %w", referenceKind(ref, identity), hoursErr)
 		}
-		idWindows, _ := mapField(byID, "hours")["opening_windows"].([]any)
-		if len(idWindows) == 0 {
-			return fmt.Errorf("wolt_venue_hours by id %s returned no opening windows", venueID)
+		if validationErr := validateHours(hours, identity.ID); validationErr != nil {
+			return fmt.Errorf("venue reference %q: %w", referenceKind(ref, identity), validationErr)
 		}
 	}
 
-	fmt.Printf("%s / %d opening windows\n", asString(venueData["name"]), len(windows))
+	fmt.Println("ok")
 	return nil
+}
+
+type venueIdentity struct {
+	ID           string
+	Slug         string
+	CanonicalURL string
+}
+
+func venueIdentityFromDetail(payload map[string]any) (venueIdentity, error) {
+	venue, ok := payload["venue"].(map[string]any)
+	if !ok {
+		return venueIdentity{}, fmt.Errorf("wolt_venue_detail returned no venue object")
+	}
+	identity := venueIdentity{
+		ID:           strings.TrimSpace(asString(venue["venue_id"])),
+		Slug:         strings.TrimSpace(asString(venue["slug"])),
+		CanonicalURL: strings.TrimSpace(asString(venue["canonical_url"])),
+	}
+	if !domain.IsObjectID(identity.ID) {
+		return venueIdentity{}, fmt.Errorf("wolt_venue_detail returned a non-canonical venue id")
+	}
+	if identity.Slug == "" {
+		return venueIdentity{}, fmt.Errorf("wolt_venue_detail returned no venue slug")
+	}
+	return identity, nil
+}
+
+func validateHours(payload map[string]any, expectedVenueID string) error {
+	hours, ok := payload["hours"].(map[string]any)
+	if !ok {
+		return fmt.Errorf("wolt_venue_hours returned no hours object")
+	}
+	venueID := strings.TrimSpace(asString(hours["venue_id"]))
+	if !strings.EqualFold(venueID, expectedVenueID) {
+		return fmt.Errorf("wolt_venue_hours returned a different venue id")
+	}
+	windows, ok := hours["opening_windows"].([]any)
+	if !ok {
+		return fmt.Errorf("wolt_venue_hours returned a non-array opening_windows field")
+	}
+	for index, raw := range windows {
+		if _, ok := raw.(map[string]any); !ok {
+			return fmt.Errorf("wolt_venue_hours opening_windows[%d] is not an object", index)
+		}
+	}
+	return nil
+}
+
+func uniqueVenueReferences(values ...string) []string {
+	refs := make([]string, 0, len(values))
+	seen := map[string]struct{}{}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		key := strings.ToLower(value)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		refs = append(refs, value)
+	}
+	return refs
+}
+
+func referenceKind(ref string, identity venueIdentity) string {
+	switch {
+	case strings.EqualFold(ref, identity.ID):
+		return "id"
+	case strings.EqualFold(ref, identity.Slug):
+		return "slug"
+	case strings.EqualFold(ref, identity.CanonicalURL):
+		return "url"
+	default:
+		return "input"
+	}
 }
 
 func callTool(ctx context.Context, session *mcp.ClientSession, name string, args map[string]any) (map[string]any, error) {
@@ -170,13 +234,6 @@ func structuredData(result *mcp.CallToolResult) map[string]any {
 	}
 }
 
-func mapField(payload map[string]any, key string) map[string]any {
-	if nested, ok := payload[key].(map[string]any); ok {
-		return nested
-	}
-	return map[string]any{}
-}
-
 func asString(value any) string {
 	if value == nil {
 		return ""
@@ -186,18 +243,6 @@ func asString(value any) string {
 	}
 	return fmt.Sprint(value)
 }
-
-func compact(payload map[string]any) string {
-	encoded, err := json.Marshal(payload)
-	if err != nil {
-		return "(unencodable)"
-	}
-	if len(encoded) > 300 {
-		return string(encoded[:300]) + "..."
-	}
-	return string(encoded)
-}
-
 func firstText(result *mcp.CallToolResult) string {
 	for _, c := range result.Content {
 		if tc, ok := c.(*mcp.TextContent); ok {
