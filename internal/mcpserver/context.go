@@ -34,6 +34,10 @@ type Deps struct {
 	Version  string
 	Locale   string
 	Logger   *slog.Logger
+	// DuplicateContent serves the full typed payload as serialized JSON in
+	// Content in addition to StructuredContent. Leave false unless a client
+	// reads only Content, because it roughly doubles response size.
+	DuplicateContent bool
 }
 
 // ToolCtx is the shared receiver every tool handler hangs off. Keeping it as a

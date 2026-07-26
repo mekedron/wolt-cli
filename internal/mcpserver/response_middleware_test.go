@@ -115,7 +115,7 @@ func TestStructuredResultUsesSummaryWhenSDKContentDiffers(t *testing.T) {
 		}, nil
 	}
 
-	result, err := toolResultMiddleware(next)(context.Background(), callToolMethod, nil)
+	result, err := newToolResultMiddleware(false)(next)(context.Background(), callToolMethod, nil)
 	if err != nil {
 		t.Fatalf("middleware: %v", err)
 	}
@@ -125,6 +125,82 @@ func TestStructuredResultUsesSummaryWhenSDKContentDiffers(t *testing.T) {
 	}
 	if got := textContent(toolResult); got != summary {
 		t.Fatalf("Content = %q, want summary %q", got, summary)
+	}
+}
+
+// The server-level default exists for clients that cannot send request
+// metadata, so it must reach Content without any _meta on the call.
+func TestServerLevelDuplicateContentDefaultKeepsFullPayloadInContent(t *testing.T) {
+	const marker = "example-venue-marker"
+	next := func(context.Context, string, mcp.Request) (mcp.Result, error) {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{
+				Text: `{"summary":"resolved venue","venue":{"slug":"` + marker + `"}}`,
+			}},
+			StructuredContent: map[string]any{
+				"summary": "resolved venue",
+				"venue":   map[string]any{"slug": marker},
+			},
+		}, nil
+	}
+
+	for _, test := range []struct {
+		name           string
+		duplicate      bool
+		wantFullInBody bool
+	}{
+		{name: "compact default", duplicate: false, wantFullInBody: false},
+		{name: "server-level duplication", duplicate: true, wantFullInBody: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			result, err := newToolResultMiddleware(test.duplicate)(next)(
+				context.Background(),
+				callToolMethod,
+				nil,
+			)
+			if err != nil {
+				t.Fatalf("middleware: %v", err)
+			}
+			toolResult, ok := result.(*mcp.CallToolResult)
+			if !ok {
+				t.Fatalf("result type = %T, want *mcp.CallToolResult", result)
+			}
+			if got := strings.Contains(textContent(toolResult), marker); got != test.wantFullInBody {
+				t.Fatalf("full payload in Content = %v, want %v (content=%q)",
+					got, test.wantFullInBody, textContent(toolResult))
+			}
+			if toolResult.StructuredContent == nil {
+				t.Fatal("StructuredContent must survive regardless of duplication")
+			}
+		})
+	}
+}
+
+// An explicit per-request boolean has to win over the server default in both
+// directions, otherwise a single misconfigured client cannot recover.
+func TestRequestMetaOverridesServerDuplicateContentDefault(t *testing.T) {
+	if got := duplicateContentRequested(nil, true); !got {
+		t.Fatal("nil request must fall back to the server default true")
+	}
+	if got := duplicateContentRequested(nil, false); got {
+		t.Fatal("nil request must fall back to the server default false")
+	}
+
+	req := &mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{
+		Meta: mcp.Meta{duplicateContentMetaKey: false},
+	}}
+	if duplicateContentRequested(req, true) {
+		t.Fatal("explicit _meta false must override server default true")
+	}
+
+	req.Params.Meta = mcp.Meta{duplicateContentMetaKey: true}
+	if !duplicateContentRequested(req, false) {
+		t.Fatal("explicit _meta true must override server default false")
+	}
+
+	req.Params.Meta = mcp.Meta{duplicateContentMetaKey: "yes"}
+	if duplicateContentRequested(req, false) {
+		t.Fatal("non-boolean _meta must not enable duplication")
 	}
 }
 

@@ -12,51 +12,62 @@ import (
 const callToolMethod = "tools/call"
 const duplicateContentMetaKey = "wolt/duplicate_content"
 
-// toolResultMiddleware exposes classified tool errors in result metadata.
-// Successful results default to a short Content summary while retaining the
-// complete typed output in StructuredContent. Content-only clients can request
-// the SDK's JSON compatibility duplicate through request metadata.
-func toolResultMiddleware(next mcp.MethodHandler) mcp.MethodHandler {
-	return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
-		result, err := next(ctx, method, req)
-		if err != nil || method != callToolMethod {
-			return result, err
-		}
-		toolResult, ok := result.(*mcp.CallToolResult)
-		if !ok || toolResult == nil {
-			return result, nil
-		}
-		// A non-nil SDK-side error identifies ordinary handlers that returned
-		// error. Some handlers intentionally return IsError=true together with
-		// a typed output (for example checkout blockers); preserve that richer
-		// StructuredContent.
-		if toolResult.IsError && toolResult.GetError() != nil {
-			normalizeToolErrorResult(toolResult)
-			return result, nil
-		}
-		if duplicateContentRequested(req) {
-			return result, nil
-		}
+// newToolResultMiddleware exposes classified tool errors in result metadata.
+// Successful results carry a short Content summary while retaining the complete
+// typed output in StructuredContent.
+//
+// duplicateDefault turns on the SDK's serialized-JSON compatibility duplicate
+// in Content for every call. It exists for clients that read only Content and
+// cannot be configured to send request metadata; per-request metadata
+// (duplicateContentMetaKey) overrides it in either direction.
+func newToolResultMiddleware(duplicateDefault bool) mcp.Middleware {
+	return func(next mcp.MethodHandler) mcp.MethodHandler {
+		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+			result, err := next(ctx, method, req)
+			if err != nil || method != callToolMethod {
+				return result, err
+			}
+			toolResult, ok := result.(*mcp.CallToolResult)
+			if !ok || toolResult == nil {
+				return result, nil
+			}
+			// A non-nil SDK-side error identifies ordinary handlers that returned
+			// error. Some handlers intentionally return IsError=true together with
+			// a typed output (for example checkout blockers); preserve that richer
+			// StructuredContent.
+			if toolResult.IsError && toolResult.GetError() != nil {
+				normalizeToolErrorResult(toolResult)
+				return result, nil
+			}
+			if duplicateContentRequested(req, duplicateDefault) {
+				return result, nil
+			}
 
-		structuredJSON, ok := marshalStructuredContent(toolResult.StructuredContent)
-		if !ok {
+			structuredJSON, ok := marshalStructuredContent(toolResult.StructuredContent)
+			if !ok {
+				return result, nil
+			}
+			summary := summaryFromStructuredJSON(structuredJSON)
+			if summary == "" {
+				summary = "request completed"
+			}
+			toolResult.Content = []mcp.Content{&mcp.TextContent{Text: compactText(summary)}}
 			return result, nil
 		}
-		summary := summaryFromStructuredJSON(structuredJSON)
-		if summary == "" {
-			summary = "request completed"
-		}
-		toolResult.Content = []mcp.Content{&mcp.TextContent{Text: compactText(summary)}}
-		return result, nil
 	}
 }
 
-func duplicateContentRequested(req mcp.Request) bool {
+// duplicateContentRequested resolves the effective duplication setting. An
+// explicit request-metadata boolean wins so a single client can opt in or out
+// without restarting the server; anything else falls back to the server default.
+func duplicateContentRequested(req mcp.Request, duplicateDefault bool) bool {
 	if req == nil || req.GetParams() == nil {
-		return false
+		return duplicateDefault
 	}
-	enabled, _ := req.GetParams().GetMeta()[duplicateContentMetaKey].(bool)
-	return enabled
+	if enabled, ok := req.GetParams().GetMeta()[duplicateContentMetaKey].(bool); ok {
+		return enabled
+	}
+	return duplicateDefault
 }
 
 func normalizeToolErrorResult(result *mcp.CallToolResult) {

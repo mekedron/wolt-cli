@@ -36,6 +36,7 @@ const (
 	woltHTTPMinIntervalEnv     = "WOLT_HTTP_MIN_INTERVAL_MS"
 	defaultLocale              = "en-FI"
 	localeEnv                  = "WOLT_LOCALE"
+	duplicateContentEnv        = "WOLT_MCP_DUPLICATE_CONTENT"
 )
 
 func main() {
@@ -72,13 +73,14 @@ func main() {
 	)
 
 	deps := mcpserver.Deps{
-		Wolt:     wolt,
-		Profiles: profile.NewResolver(store),
-		Location: locationgateway.NewClient(),
-		Config:   store,
-		Version:  version,
-		Locale:   locale,
-		Logger:   logger,
+		Wolt:             wolt,
+		Profiles:         profile.NewResolver(store),
+		Location:         locationgateway.NewClient(),
+		Config:           store,
+		Version:          version,
+		Locale:           locale,
+		Logger:           logger,
+		DuplicateContent: resolveDuplicateContent(),
 	}
 
 	srv := mcpserver.NewServer(deps)
@@ -103,6 +105,13 @@ Options:
   --locale <bcp47>      Response locale in BCP-47 format (default: en-FI).
                         Can also be set via the WOLT_LOCALE environment variable.
 
+Environment:
+  WOLT_MCP_DUPLICATE_CONTENT=1
+                        Also serve the full typed payload as serialized JSON in
+                        content, not just structuredContent. Set this only for
+                        clients that read content alone — it roughly doubles
+                        response size.
+
 Wire into an MCP client (Claude Desktop, Claude Code, Cursor) with:
 
   { "mcpServers": { "wolt": { "command": "wolt-mcp" } } }
@@ -122,6 +131,18 @@ func resolveWoltRequestMinInterval() time.Duration {
 		return defaultWoltHTTPMinInterval
 	}
 	return time.Duration(ms) * time.Millisecond
+}
+
+// resolveDuplicateContent reads the opt-in that mirrors the full typed payload
+// into Content. Only the documented truthy spellings enable it, so a stray or
+// empty value keeps the compact default rather than silently doubling payloads.
+func resolveDuplicateContent() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(duplicateContentEnv))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 func resolveLocale() string {
