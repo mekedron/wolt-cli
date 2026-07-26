@@ -5,10 +5,13 @@ name: Live smoke (daily)
 # (status/account/feed/venue/cart-show) always runs; a cart round-trip
 # (add a McDonald's Kamppi cheeseburger → CLI checkout preview → MCP
 # checkout preview → remove) runs because WOLT_SMOKE_CART=1 is set below.
-# The MCP step spawns wolt-mcp and drives its wolt_checkout_preview tool over
-# stdio — the exact path PR #23 fixed — so the daily run guards both the CLI
-# and MCP checkout-preview code. Checkout is preview-only — no real order is
-# ever placed, and the basket is torn down on exit. No login, no stats sync.
+# The MCP steps spawn wolt-mcp over stdio so the daily run guards the MCP
+# surface as well as the CLI: read-only venue tools in the always-on section,
+# and wolt_checkout_preview inside the round-trip. The MCP surface rots
+# independently — it is built on different upstream documents — so CLI-only
+# coverage lets MCP tools break silently. Checkout is preview-only — no real
+# order is ever placed, and the basket is torn down on exit. No login, no
+# stats sync.
 #
 # Required repository secret:
 #   WOLT_SMOKE_CONFIG_JSON  contents of ~/.wolt/.wolt-config.json
@@ -80,9 +83,9 @@ jobs:
           ./bin/wolt --version
 
       - name: Build wolt-mcp
-        # Drives the MCP checkout-preview smoke (the path PR #23 fixed). The
-        # live-smoke script also builds this on demand, but doing it here fails
-        # fast and keeps the build out of the timed smoke window.
+        # Drives the MCP smokes — read-only venue tools and checkout preview.
+        # The live-smoke script also builds this on demand, but doing it here
+        # fails fast and keeps the build out of the timed smoke window.
         run: go build -trimpath -o bin/wolt-mcp ./cmd/wolt-mcp
 
       - name: Verify smoke secret is set

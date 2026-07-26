@@ -121,6 +121,11 @@ persists the rotated tokens, and retries the original call once.
 | `wolt_venue_item` ✓ | Current item payload (price, options, image URLs, availability) |
 | `wolt_venue_search_items` ✓ | Free-text item search within a venue |
 
+`wolt_venue_detail` and `wolt_venue_hours` prefer Wolt's rich venue document and
+fall back to the static venue page when it is unavailable. Fallback results carry
+a `warnings` entry naming the degraded source, and omit the fields only the rich
+document supplies (tagline, badges, rating volume).
+
 ### Account (auth required)
 
 | Tool | What it does |

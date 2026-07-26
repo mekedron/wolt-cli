@@ -109,6 +109,51 @@ run() {
   fi
 }
 
+# ensure_wolt_mcp "<label>" "<errfile>" — build wolt-mcp on demand when the
+# workflow didn't already drop it in ./bin. Returns non-zero after reporting the
+# failure itself, so callers just bail out.
+ensure_wolt_mcp() {
+  local label="$1"
+  local err="$2"
+  if [ -x "${WOLT_MCP_BIN}" ]; then
+    return 0
+  fi
+  if go build -o "${WOLT_MCP_BIN}" ./cmd/wolt-mcp >"${err}" 2>&1; then
+    return 0
+  fi
+  printf "[%s] %-22s ... FAIL (could not build wolt-mcp)\n" "$(date -u +%H:%M:%S)" "${label}"
+  redact <"${err}" | sed 's/^/    | /' | head -10 || true
+  fail=$((fail + 1)); failures+=("${label}")
+  return 1
+}
+
+# run_mcp_venue_smoke "<venue>" — exercise the MCP read-only venue tools
+# (wolt_venue_detail, wolt_venue_hours) by spawning wolt-mcp over stdio. The MCP
+# surface rots independently of the CLI: both tools are built on Wolt's rich
+# restaurant document, which is retired upstream (HTTP 410), and both returned
+# "venue not found" for every venue while the equivalent CLI commands kept
+# working off their static-payload fallback. Read-only, so it runs in the
+# always-on surface rather than the opt-in cart round-trip.
+run_mcp_venue_smoke() {
+  local venue="$1"
+  local label="mcp venue tools"
+  local out="${SMOKE_DIR}/mcp_venue.txt"
+  local err="${SMOKE_DIR}/mcp_venue.err"
+
+  ensure_wolt_mcp "${label}" "${err}" || return
+
+  printf "[%s] %-22s ... " "$(date -u +%H:%M:%S)" "${label}"
+  if WOLT_SMOKE_LAT="${HEL_LAT}" WOLT_SMOKE_LON="${HEL_LON}" \
+     go run ./scripts/mcp-venue-smoke "${venue}" >"${out}" 2>"${err}"; then
+    printf "ok (%s)\n" "$(tr -d '\r\n' <"${out}")"
+    pass=$((pass + 1))
+  else
+    printf "FAIL\n"
+    redact <"${err}" | sed 's/^/    | /' | head -20 || true
+    fail=$((fail + 1)); failures+=("${label}")
+  fi
+}
+
 # run_mcp_checkout_preview "<venue>" — exercise the MCP wolt_checkout_preview
 # tool end to end by spawning wolt-mcp over stdio. This is the MCP counterpart
 # to the CLI "checkout preview" step and guards the exact regression PR #23
@@ -122,15 +167,7 @@ run_mcp_checkout_preview() {
   local out="${SMOKE_DIR}/mcp_checkout_preview.json"
   local err="${SMOKE_DIR}/mcp_checkout_preview.err"
 
-  # Build wolt-mcp once if the workflow didn't already drop it in ./bin.
-  if [ ! -x "${WOLT_MCP_BIN}" ]; then
-    if ! go build -o "${WOLT_MCP_BIN}" ./cmd/wolt-mcp >"${err}" 2>&1; then
-      printf "[%s] %-22s ... FAIL (could not build wolt-mcp)\n" "$(date -u +%H:%M:%S)" "${label}"
-      redact <"${err}" | sed 's/^/    | /' | head -10 || true
-      fail=$((fail + 1)); failures+=("${label}")
-      return
-    fi
-  fi
+  ensure_wolt_mcp "${label}" "${err}" || return
 
   printf "[%s] %-22s ... " "$(date -u +%H:%M:%S)" "${label}"
   # WOLT_MCP_BIN is already exported above; only the per-call coords go here.
@@ -232,7 +269,9 @@ run "feed summary"  "${WOLT_BIN}" feed --summary
 run "top 5"         "${WOLT_BIN}" top 5
 run "venues query"  "${WOLT_BIN}" venues --query burger --limit 3
 run "venue static"  "${WOLT_BIN}" venue "${KNOWN_VENUE}"
+run "venue hours"   "${WOLT_BIN}" venue hours "${KNOWN_VENUE}"
 run "venue menu"    "${WOLT_BIN}" venue menu "${KNOWN_VENUE}"
+run_mcp_venue_smoke "${KNOWN_VENUE}"
 run "cart"          "${WOLT_BIN}" cart
 run "cart count"    "${WOLT_BIN}" cart count
 

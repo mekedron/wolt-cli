@@ -276,6 +276,26 @@ func Int(value any) int {
 	}
 }
 
+// FormatMinorAmount renders a minor-unit amount for human-facing output. The
+// two currencies with a universally recognised glyph get it; everything else is
+// prefixed with its ISO code, which is unambiguous across the markets Wolt
+// serves. An empty currency yields "" — an amount without a currency is not
+// presentable.
+func FormatMinorAmount(amount int, currency string) string {
+	currency = strings.TrimSpace(currency)
+	if currency == "" {
+		return ""
+	}
+	switch currency {
+	case "EUR":
+		return fmt.Sprintf("€%.2f", float64(amount)/100)
+	case "USD":
+		return fmt.Sprintf("$%.2f", float64(amount)/100)
+	default:
+		return fmt.Sprintf("%s %.2f", currency, float64(amount)/100)
+	}
+}
+
 func CoalesceAny(values ...any) any {
 	for _, value := range values {
 		if value == nil {

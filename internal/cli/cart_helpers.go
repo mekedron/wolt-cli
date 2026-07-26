@@ -245,18 +245,7 @@ func inferCurrency(formatted string) string {
 }
 
 func formatMinorAmount(amount int, currency string) string {
-	currency = strings.TrimSpace(currency)
-	if currency == "" {
-		return ""
-	}
-	switch currency {
-	case "EUR":
-		return fmt.Sprintf("€%.2f", float64(amount)/100)
-	case "USD":
-		return fmt.Sprintf("$%.2f", float64(amount)/100)
-	default:
-		return fmt.Sprintf("%s %.2f", currency, float64(amount)/100)
-	}
+	return payloadutil.FormatMinorAmount(amount, currency)
 }
 
 func resolveOptionGroupToken(token string, specs map[string]payloadutil.OptionGroupSpec) string {

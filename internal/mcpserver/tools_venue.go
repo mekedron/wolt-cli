@@ -71,26 +71,37 @@ func (tc *ToolCtx) handleVenueDetail(ctx context.Context, _ *mcp.CallToolRequest
 		return nil, VenueDetailOutput{}, toolErr(err)
 	}
 	includes := parseIncludeSet(in.Include, []string{"hours", "tags", "rating", "fees"})
+	slug := firstNonEmpty(ref.Slug, ref.ID)
 
-	// Need both a discovery-feed item (for tagline/badges) and the restaurant
-	// document; the location feeds ItemBySlug. Falls through to profile address
-	// if the caller omits lat/lon/address.
-	location, _, err := tc.resolveLocation(ctx, in.LocationInput)
-	if err != nil {
-		return nil, VenueDetailOutput{}, toolErr(fmt.Errorf("venue_detail needs a location: %w", err))
+	// The discovery-feed item supplies tagline/badges and needs a location;
+	// falls through to the profile address if the caller omits lat/lon/address.
+	// A venue outside the resolved location's catalog is absent from the feed,
+	// so its absence degrades the result rather than failing it.
+	var item *domain.Item
+	if location, _, locErr := tc.resolveLocation(ctx, in.LocationInput); locErr == nil {
+		if found, itemErr := tc.wolt.ItemBySlug(ctx, location, slug); itemErr == nil {
+			item = found
+		}
 	}
-	item, err := tc.wolt.ItemBySlug(ctx, location, firstNonEmpty(ref.Slug, ref.ID))
-	if err != nil || item == nil {
-		return nil, VenueDetailOutput{}, toolErr(fmt.Errorf("venue not found at this location: %s", in.Venue))
-	}
+
 	restaurant, err := tc.wolt.RestaurantByID(ctx, ref.ID)
-	if err != nil || restaurant == nil {
-		return nil, VenueDetailOutput{}, toolErr(fmt.Errorf("venue restaurant payload unavailable: %v", err))
+	if err == nil && restaurant != nil && item != nil {
+		data, warnings, buildErr := observability.BuildVenueDetail(item, restaurant, includes)
+		if buildErr == nil {
+			return nil, VenueDetailOutput{
+				Summary:  fmt.Sprintf("venue %s (%s)", asString(data["name"]), asString(data["slug"])),
+				Venue:    data,
+				Warnings: warnings,
+			}, nil
+		}
 	}
-	data, warnings, buildErr := observability.BuildVenueDetail(item, restaurant, includes)
-	if buildErr != nil {
-		return nil, VenueDetailOutput{}, toolErr(buildErr)
+
+	staticPayload, staticErr := tc.wolt.VenuePageStatic(ctx, slug)
+	if staticErr != nil || len(staticPayload) == 0 {
+		return nil, VenueDetailOutput{}, toolErr(fmt.Errorf("venue not found: %s", in.Venue))
 	}
+	venueID := firstNonEmpty(strings.TrimSpace(venueIDFromPayload(staticPayload)), ref.ID)
+	data, warnings := observability.BuildVenueDetailFallback(slug, venueID, item, staticPayload, includes)
 	return nil, VenueDetailOutput{
 		Summary:  fmt.Sprintf("venue %s (%s)", asString(data["name"]), asString(data["slug"])),
 		Venue:    data,
@@ -155,8 +166,9 @@ type VenueHoursInput struct {
 }
 
 type VenueHoursOutput struct {
-	Summary string         `json:"summary"`
-	Hours   map[string]any `json:"hours"`
+	Summary  string         `json:"summary"`
+	Hours    map[string]any `json:"hours"`
+	Warnings []string       `json:"warnings,omitempty"`
 }
 
 func (tc *ToolCtx) handleVenueHours(ctx context.Context, _ *mcp.CallToolRequest, in VenueHoursInput) (*mcp.CallToolResult, VenueHoursOutput, error) {
@@ -165,13 +177,25 @@ func (tc *ToolCtx) handleVenueHours(ctx context.Context, _ *mcp.CallToolRequest,
 		return nil, VenueHoursOutput{}, toolErr(err)
 	}
 	restaurant, err := tc.wolt.RestaurantByID(ctx, ref.ID)
-	if err != nil || restaurant == nil {
+	if err == nil && restaurant != nil {
+		data := observability.BuildVenueHours(restaurant, in.Timezone)
+		return nil, VenueHoursOutput{
+			Summary: fmt.Sprintf("opening windows for %s", asString(data["venue_id"])),
+			Hours:   data,
+		}, nil
+	}
+
+	slug := firstNonEmpty(ref.Slug, ref.ID)
+	staticPayload, staticErr := tc.wolt.VenuePageStatic(ctx, slug)
+	if staticErr != nil || len(staticPayload) == 0 {
 		return nil, VenueHoursOutput{}, toolErr(fmt.Errorf("venue not found: %s", in.Venue))
 	}
-	data := observability.BuildVenueHours(restaurant, in.Timezone)
+	venueID := firstNonEmpty(strings.TrimSpace(venueIDFromPayload(staticPayload)), ref.ID)
+	data, warnings := observability.BuildVenueHoursFallback(venueID, in.Timezone, staticPayload)
 	return nil, VenueHoursOutput{
-		Summary: fmt.Sprintf("opening windows for %s", asString(data["venue_id"])),
-		Hours:   data,
+		Summary:  fmt.Sprintf("opening windows for %s", asString(data["venue_id"])),
+		Hours:    data,
+		Warnings: warnings,
 	}, nil
 }
 

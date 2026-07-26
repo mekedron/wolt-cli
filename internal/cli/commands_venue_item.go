@@ -58,7 +58,7 @@ func newVenueShowCommand(deps Dependencies) *cobra.Command {
 			restaurant, err := deps.Wolt.RestaurantByID(cmd.Context(), venueID)
 			if err != nil {
 				if isRecoverableRestaurantError(err) {
-					data, warnings := buildVenueDetailFallback(slug, venueID, item, staticPayload, splitCSV(include))
+					data, warnings := observability.BuildVenueDetailFallback(slug, venueID, item, staticPayload, splitCSV(include))
 					warnings = append(warnings, fallbackWarnings...)
 					if format == output.FormatTable {
 						return writeTable(cmd, buildVenueDetailTable(data), flags.Output)
@@ -578,7 +578,7 @@ func newVenueHoursCommand(deps Dependencies) *cobra.Command {
 							staticPayload = fetched
 						}
 					}
-					data, warnings := buildVenueHoursFallback(venueID, timezone, staticPayload)
+					data, warnings := observability.BuildVenueHoursFallback(venueID, timezone, staticPayload)
 					warnings = append(warnings, fallbackWarnings...)
 					if format == output.FormatTable {
 						return writeTable(cmd, buildVenueHoursTable(data), flags.Output)
@@ -654,7 +654,7 @@ func resolveVenueBySlug(
 				asMap(staticPayload["venue"])["name"],
 				asMap(staticPayload["venue_raw"])["name"],
 				staticPayload["name"],
-				sluggifiedTitle(slug),
+				observability.SluggifiedTitle(slug),
 			)))
 		}
 		return item, venueID, staticPayload, warnings, nil
@@ -677,7 +677,7 @@ func fallbackVenueItemFromStaticPayload(slug string, venueID string, payload map
 		Currency: strings.TrimSpace(asString(coalesceAny(venuePayload["currency"], payload["currency"]))),
 	}
 	if venue.Name == "" {
-		venue.Name = sluggifiedTitle(slug)
+		venue.Name = observability.SluggifiedTitle(slug)
 	}
 	if deliveryPrice := asInt(coalesceAny(
 		asMap(venuePayload["delivery_fee"])["amount"],
@@ -689,7 +689,7 @@ func fallbackVenueItemFromStaticPayload(slug string, venueID string, payload map
 
 	title := venue.Name
 	if title == "" {
-		title = sluggifiedTitle(slug)
+		title = observability.SluggifiedTitle(slug)
 	}
 
 	return &domain.Item{
@@ -699,249 +699,12 @@ func fallbackVenueItemFromStaticPayload(slug string, venueID string, payload map
 	}
 }
 
-func sluggifiedTitle(slug string) string {
-	parts := strings.Split(strings.TrimSpace(slug), "-")
-	resolved := make([]string, 0, len(parts))
-	for _, part := range parts {
-		p := strings.TrimSpace(part)
-		if p == "" {
-			continue
-		}
-		resolved = append(resolved, strings.ToUpper(p[:1])+strings.ToLower(p[1:]))
-	}
-	if len(resolved) == 0 {
-		return strings.TrimSpace(slug)
-	}
-	return strings.Join(resolved, " ")
-}
-
 func isRecoverableRestaurantError(err error) bool {
 	var upstreamErr *woltgateway.UpstreamRequestError
 	if !errors.As(err, &upstreamErr) {
 		return false
 	}
 	return upstreamErr.StatusCode == 404 || upstreamErr.StatusCode == 410
-}
-
-func buildVenueDetailFallback(
-	slug string,
-	venueID string,
-	item *domain.Item,
-	staticPayload map[string]any,
-	include map[string]struct{},
-) (map[string]any, []string) {
-	venuePayload := asMap(staticPayload["venue"])
-	if venuePayload == nil {
-		venuePayload = asMap(staticPayload["venue_raw"])
-	}
-
-	name := strings.TrimSpace(asString(coalesceAny(
-		itemTitle(item),
-		venuePayload["name"],
-		staticPayload["name"],
-		sluggifiedTitle(slug),
-	)))
-	address := strings.TrimSpace(asString(coalesceAny(
-		venuePayload["address"],
-		venuePayload["street_address"],
-	)))
-	currency := strings.TrimSpace(asString(coalesceAny(
-		venuePayload["currency"],
-		itemCurrency(item),
-		staticPayload["currency"],
-	)))
-	// The static venue payload is now the only live source for these fields:
-	// the rich /v3/venues/<id> restaurant endpoint returns 410 ("update your
-	// app"). score_raw is numeric, matching the rich path's
-	// restaurant.Rating.Score so table and JSON output stay identical.
-	ratingPayload := asMap(venuePayload["rating"])
-	rating := coalesceAny(ratingPayload["score_raw"], ratingPayload["score"], itemRating(item))
-
-	deliveryMethods := asSlice(venuePayload["delivery_methods"])
-	if deliveryMethods == nil {
-		deliveryMethods = []any{}
-	}
-
-	orderMinimum := map[string]any{
-		"amount":           nil,
-		"formatted_amount": nil,
-	}
-	orderMinimumResolved := false
-	if raw, ok := asFloat(coalesceAny(staticPayload["order_minimum"], venuePayload["order_minimum"])); ok {
-		amount := int(raw)
-		orderMinimum["amount"] = amount
-		if formatted := formatMinorAmount(amount, currency); formatted != "" {
-			orderMinimum["formatted_amount"] = formatted
-		}
-		orderMinimumResolved = true
-	}
-
-	data := map[string]any{
-		"venue_id":         venueID,
-		"slug":             strings.TrimSpace(asString(coalesceAny(venuePayload["slug"], slug))),
-		"name":             name,
-		"address":          address,
-		"currency":         currency,
-		"rating":           rating,
-		"delivery_methods": deliveryMethods,
-		"order_minimum":    orderMinimum,
-	}
-
-	if _, ok := include["hours"]; ok {
-		data["opening_windows"] = []any{}
-	}
-	if _, ok := include["tags"]; ok {
-		tags := asSlice(venuePayload["tags"])
-		if len(tags) == 0 {
-			tags = asSlice(staticPayload["tags"])
-		}
-		resolvedTags := make([]any, 0, len(tags))
-		for _, value := range tags {
-			tag := strings.TrimSpace(asString(value))
-			if tag == "" {
-				continue
-			}
-			resolvedTags = append(resolvedTags, tag)
-		}
-		data["tags"] = resolvedTags
-	}
-	if _, ok := include["rating"]; ok && rating != nil {
-		data["rating_details"] = map[string]any{
-			"score":  rating,
-			"text":   nil,
-			"volume": nil,
-		}
-	}
-	if _, ok := include["fees"]; ok {
-		amount := itemDeliveryFee(item)
-		formatted := any(nil)
-		if amount != nil {
-			formatted = formatMinorAmount(*amount, currency)
-		}
-		data["delivery_fee"] = map[string]any{
-			"amount":           amountValue(amount),
-			"formatted_amount": formatted,
-		}
-	}
-
-	warnings := []string{
-		"restaurant detail endpoint unavailable; showing venue details from static payload",
-	}
-	if !orderMinimumResolved {
-		warnings = append(warnings, "order minimum is unavailable in basic mode and returned as null")
-	}
-	return data, warnings
-}
-
-func buildVenueHoursFallback(venueID string, timezone string, staticPayload map[string]any) (map[string]any, []string) {
-	resolvedTimezone := strings.TrimSpace(timezone)
-	if resolvedTimezone == "" {
-		resolvedTimezone = "UTC"
-	}
-	windows := openingWindowsFromStaticPayload(staticPayload)
-	data := map[string]any{
-		"venue_id":         venueID,
-		"timezone":         resolvedTimezone,
-		"opening_windows":  windows,
-		"delivery_windows": []any{},
-	}
-	warnings := []string{}
-	if len(windows) == 0 {
-		warnings = append(warnings, "restaurant detail endpoint unavailable; opening hours are unavailable in fallback mode")
-	} else {
-		warnings = append(warnings, "restaurant detail endpoint unavailable; opening hours derived from static venue payload")
-	}
-	return data, warnings
-}
-
-// openingWindowsFromStaticPayload extracts opening hours from the
-// static venue payload (venue_raw.opening_times). The /v3/venues
-// endpoint that previously served structured hours now returns 410,
-// so this lifts the same data from the always-reachable static page.
-// Each weekday entry is a list of { type: "open"|"close", value: int }
-// where value is seconds since midnight.
-func openingWindowsFromStaticPayload(payload map[string]any) []any {
-	weekdayOrder := []string{"monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"}
-
-	openingTimes := asMap(asMap(payload["venue_raw"])["opening_times"])
-	if openingTimes == nil {
-		openingTimes = asMap(asMap(payload["venue"])["opening_times"])
-	}
-	if openingTimes == nil {
-		return []any{}
-	}
-
-	windows := make([]any, 0, len(weekdayOrder))
-	hasAny := false
-	for _, weekday := range weekdayOrder {
-		entries := asSlice(openingTimes[weekday])
-		openValue := "-"
-		closeValue := "-"
-		for _, raw := range entries {
-			entry := asMap(raw)
-			if entry == nil {
-				continue
-			}
-			secs, ok := asFloat(entry["value"])
-			if !ok {
-				continue
-			}
-			hhmm := fmt.Sprintf("%02d:%02d", int(secs)/3600, (int(secs)%3600)/60)
-			switch strings.ToLower(asString(entry["type"])) {
-			case "open":
-				openValue = hhmm
-			case "close":
-				closeValue = hhmm
-			}
-		}
-		if openValue != "-" || closeValue != "-" {
-			hasAny = true
-		}
-		windows = append(windows, map[string]any{
-			"day":   weekday,
-			"open":  openValue,
-			"close": closeValue,
-		})
-	}
-	if !hasAny {
-		return []any{}
-	}
-	return windows
-}
-
-func itemTitle(item *domain.Item) string {
-	if item == nil {
-		return ""
-	}
-	return strings.TrimSpace(item.Title)
-}
-
-func itemCurrency(item *domain.Item) string {
-	if item == nil || item.Venue == nil {
-		return ""
-	}
-	return strings.TrimSpace(item.Venue.Currency)
-}
-
-func itemDeliveryFee(item *domain.Item) *int {
-	if item == nil || item.Venue == nil {
-		return nil
-	}
-	return item.Venue.DeliveryPriceInt
-}
-
-func itemRating(item *domain.Item) any {
-	if item == nil || item.Venue == nil || item.Venue.Rating == nil {
-		return nil
-	}
-	return item.Venue.Rating.Score
-}
-
-func amountValue(amount *int) any {
-	if amount == nil {
-		return nil
-	}
-	return *amount
 }
 
 func newItemShowCommand(deps Dependencies) *cobra.Command {
