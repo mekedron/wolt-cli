@@ -1,10 +1,32 @@
 package wolt
 
 import (
+	"errors"
+	"fmt"
 	"net/http"
 	"testing"
 	"time"
 )
+
+func TestHasStatus(t *testing.T) {
+	unauthorized := fmt.Errorf("request failed: %w", &UpstreamRequestError{
+		StatusCode: http.StatusUnauthorized,
+	})
+	if !HasStatus(unauthorized, http.StatusUnauthorized) {
+		t.Fatal("expected wrapped upstream status to match")
+	}
+	if HasStatus(unauthorized, http.StatusTooManyRequests) {
+		t.Fatal("unexpected status match")
+	}
+	if HasStatus(errors.New("not an upstream response"), http.StatusUnauthorized) {
+		t.Fatal("non-upstream errors must not match")
+	}
+
+	invalid := &UpstreamRequestError{StatusCode: http.StatusOK, Cause: ErrInvalidResponse}
+	if !errors.Is(invalid, ErrUpstream) || !errors.Is(invalid, ErrInvalidResponse) {
+		t.Fatal("UpstreamRequestError must preserve both its upstream sentinel and cause")
+	}
+}
 
 func TestParseRetryAfter(t *testing.T) {
 	now := time.Date(2026, 5, 21, 20, 0, 0, 0, time.UTC)

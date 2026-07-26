@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"context"
+	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -67,9 +68,55 @@ func (tc *ToolCtx) handleAccountStatus(ctx context.Context, _ *mcp.CallToolReque
 		return nil, AccountStatusOutput{}, toolErr(err)
 	}
 	return nil, AccountStatusOutput{
-		Summary: "authenticated as " + asString(coalesceAny(payload["name"], payload["email"], payload["_id"])),
+		Summary: accountStatusSummary(payload),
 		User:    payload,
 	}, nil
+}
+
+func accountStatusSummary(payload map[string]any) string {
+	if identity := accountIdentity(payload, 0); identity != "" {
+		return "authenticated as " + identity
+	}
+	return "authenticated"
+}
+
+// accountIdentity checks the wrappers used by Wolt's account endpoints before
+// falling back to identifiers on the current object. In particular, UserMe
+// commonly returns {"user":{"name":...}} rather than putting name at the
+// response root.
+func accountIdentity(payload map[string]any, depth int) string {
+	if payload == nil || depth > 3 {
+		return ""
+	}
+	for _, key := range []string{"user", "profile", "account", "customer", "data"} {
+		if nested := asMap(payload[key]); nested != nil {
+			if identity := accountIdentity(nested, depth+1); identity != "" {
+				return identity
+			}
+		}
+	}
+	for _, key := range []string{"name", "display_name", "full_name"} {
+		if nested := asMap(payload[key]); nested != nil {
+			if identity := accountIdentity(nested, depth+1); identity != "" {
+				return identity
+			}
+		}
+		if value, ok := payload[key].(string); ok && strings.TrimSpace(value) != "" {
+			value = strings.TrimSpace(value)
+			return value
+		}
+	}
+	first := strings.TrimSpace(asString(coalesceAny(payload["first_name"], payload["firstName"])))
+	last := strings.TrimSpace(asString(coalesceAny(payload["last_name"], payload["lastName"])))
+	if full := strings.TrimSpace(strings.Join([]string{first, last}, " ")); full != "" {
+		return full
+	}
+	for _, key := range []string{"email", "_id", "id"} {
+		if value := strings.TrimSpace(asString(payload[key])); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 // ---------------- wolt_account_orders ----------------

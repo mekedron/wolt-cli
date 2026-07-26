@@ -307,8 +307,8 @@ function Features() {
         <>
           Inspect a venue's hours, menu, categories, and item details. Add{' '}
           <code>--query</code> for assortment search, <code>--include-options</code>{' '}
-          for the full option matrix. <code>venue hours</code> falls back to the
-          static venue payload when upstream returns 410.
+          for the full option matrix. <code>venue hours</code> reads the supported
+          static venue payload directly, without the retired restaurant endpoint.
         </>
       ),
       cmd: 'wolt venue menu <slug> --query "udon"',
@@ -787,11 +787,11 @@ function Example() {
 
 function Commands() {
   const cards: Array<{name: string; body: ReactNode}> = [
-    {name: 'wolt login / logout / status', body: 'Browser-driven login via managed Chrome. Manual token fallback. Friendly hint when the session expires.'},
+    {name: 'wolt login / logout / status', body: 'Browser-driven login via managed Chrome. Manual token fallback. Automatic refresh with actionable auth errors.'},
     {name: 'wolt feed', body: 'Section-grouped discovery home page. Add --summary for a one-line-per-section overview.'},
     {name: 'wolt top', body: 'Flatten the feed into a single top-N ranked table. Default 10. Dedupes by venue.'},
     {name: 'wolt venues', body: 'Flat list with filters: --query, --sort, --open-now, --wolt-plus, --promotions-only, pagination.'},
-    {name: 'wolt venue', body: 'Details, hours (with static-payload fallback), categories, menu (full / --query / --category), single-item drilldown.'},
+    {name: 'wolt venue', body: 'Details, static venue-local hours, categories, menu (full / --query / --category), single-item drilldown.'},
     {
       name: 'wolt cart',
       body: (
@@ -884,7 +884,7 @@ function Agents() {
       body: (
         <>
           Drop the one-liner below into{' '}
-          <code>claude_desktop_config.json</code> and Claude gets 24 typed
+          <code>claude_desktop_config.json</code> and Claude gets 25 typed
           tools — feed, search, venue menu, cart, checkout preview — backed
           by the bundled <code>wolt-mcp</code> binary. No wrappers, no glue
           code.
@@ -1099,7 +1099,7 @@ function Agents() {
         <div className="agents__mcp-copy">
           <span className="agents__mcp-eyebrow">Plug in once</span>
           <h3 className="agents__mcp-title">
-            One config line, 24 typed tools.
+            One config line, 25 typed tools.
           </h3>
           <p>
             <code>wolt-mcp</code> ships in the same Homebrew formula as the
@@ -1151,7 +1151,7 @@ function Agents() {
       <div className="agents__why" aria-label="Why wolt-cli is agent-friendly">
         <div className="agents__why-cell">
           <span className="agents__why-k">Native MCP server</span>
-          <span className="agents__why-v">24 typed tools, stdio transport, official Anthropic SDK</span>
+          <span className="agents__why-v">25 typed tools, stdio transport, official MCP Go SDK</span>
         </div>
         <div className="agents__why-cell">
           <span className="agents__why-k">Single binary</span>
@@ -1242,7 +1242,7 @@ function FAQ() {
       a: (
         <>
           Yes. The companion <code>wolt-mcp</code> binary is installed
-          alongside <code>wolt</code> by the Homebrew formula and exposes 24
+          alongside <code>wolt</code> by the Homebrew formula and exposes 25
           typed Model Context Protocol tools (discovery, venue, account,
           favorites, cart, checkout preview). Wire it in with{' '}
           <code>{`{ "mcpServers": { "wolt": { "command": "wolt-mcp" } } }`}</code>

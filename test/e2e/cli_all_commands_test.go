@@ -2,12 +2,11 @@ package e2e_test
 
 import (
 	"context"
-	"errors"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/mekedron/wolt-cli/internal/cli"
+	configstore "github.com/mekedron/wolt-cli/internal/config"
 	"github.com/mekedron/wolt-cli/internal/domain"
 	woltgateway "github.com/mekedron/wolt-cli/internal/gateway/wolt"
 )
@@ -1815,24 +1814,10 @@ func TestVenueMenuTableShowsRows(t *testing.T) {
 }
 
 func TestVenueHoursJSON(t *testing.T) {
-	venueItem := &domain.Item{Title: "Burger Place", TrackID: "track-1", Link: domain.Link{Target: "venue-1"}, Venue: buildVenue("venue-1", "burger-place", "Street")}
-	restaurant := &domain.Restaurant{
-		ID:           "venue-1",
-		TimezoneName: "UTC",
-		OpeningTimes: map[string][]domain.Times{
-			"monday": {
-				{Type: "open", Value: map[string]int64{"$date": time.Date(2026, 2, 16, 10, 0, 0, 0, time.UTC).UnixMilli()}},
-				{Type: "close", Value: map[string]int64{"$date": time.Date(2026, 2, 16, 20, 45, 0, 0, time.UTC).UnixMilli()}},
-			},
-		},
-	}
 	deps := cli.Dependencies{
 		Wolt: &mockWolt{
-			itemBySlugFunc: func(context.Context, domain.Location, string) (*domain.Item, error) {
-				return venueItem, nil
-			},
-			restaurantByIDFunc: func(context.Context, string) (*domain.Restaurant, error) {
-				return restaurant, nil
+			venuePageStaticFunc: func(context.Context, string) (map[string]any, error) {
+				return e2eVenueStaticPayload(), nil
 			},
 		},
 		Profiles: &mockProfiles{profile: domain.Profile{Name: "default", IsDefault: true, Location: domain.Location{Lat: 0, Lon: 0}}},
@@ -1841,7 +1826,7 @@ func TestVenueHoursJSON(t *testing.T) {
 		Version:  "1.1.1",
 	}
 
-	exitCode, out := runCLIWithDeps(t, deps, "venue", "hours", "burger-place", "--timezone", "Europe/Helsinki", "--format", "json")
+	exitCode, out := runCLIWithDeps(t, deps, "venue", "hours", e2eVenueSlug, "--timezone", "Europe/Helsinki", "--format", "json")
 	if exitCode != 0 {
 		t.Fatalf("expected exit 0, got %d\noutput:\n%s", exitCode, out)
 	}
@@ -1851,8 +1836,8 @@ func TestVenueHoursJSON(t *testing.T) {
 		t.Fatalf("expected timezone override Europe/Helsinki, got %v", data["timezone"])
 	}
 	windows := asSlicePayload(t, data["opening_windows"])
-	if len(windows) != 7 {
-		t.Fatalf("expected 7 opening windows, got %d", len(windows))
+	if len(windows) != 1 {
+		t.Fatalf("expected 1 known opening window, got %d", len(windows))
 	}
 	first := asMapPayload(t, windows[0])
 	if first["day"] != "monday" || first["open"] != "10:00" || first["close"] != "20:45" {
@@ -1860,128 +1845,23 @@ func TestVenueHoursJSON(t *testing.T) {
 	}
 }
 
-func TestVenueHoursFallbackStaticWhenItemLookupFails(t *testing.T) {
-	restaurant := &domain.Restaurant{
-		ID:           "venue-1",
-		TimezoneName: "UTC",
-		OpeningTimes: map[string][]domain.Times{
-			"monday": {
-				{Type: "open", Value: map[string]int64{"$date": time.Date(2026, 2, 16, 10, 0, 0, 0, time.UTC).UnixMilli()}},
-				{Type: "close", Value: map[string]int64{"$date": time.Date(2026, 2, 16, 20, 45, 0, 0, time.UTC).UnixMilli()}},
-			},
-		},
+func TestVenueHoursDerivesKnownWindowsFromStaticPayload(t *testing.T) {
+	staticPayload := e2eVenueStaticPayload()
+	openingTimes := asMapPayload(t, asMapPayload(t, staticPayload["venue_raw"])["opening_times"])
+	openingTimes["monday"] = []any{
+		map[string]any{"type": "open", "value": float64(39600)},  // 11:00
+		map[string]any{"type": "close", "value": float64(74700)}, // 20:45
 	}
-	deps := cli.Dependencies{
-		Wolt: &mockWolt{
-			itemBySlugFunc: func(context.Context, domain.Location, string) (*domain.Item, error) {
-				return nil, &woltgateway.UpstreamRequestError{StatusCode: 404}
-			},
-			venuePageStaticFunc: func(context.Context, string) (map[string]any, error) {
-				return map[string]any{
-					"venue": map[string]any{
-						"id":   "venue-1",
-						"slug": "burger-place",
-						"name": "Burger Place",
-					},
-				}, nil
-			},
-			restaurantByIDFunc: func(context.Context, string) (*domain.Restaurant, error) {
-				return restaurant, nil
-			},
-		},
-		Profiles: &mockProfiles{profile: domain.Profile{Name: "default", IsDefault: true, Location: domain.Location{Lat: 0, Lon: 0}}},
-		Location: &mockLocation{},
-		Config:   &mockConfig{},
-		Version:  "1.1.1",
-	}
-
-	exitCode, out := runCLIWithDeps(t, deps, "venue", "hours", "burger-place", "--format", "json")
-	if exitCode != 0 {
-		t.Fatalf("expected exit 0, got %d\noutput:\n%s", exitCode, out)
-	}
-	payload := mustJSON(t, out)
-	data := asMapPayload(t, payload["data"])
-	if data["venue_id"] != "venue-1" {
-		t.Fatalf("expected venue_id venue-1, got %v", data["venue_id"])
-	}
-}
-
-func TestVenueHoursFallbackWhenRestaurantEndpointGone(t *testing.T) {
-	venueItem := &domain.Item{
-		Title: "Burger Place",
-		Link:  domain.Link{Target: "venue-1"},
-		Venue: &domain.Venue{ID: "venue-1", Slug: "burger-place"},
-	}
-	deps := cli.Dependencies{
-		Wolt: &mockWolt{
-			itemBySlugFunc: func(context.Context, domain.Location, string) (*domain.Item, error) {
-				return venueItem, nil
-			},
-			venuePageStaticFunc: func(context.Context, string) (map[string]any, error) {
-				return map[string]any{
-					"venue": map[string]any{
-						"id":   "venue-1",
-						"slug": "burger-place",
-					},
-				}, nil
-			},
-			restaurantByIDFunc: func(context.Context, string) (*domain.Restaurant, error) {
-				return nil, &woltgateway.UpstreamRequestError{StatusCode: 410}
-			},
-		},
-		Profiles: &mockProfiles{profile: domain.Profile{Name: "default", IsDefault: true, Location: domain.Location{Lat: 0, Lon: 0}}},
-		Location: &mockLocation{},
-		Config:   &mockConfig{},
-		Version:  "1.1.1",
-	}
-
-	exitCode, out := runCLIWithDeps(t, deps, "venue", "hours", "burger-place", "--timezone", "Europe/Helsinki", "--format", "json")
-	if exitCode != 0 {
-		t.Fatalf("expected exit 0, got %d\noutput:\n%s", exitCode, out)
-	}
-	payload := mustJSON(t, out)
-	data := asMapPayload(t, payload["data"])
-	if data["venue_id"] != "venue-1" {
-		t.Fatalf("expected venue_id venue-1, got %v", data["venue_id"])
-	}
-	if data["timezone"] != "Europe/Helsinki" {
-		t.Fatalf("expected timezone override Europe/Helsinki, got %v", data["timezone"])
-	}
-}
-
-func TestVenueHoursDerivesWindowsFromStaticPayload(t *testing.T) {
-	venueItem := &domain.Item{
-		Title: "Noodle Story",
-		Link:  domain.Link{Target: "venue-1"},
-		Venue: &domain.Venue{ID: "venue-1", Slug: "noodle-story"},
-	}
-	staticPayload := map[string]any{
-		"venue": map[string]any{"id": "venue-1", "slug": "noodle-story"},
-		"venue_raw": map[string]any{
-			"opening_times": map[string]any{
-				"monday": []any{
-					map[string]any{"type": "open", "value": float64(39600)},  // 11:00
-					map[string]any{"type": "close", "value": float64(74700)}, // 20:45
-				},
-				"saturday": []any{
-					map[string]any{"type": "open", "value": float64(41400)},  // 11:30
-					map[string]any{"type": "close", "value": float64(74700)}, // 20:45
-				},
-			},
-		},
+	openingTimes["saturday"] = []any{
+		map[string]any{"type": "open", "value": float64(41400)},  // 11:30
+		map[string]any{"type": "close", "value": float64(74700)}, // 20:45
 	}
 	staticCalls := 0
 	deps := cli.Dependencies{
 		Wolt: &mockWolt{
-			itemBySlugFunc: func(context.Context, domain.Location, string) (*domain.Item, error) {
-				return venueItem, nil
-			},
 			venuePageStaticFunc: func(context.Context, string) (map[string]any, error) {
 				staticCalls++
 				return staticPayload, nil
-			},
-			restaurantByIDFunc: func(context.Context, string) (*domain.Restaurant, error) {
-				return nil, &woltgateway.UpstreamRequestError{StatusCode: 410}
 			},
 		},
 		Profiles: &mockProfiles{profile: domain.Profile{Name: "default", IsDefault: true, Location: domain.Location{Lat: 0, Lon: 0}}},
@@ -1990,30 +1870,26 @@ func TestVenueHoursDerivesWindowsFromStaticPayload(t *testing.T) {
 		Version:  "1.1.1",
 	}
 
-	exitCode, out := runCLIWithDeps(t, deps, "venue", "hours", "noodle-story", "--format", "json")
+	exitCode, out := runCLIWithDeps(t, deps, "venue", "hours", e2eVenueSlug, "--format", "json")
 	if exitCode != 0 {
 		t.Fatalf("expected exit 0, got %d\noutput:\n%s", exitCode, out)
 	}
 	if staticCalls == 0 {
-		t.Fatal("expected on-demand static payload fetch when restaurant endpoint returns 410")
+		t.Fatal("expected static venue-page payload fetch")
 	}
 	payload := mustJSON(t, out)
 	data := asMapPayload(t, payload["data"])
 	windows := asSlicePayload(t, data["opening_windows"])
-	if len(windows) != 7 {
-		t.Fatalf("expected 7 weekday windows, got %d", len(windows))
+	if len(windows) != 2 {
+		t.Fatalf("expected 2 upstream-known windows, got %d", len(windows))
 	}
 	monday := asMapPayload(t, windows[0])
 	if monday["day"] != "monday" || monday["open"] != "11:00" || monday["close"] != "20:45" {
 		t.Fatalf("expected monday 11:00-20:45, got %v", monday)
 	}
-	saturday := asMapPayload(t, windows[5])
-	if saturday["open"] != "11:30" {
+	saturday := asMapPayload(t, windows[1])
+	if saturday["day"] != "saturday" || saturday["open"] != "11:30" || saturday["close"] != "20:45" {
 		t.Fatalf("expected saturday open 11:30, got %v", saturday)
-	}
-	tuesday := asMapPayload(t, windows[1])
-	if tuesday["open"] != "-" || tuesday["close"] != "-" {
-		t.Fatalf("expected tuesday to be unmodelled (-/-), got %v", tuesday)
 	}
 }
 
@@ -2086,7 +1962,7 @@ func TestItemShowFailsWhenItemMissingInVenue(t *testing.T) {
 }
 
 func TestConfigureCommandSavesProfile(t *testing.T) {
-	cfg := &recordingConfig{loadErr: errors.New("config not found")}
+	cfg := &recordingConfig{loadErr: configstore.ErrConfigNotFound}
 	loc := &recordingLocation{location: domain.Location{Lat: 60.1699, Lon: 24.9384}}
 	deps := cli.Dependencies{
 		Wolt:     &mockWolt{},
@@ -2116,7 +1992,7 @@ func TestConfigureCommandSavesProfile(t *testing.T) {
 }
 
 func TestConfigureCommandSavesNormalizedWToken(t *testing.T) {
-	cfg := &recordingConfig{loadErr: errors.New("config not found")}
+	cfg := &recordingConfig{loadErr: configstore.ErrConfigNotFound}
 	loc := &recordingLocation{location: domain.Location{Lat: 60.1699, Lon: 24.9384}}
 	deps := cli.Dependencies{
 		Wolt:     &mockWolt{},

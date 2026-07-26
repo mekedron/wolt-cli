@@ -76,10 +76,9 @@ type Options struct {
 	// is long enough (hours, for large histories) that the original
 	// access token will expire before completion.
 	Refresher Refresher
-	// OnAuthRotated, when non-nil, is invoked with the new auth context
-	// after a successful refresh — production wires it to persist the
-	// rotated tokens so the next run starts with a valid pair.
-	OnAuthRotated func(woltgateway.AuthContext) error
+	// OnAccessTokenRefreshed, when non-nil, is called after a successful
+	// refresh so the caller can safely persist the new access token.
+	OnAccessTokenRefreshed func(woltgateway.AuthContext) error
 	// sleep is the inter-call pacer and backoff sleeper. Tests override it
 	// to record requested durations without waiting. Production leaves it
 	// nil, which defaults to sleepCtx.
@@ -176,7 +175,12 @@ func Sync(ctx context.Context, client WoltClient, opts Options) (Result, error) 
 	// runCatalogPhase / runDetailPhase pass a pointer down so the closures
 	// they hand to callWithAuthAndBackoff always see the latest value.
 	authCtx := opts.Auth
-	refreshAuth := buildRefreshHook(&authCtx, opts.Refresher, opts.OnAuthRotated, opts.Progress)
+	refreshAuth := buildRefreshHook(
+		&authCtx,
+		opts.Refresher,
+		opts.OnAccessTokenRefreshed,
+		opts.Progress,
+	)
 
 	db, err := openStore(ctx, opts.DBPath)
 	if err != nil {

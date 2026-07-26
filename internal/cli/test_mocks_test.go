@@ -10,11 +10,17 @@ import (
 type testWoltAPI struct {
 	refreshAccessTokenFn func(context.Context, string, woltgateway.AuthContext) (woltgateway.TokenRefreshResult, error)
 	deliveryInfoListFn   func(context.Context, woltgateway.AuthContext) (map[string]any, error)
-	restaurantByIDFn     func(context.Context, string) (*domain.Restaurant, error)
 	venuePageStaticFn    func(context.Context, string) (map[string]any, error)
 	venuePageDynamicFn   func(context.Context, string, woltgateway.VenuePageDynamicOptions) (map[string]any, error)
 	assortmentBySlugFn   func(context.Context, string) (map[string]any, error)
+	assortmentCategoryFn func(context.Context, string, string, string, woltgateway.AuthContext) (map[string]any, error)
 	assortmentItemsFn    func(context.Context, string, []string, woltgateway.AuthContext) (map[string]any, error)
+	assortmentSearchFn   func(context.Context, string, string, string, woltgateway.AuthContext) (map[string]any, error)
+	venueItemPageFn      func(context.Context, string, string) (map[string]any, error)
+	basketsPageFn        func(context.Context, domain.Location, woltgateway.AuthContext) (map[string]any, error)
+	addToBasketFn        func(context.Context, map[string]any, woltgateway.AuthContext) (map[string]any, error)
+	deleteBasketsFn      func(context.Context, []string, woltgateway.AuthContext) (map[string]any, error)
+	checkoutPreviewFn    func(context.Context, map[string]any, woltgateway.AuthContext) (map[string]any, error)
 }
 
 func (m *testWoltAPI) FrontPage(context.Context, domain.Location) (map[string]any, error) {
@@ -26,13 +32,6 @@ func (m *testWoltAPI) Sections(context.Context, domain.Location) ([]domain.Secti
 }
 
 func (m *testWoltAPI) Items(context.Context, domain.Location) ([]domain.Item, error) {
-	return nil, nil
-}
-
-func (m *testWoltAPI) RestaurantByID(ctx context.Context, id string) (*domain.Restaurant, error) {
-	if m.restaurantByIDFn != nil {
-		return m.restaurantByIDFn(ctx, id)
-	}
 	return nil, nil
 }
 
@@ -61,7 +60,16 @@ func (m *testWoltAPI) AssortmentByVenueSlug(ctx context.Context, slug string) (m
 	return map[string]any{}, nil
 }
 
-func (m *testWoltAPI) AssortmentCategoryByVenueSlug(context.Context, string, string, string, woltgateway.AuthContext) (map[string]any, error) {
+func (m *testWoltAPI) AssortmentCategoryByVenueSlug(
+	ctx context.Context,
+	slug string,
+	category string,
+	language string,
+	auth woltgateway.AuthContext,
+) (map[string]any, error) {
+	if m.assortmentCategoryFn != nil {
+		return m.assortmentCategoryFn(ctx, slug, category, language, auth)
+	}
 	return map[string]any{}, nil
 }
 
@@ -72,7 +80,16 @@ func (m *testWoltAPI) AssortmentItemsByVenueSlug(ctx context.Context, slug strin
 	return availableTestItems(itemIDs), nil
 }
 
-func (m *testWoltAPI) AssortmentItemsSearchByVenueSlug(context.Context, string, string, string, woltgateway.AuthContext) (map[string]any, error) {
+func (m *testWoltAPI) AssortmentItemsSearchByVenueSlug(
+	ctx context.Context,
+	slug string,
+	query string,
+	language string,
+	auth woltgateway.AuthContext,
+) (map[string]any, error) {
+	if m.assortmentSearchFn != nil {
+		return m.assortmentSearchFn(ctx, slug, query, language, auth)
+	}
 	return map[string]any{}, nil
 }
 
@@ -80,7 +97,10 @@ func (m *testWoltAPI) VenueContentByVenueSlug(context.Context, string, string, w
 	return map[string]any{}, nil
 }
 
-func (m *testWoltAPI) VenueItemPage(context.Context, string, string) (map[string]any, error) {
+func (m *testWoltAPI) VenueItemPage(ctx context.Context, venueID string, itemID string) (map[string]any, error) {
+	if m.venueItemPageFn != nil {
+		return m.venueItemPageFn(ctx, venueID, itemID)
+	}
 	return map[string]any{}, nil
 }
 
@@ -147,19 +167,31 @@ func (m *testWoltAPI) BasketCount(context.Context, woltgateway.AuthContext) (map
 	return map[string]any{}, nil
 }
 
-func (m *testWoltAPI) BasketsPage(context.Context, domain.Location, woltgateway.AuthContext) (map[string]any, error) {
+func (m *testWoltAPI) BasketsPage(ctx context.Context, location domain.Location, auth woltgateway.AuthContext) (map[string]any, error) {
+	if m.basketsPageFn != nil {
+		return m.basketsPageFn(ctx, location, auth)
+	}
+	return map[string]any{"baskets": []any{}}, nil
+}
+
+func (m *testWoltAPI) AddToBasket(ctx context.Context, payload map[string]any, auth woltgateway.AuthContext) (map[string]any, error) {
+	if m.addToBasketFn != nil {
+		return m.addToBasketFn(ctx, payload, auth)
+	}
 	return map[string]any{}, nil
 }
 
-func (m *testWoltAPI) AddToBasket(context.Context, map[string]any, woltgateway.AuthContext) (map[string]any, error) {
+func (m *testWoltAPI) DeleteBaskets(ctx context.Context, basketIDs []string, auth woltgateway.AuthContext) (map[string]any, error) {
+	if m.deleteBasketsFn != nil {
+		return m.deleteBasketsFn(ctx, basketIDs, auth)
+	}
 	return map[string]any{}, nil
 }
 
-func (m *testWoltAPI) DeleteBaskets(context.Context, []string, woltgateway.AuthContext) (map[string]any, error) {
-	return map[string]any{}, nil
-}
-
-func (m *testWoltAPI) CheckoutPreview(context.Context, map[string]any, woltgateway.AuthContext) (map[string]any, error) {
+func (m *testWoltAPI) CheckoutPreview(ctx context.Context, payload map[string]any, auth woltgateway.AuthContext) (map[string]any, error) {
+	if m.checkoutPreviewFn != nil {
+		return m.checkoutPreviewFn(ctx, payload, auth)
+	}
 	return map[string]any{}, nil
 }
 

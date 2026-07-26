@@ -6,14 +6,147 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/mekedron/wolt-cli/internal/domain"
 	woltgateway "github.com/mekedron/wolt-cli/internal/gateway/wolt"
 	"github.com/mekedron/wolt-cli/internal/service/observability"
+	"github.com/mekedron/wolt-cli/internal/service/payloadutil"
+	"github.com/mekedron/wolt-cli/internal/service/venueresolve"
 )
 
 type venueReference struct {
 	Input     string
 	VenueID   string
 	VenueSlug string
+}
+
+type cartAddVenueReference struct {
+	Input                string
+	ID                   string
+	Slug                 string
+	ExplicitSlug         string
+	explicitSlugVerified bool
+}
+
+func resolveCartAddVenueReference(
+	ctx context.Context,
+	deps Dependencies,
+	rawVenue string,
+	rawExplicitSlug string,
+) (cartAddVenueReference, error) {
+	reference := cartAddVenueReference{
+		Input:        normalizeVenueInput(rawVenue),
+		ExplicitSlug: normalizeVenueInput(rawExplicitSlug),
+	}
+	if reference.Input == "" {
+		return reference, fmt.Errorf("venue is required")
+	}
+	if domain.IsObjectID(reference.ExplicitSlug) {
+		return reference, fmt.Errorf("--venue-slug must be a venue slug or Wolt venue URL, not a venue id")
+	}
+
+	resolved, _ := resolveVenueReference(ctx, deps, reference.Input)
+	reference.ID = resolved.VenueID
+	reference.Slug = strings.TrimSpace(resolved.VenueSlug)
+	reference.explicitSlugVerified = reference.ExplicitSlug == ""
+	if reference.ExplicitSlug == "" {
+		return reference, nil
+	}
+
+	reference.Slug = reference.ExplicitSlug
+	if strings.EqualFold(reference.ExplicitSlug, reference.Input) ||
+		strings.EqualFold(reference.ExplicitSlug, resolved.VenueSlug) {
+		reference.explicitSlugVerified = true
+		return reference, nil
+	}
+
+	override, _ := resolveVenueReference(ctx, deps, reference.ExplicitSlug)
+	if !domain.IsObjectID(override.VenueID) {
+		if !domain.IsObjectID(reference.ID) {
+			return reference, fmt.Errorf(
+				"--venue-slug %q conflicts with venue %q",
+				reference.ExplicitSlug,
+				strings.TrimSpace(rawVenue),
+			)
+		}
+		return reference, nil
+	}
+	if !strings.EqualFold(override.VenueID, reference.ID) {
+		return reference, fmt.Errorf(
+			"--venue-slug %q resolves to a different venue than %q",
+			reference.ExplicitSlug,
+			strings.TrimSpace(rawVenue),
+		)
+	}
+	reference.explicitSlugVerified = true
+	return reference, nil
+}
+
+func (reference cartAddVenueReference) basketSelectionKey() string {
+	if domain.IsObjectID(reference.ID) {
+		return strings.TrimSpace(reference.ID)
+	}
+	return reference.Input
+}
+
+func (reference *cartAddVenueReference) applyItemSlugHint(
+	ctx context.Context,
+	deps Dependencies,
+	rawHint string,
+) error {
+	hint := normalizeVenueInput(rawHint)
+	if hint == "" {
+		return nil
+	}
+	if reference.Slug != "" {
+		if !strings.EqualFold(reference.Slug, hint) {
+			return fmt.Errorf(
+				"item URL venue %q conflicts with venue %q",
+				hint,
+				reference.Input,
+			)
+		}
+		return nil
+	}
+
+	hintReference, _ := resolveVenueReference(ctx, deps, hint)
+	if !domain.IsObjectID(hintReference.VenueID) {
+		return fmt.Errorf(
+			"could not verify that item URL venue %q belongs to venue %q",
+			hint,
+			reference.Input,
+		)
+	}
+	if !strings.EqualFold(hintReference.VenueID, reference.ID) {
+		return fmt.Errorf(
+			"item URL venue %q resolves to a different venue than %q",
+			hint,
+			reference.Input,
+		)
+	}
+	reference.Slug = hint
+	return nil
+}
+
+func (reference *cartAddVenueReference) verifyBasket(
+	identity payloadutil.BasketVenueIdentity,
+) error {
+	if identity.Conflict {
+		return fmt.Errorf("the selected basket contains conflicting canonical venue ids")
+	}
+	if domain.IsObjectID(reference.ID) &&
+		domain.IsObjectID(identity.ID) &&
+		!strings.EqualFold(identity.ID, reference.ID) {
+		return fmt.Errorf("the selected basket belongs to a different venue")
+	}
+	if reference.ExplicitSlug != "" &&
+		!reference.explicitSlugVerified &&
+		identity.Slug != "" {
+		if !strings.EqualFold(identity.Slug, reference.ExplicitSlug) {
+			return fmt.Errorf("the selected basket venue does not match --venue-slug")
+		}
+		reference.explicitSlugVerified = true
+	}
+	return nil
 }
 
 // itemReference is the resolved form of any item input accepted by the CLI:
@@ -40,7 +173,7 @@ func resolveItemReference(raw string) itemReference {
 		return ref
 	}
 	parsed, err := url.Parse(value)
-	if err == nil && parsed.Host != "" {
+	if err == nil && parsed.Host != "" && domain.IsWoltURL(value) {
 		ref.VenueSlugHint, ref.ItemID = parseItemURL(parsed)
 		if ref.ItemID != "" {
 			return ref
@@ -48,7 +181,7 @@ func resolveItemReference(raw string) itemReference {
 	}
 	// Fall back to the trailing path segment in case the user pasted
 	// something URL-shaped that we couldn't fully match.
-	if err == nil && parsed.Host != "" {
+	if err == nil && parsed.Host != "" && domain.IsWoltURL(value) {
 		if candidate := extractTrailingObjectID(parsed.Path); candidate != "" {
 			ref.ItemID = candidate
 			return ref
@@ -234,9 +367,9 @@ type cartItemCandidate struct {
 // price are broken by name so the choice is deterministic across runs. Returns
 // false when nothing orderable matched.
 //
-// Unlike resolveItemByName this never fails on multiple matches — it
-// deterministically takes the cheapest — which is what the live smoke needs to
-// add a real cheeseburger without pinning a volatile item id.
+// Unlike resolveItemByName this never fails on multiple matches. That makes it
+// useful for unattended scripts which need a deterministic orderable choice
+// without pinning a volatile item id.
 func selectCheapestMenuItem(items []map[string]any, query string) (cartItemCandidate, bool) {
 	needle := strings.ToLower(strings.TrimSpace(query))
 	var best cartItemCandidate
@@ -291,23 +424,29 @@ func resolveCheapestItem(ctx context.Context, deps Dependencies, venueSlug, venu
 }
 
 func normalizeVenueInput(raw string) string {
-	value := strings.TrimSpace(raw)
-	if value == "" {
-		return ""
+	return venueresolve.Normalize(raw)
+}
+
+func venueIdentityFromInput(raw string) observability.VenueIdentity {
+	normalized := normalizeVenueInput(raw)
+	identity := observability.VenueIdentity{
+		CanonicalURL: domain.CanonicalVenueURL(raw, normalized),
 	}
-	parsed, err := url.Parse(value)
-	if err != nil || parsed.Host == "" {
-		return value
+	if looksLikeObjectID(normalized) {
+		identity.ID = normalized
+	} else {
+		identity.Slug = normalized
 	}
-	parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
-	for i := len(parts) - 1; i >= 0; i-- {
-		part := strings.TrimSpace(parts[i])
-		if part == "" {
-			continue
-		}
-		return part
-	}
-	return value
+	return identity
+}
+
+func loadVenuePageDynamic(
+	ctx context.Context,
+	deps Dependencies,
+	reference string,
+	options woltgateway.VenuePageDynamicOptions,
+) (map[string]any, error) {
+	return venueresolve.RequestDynamic(ctx, deps.Wolt, reference, options)
 }
 
 func resolveVenueReference(ctx context.Context, deps Dependencies, raw string) (venueReference, error) {
@@ -316,80 +455,30 @@ func resolveVenueReference(ctx context.Context, deps Dependencies, raw string) (
 	if input == "" {
 		return ref, nil
 	}
-	if looksLikeObjectID(input) {
-		ref.VenueID = input
-		ref.VenueSlug = resolveVenueSlugFromID(ctx, deps, input)
-		return ref, nil
-	}
-	ref.VenueSlug = input
-	ref.VenueID = input
-	// Local cache short-circuits the ~250–500 ms VenuePageStatic round-trip
-	// once we've resolved a slug at least once. See internal/cli/slug_cache.go.
-	if cachedID, ok := lookupCachedVenueID(input); ok {
-		ref.VenueID = cachedID
-		return ref, nil
-	}
-	if deps.Wolt != nil {
-		if id := resolveVenueIDFromSlug(ctx, deps, input); id != "" {
-			ref.VenueID = id
-			rememberVenueID(input, id)
+	// The lightweight ID cache preserves the resolver's fast path. Commands
+	// that need canonical metadata load the cached static payload separately.
+	if !domain.IsObjectID(input) {
+		if cachedID, ok := lookupCachedVenueID(input); ok {
+			ref.VenueID = cachedID
+			ref.VenueSlug = input
+			return ref, nil
 		}
+	}
+	resolved := venueresolve.Resolve(ctx, deps.Wolt, raw, venueresolve.Options{
+		StaticLoader: func(ctx context.Context, reference string) (map[string]any, error) {
+			if deps.Wolt == nil {
+				return nil, fmt.Errorf("venue API is unavailable")
+			}
+			if domain.IsObjectID(reference) {
+				return deps.Wolt.VenuePageStatic(ctx, reference)
+			}
+			return cachedVenuePageStatic(ctx, deps, reference)
+		},
+	})
+	ref.VenueID = resolved.ID
+	ref.VenueSlug = resolved.Slug
+	if !domain.IsObjectID(input) && domain.IsObjectID(ref.VenueID) {
+		rememberVenueID(input, ref.VenueID)
 	}
 	return ref, nil
-}
-
-// resolveVenueSlugFromID turns a venue ObjectID into its slug. The static venue
-// page serves either identifier from its `slug` path segment, so it doubles as
-// the id→slug lookup; `restaurant-api/v3/venues/<id>` is retired upstream and
-// answers HTTP 410 for every client, so it is not a source. A slug is mandatory
-// for the assortment reads that gate cart adds and checkout preview on current
-// item availability — those endpoints are slug-keyed only. Returns "" when the
-// page is unavailable or carries no slug.
-func resolveVenueSlugFromID(ctx context.Context, deps Dependencies, venueID string) string {
-	if deps.Wolt == nil {
-		return ""
-	}
-	payload, err := cachedVenuePageStatic(ctx, deps, venueID)
-	if err != nil {
-		return ""
-	}
-	return venueSlugFromPayload(payload)
-}
-
-func venueSlugFromPayload(payload map[string]any) string {
-	venue := asMap(payload["venue"])
-	if venue == nil {
-		venue = asMap(payload["venue_raw"])
-	}
-	return strings.TrimSpace(asString(coalesceAny(
-		venue["slug"],
-		venue["venue_slug"],
-		venue["public_slug"],
-		venue["url_slug"],
-		payload["venue_slug"],
-		payload["slug"],
-	)))
-}
-
-// resolveVenueIDFromSlug turns a venue slug into its Mongo ObjectID. It tries
-// the (cached) static venue page first, then falls back to the dynamic venue
-// page. Wolt now 404s the static `pages/venue/slug/<slug>/static` endpoint for
-// the vast majority of venues, so the dynamic page is the reliable slug→id
-// source. Without it, cart mutations would post the slug as `venue_id` and the
-// Wolt backend silently creates a non-persisting "phantom" basket (issue #19).
-// Returns "" when neither endpoint yields a real id.
-func resolveVenueIDFromSlug(ctx context.Context, deps Dependencies, slug string) string {
-	if deps.Wolt == nil {
-		return ""
-	}
-	if payload, err := cachedVenuePageStatic(ctx, deps, slug); err == nil {
-		if id := strings.TrimSpace(venueIDFromPayload(payload)); id != "" {
-			return id
-		}
-	}
-	payload, err := deps.Wolt.VenuePageDynamic(ctx, slug, woltgateway.VenuePageDynamicOptions{})
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(venueIDFromPayload(payload))
 }

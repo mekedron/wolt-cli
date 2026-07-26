@@ -3,15 +3,12 @@ name: Live smoke (daily)
 # Daily smoke against real Wolt consumer-api endpoints. Detects
 # upstream contract drift before users do. The read-only surface
 # (status/account/feed/venue/cart-show) always runs; a cart round-trip
-# (add a McDonald's Kamppi cheeseburger → CLI checkout preview → MCP
-# checkout preview → remove) runs because WOLT_SMOKE_CART=1 is set below.
-# The MCP steps spawn wolt-mcp over stdio so the daily run guards the MCP
-# surface as well as the CLI: read-only venue tools in the always-on section,
-# and wolt_checkout_preview inside the round-trip. The MCP surface rots
-# independently — it is built on different upstream documents — so CLI-only
-# coverage lets MCP tools break silently. Checkout is preview-only — no real
-# order is ever placed, and the basket is torn down on exit. No login, no
-# stats sync.
+# (add a live orderable item → CLI checkout preview → MCP checkout preview
+# → remove) runs because WOLT_SMOKE_CART=1 is set below.
+# The MCP steps spawn wolt-mcp over stdio for read-only venue detail/hours and
+# checkout preview, so the daily run guards the MCP surface as well as the CLI.
+# Checkout is preview-only — no real order is ever placed, and only the unit
+# added by this run is removed. No login or sync.
 #
 # Required repository secret:
 #   WOLT_SMOKE_CONFIG_JSON  contents of ~/.wolt/.wolt-config.json
@@ -25,18 +22,18 @@ name: Live smoke (daily)
 # lantern, etc.). A synthetic config with only __wtoken / __wrtoken
 # returns 401 "session expired" even with valid tokens.
 #
-# Optional repository secret (recommended — makes the smoke self-healing):
+# Optional repository secret (reuses refreshed access tokens between runs):
 #   WOLT_SMOKE_WRITE_PAT  fine-grained PAT, scope: Secrets=write +
 #                         Metadata=read, on this repo only.
 # When set, the workflow writes the post-run ~/.wolt/.wolt-config.json
-# back to WOLT_SMOKE_CONFIG_JSON. Wolt rotates the refresh token on
-# every successful refresh, so without this write-back the secret goes
-# stale after the first run. Use a dedicated CI-only Wolt account so
-# local CLI activity doesn't interfere with the rotated CI session.
+# back to WOLT_SMOKE_CONFIG_JSON. Automatic refresh persists only the new
+# access token; the bootstrap refresh token and cookies remain pinned.
+# Use a dedicated CI-only Wolt account so external login/logout activity
+# does not replace the credentials while the smoke is running.
 
 on:
   schedule:
-    - cron: "0 7 * * *" # Daily 07:00 UTC ≈ Helsinki morning
+    - cron: "0 7 * * *" # Daily 07:00 UTC
   workflow_dispatch:
 
 # Note: deliberately no pull_request / push trigger. The secrets must
@@ -52,12 +49,17 @@ concurrency:
 
 jobs:
   smoke:
-    name: Smoke read-only endpoints
+    name: Smoke live CLI and MCP endpoints
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
     env:
-      WOLT_SMOKE_CONFIG_JSON: ${{ secrets.WOLT_SMOKE_CONFIG_JSON }}
+      # Optional repository variables let forks run the same smoke in any
+      # supported market. Empty values fall back to the script's CI fixture.
+      WOLT_SMOKE_LAT: ${{ vars.WOLT_SMOKE_LAT }}
+      WOLT_SMOKE_LON: ${{ vars.WOLT_SMOKE_LON }}
+      WOLT_SMOKE_VENUE: ${{ vars.WOLT_SMOKE_VENUE }}
+      WOLT_SMOKE_CART_VENUE: ${{ vars.WOLT_SMOKE_CART_VENUE }}
       # Enables the mutating cart round-trip (add → checkout preview →
       # remove) in live-smoke.sh. Unset locally so manual runs stay
       # read-only and never touch a real cart.
@@ -89,6 +91,8 @@ jobs:
         run: go build -trimpath -o bin/wolt-mcp ./cmd/wolt-mcp
 
       - name: Verify smoke secret is set
+        env:
+          WOLT_SMOKE_CONFIG_JSON: ${{ secrets.WOLT_SMOKE_CONFIG_JSON }}
         run: |
           if [ -z "${WOLT_SMOKE_CONFIG_JSON}" ]; then
             echo "::error::Required secret WOLT_SMOKE_CONFIG_JSON is missing. See workflow header for seeding instructions."
@@ -100,6 +104,9 @@ jobs:
             || { echo "::error::WOLT_SMOKE_CONFIG_JSON is not valid JSON, or .account.wtoken is missing/short."; exit 1; }
 
       - name: Run live smoke
+        id: smoke
+        env:
+          WOLT_SMOKE_CONFIG_JSON: ${{ secrets.WOLT_SMOKE_CONFIG_JSON }}
         # The script prints only its own status lines and a redacted
         # error tail on failure. Its log is safe to surface publicly;
         # the raw JSON outputs in /tmp/wolt-smoke are never uploaded.
@@ -107,33 +114,24 @@ jobs:
 
       - name: Step summary
         if: always()
-        # Surfaces only endpoint label + pass/fail. No bytes counts, no
-        # content snippets — we don't want side-channel signals about
-        # the account in a public log either.
+        # Surface only the authoritative suite outcome. Endpoint errors live
+        # in stdout JSON, so stderr presence is not a reliable result signal.
         run: |
           {
             echo "## Live smoke results"
             echo ""
-            if [ -d /tmp/wolt-smoke ]; then
-              echo "| Endpoint | Status |"
-              echo "|---|---|"
-              for f in /tmp/wolt-smoke/*.json; do
-                [ -f "$f" ] || continue
-                name="$(basename "$f" .json | tr '_' ' ')"
-                err="${f%.json}.err"
-                if [ -s "$err" ]; then
-                  status="❌"
-                else
-                  status="✅"
-                fi
-                printf "| %s | %s |\n" "$name" "$status"
-              done
-            else
-              echo "_No smoke output collected — failed before any endpoint ran._"
-            fi
+            echo "| Suite | Status |"
+            echo "|---|---|"
+            case "${{ steps.smoke.outcome }}" in
+              success) status="✅" ;;
+              failure) status="❌" ;;
+              cancelled) status="⚪ cancelled" ;;
+              *) status="⚪ ${{ steps.smoke.outcome }}" ;;
+            esac
+            printf "| Live smoke | %s |\n" "$status"
           } >>"${GITHUB_STEP_SUMMARY}"
 
-      - name: Persist rotated config back to secret
+      - name: Persist refreshed access token back to secret
         if: always()
         env:
           # Separate PAT, not GITHUB_TOKEN — the default Actions token
@@ -141,16 +139,16 @@ jobs:
           # this repo with Secrets=write + Metadata=read is sufficient.
           GH_TOKEN: ${{ secrets.WOLT_SMOKE_WRITE_PAT }}
         run: |
-          # Wolt rotates the refresh token on every successful refresh.
-          # The CLI persists the rotated tokens to ~/.wolt/.wolt-config.json
-          # via upsertProfileTokens; mirror that file back into the secret
-          # so the next run starts with the live RT instead of a stale one.
+          # The CLI safely persists a refreshed access token while keeping
+          # the saved bootstrap refresh token and cookies unchanged. Mirror
+          # that config back into the secret so the next run can reuse the
+          # newest access token.
           #
           # Runs on always() rather than success() because a partial smoke
           # failure (e.g., one endpoint contract drifted) doesn't undo the
-          # auth refresh — we still want to preserve the rotated tokens.
+          # auth refresh — we still want to preserve the refreshed access.
           if [ -z "${GH_TOKEN:-}" ]; then
-            echo "::warning::WOLT_SMOKE_WRITE_PAT not set; secret rotation skipped. The secret will go stale after this run and need a manual re-seed (see workflow header)."
+            echo "::warning::WOLT_SMOKE_WRITE_PAT not set; refreshed access-token write-back skipped."
             exit 0
           fi
           cfg="${HOME}/.wolt/.wolt-config.json"
@@ -170,7 +168,7 @@ jobs:
             exit 0
           fi
           gh secret set WOLT_SMOKE_CONFIG_JSON --repo "${GITHUB_REPOSITORY}" <"${cfg}"
-          echo "::notice::WOLT_SMOKE_CONFIG_JSON refreshed with rotated tokens."
+          echo "::notice::WOLT_SMOKE_CONFIG_JSON updated with the refreshed access token."
 
       - name: Wipe local smoke outputs
         if: always()
@@ -194,13 +192,13 @@ jobs:
 
           - Run: ${run_url}
           - Likely causes (in rough order of frequency):
-            1. \`WOLT_SMOKE_CONFIG_JSON\` has gone stale (refresh token revoked Wolt-side, or local CLI use rotated it out from under CI). Re-seed from a logged-in machine — ideally a CI-dedicated Wolt account so local activity stops invalidating it:
+            1. \`WOLT_SMOKE_CONFIG_JSON\` is no longer accepted (the session was revoked Wolt-side, or an explicit login/logout replaced it). Re-seed from a logged-in machine — ideally a CI-dedicated Wolt account so other activity does not replace it:
                \`\`\`
                wolt status >/dev/null && gh secret set WOLT_SMOKE_CONFIG_JSON < ~/.wolt/.wolt-config.json
                \`\`\`
-               If \`WOLT_SMOKE_WRITE_PAT\` isn't configured, every successful run also leaves the secret stale for the next one — see the workflow header for the one-time PAT setup.
+               \`WOLT_SMOKE_WRITE_PAT\` is optional; when configured it copies refreshed access tokens back to the secret between runs.
             2. Wolt changed an endpoint contract (the smoke is doing its job — fix the gateway parser).
-            3. Transient Wolt 5xx / 429 burst → rerun via Actions → Live smoke (weekly) → Run workflow.
+            3. Transient Wolt 5xx / 429 burst → rerun via Actions → Live smoke (daily) → Run workflow.
 
           See the failed step in the run for the specific endpoint and the pre-flight HTTP trace.
           EOF

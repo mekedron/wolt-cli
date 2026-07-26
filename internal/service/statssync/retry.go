@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -161,10 +162,6 @@ func isRateLimited(err error) bool {
 	}
 }
 
-func isUnauthorized(err error) bool {
-	return statusOf(err) == 401
-}
-
 // callWithAuthAndBackoff wraps callWithBackoff with one mid-call auth
 // refresh: if the first cycle ends in 401, refreshAuth is invoked, the
 // underlying closure picks up the rotated tokens (the caller dereferences
@@ -185,7 +182,7 @@ func callWithAuthAndBackoff(
 	if err == nil {
 		return payload, nil
 	}
-	if !isUnauthorized(err) || refreshAuth == nil {
+	if !woltgateway.HasStatus(err, http.StatusUnauthorized) || refreshAuth == nil {
 		return nil, err
 	}
 	writeDetail(progress, "  %s received HTTP 401; refreshing access token", label)
@@ -198,23 +195,20 @@ func callWithAuthAndBackoff(
 // buildRefreshHook returns a closure suitable for catalogParams.RefreshAuth
 // / detailParams.RefreshAuth. Each invocation: swaps auth.RefreshToken via
 // refresher, mutates *auth in place with the new access (+ rotated refresh)
-// token, and forwards the new context to onRotated for disk persistence.
-// Returns nil — meaning "no refresh path available" — when either refresher
-// is nil or the supplied auth has no refresh token to use.
+// token, then notifies onRefreshed. Returns nil — meaning "no refresh path
+// available" — when either refresher is nil or the supplied auth has no
+// refresh token to use.
 func buildRefreshHook(
 	auth *woltgateway.AuthContext,
 	refresher Refresher,
-	onRotated func(woltgateway.AuthContext) error,
+	onRefreshed func(woltgateway.AuthContext) error,
 	progress io.Writer,
 ) func(context.Context) error {
-	if refresher == nil || auth == nil {
+	if refresher == nil || auth == nil || strings.TrimSpace(auth.RefreshToken) == "" {
 		return nil
 	}
 	return func(ctx context.Context) error {
-		rt := ""
-		if auth != nil {
-			rt = strings.TrimSpace(auth.RefreshToken)
-		}
+		rt := strings.TrimSpace(auth.RefreshToken)
 		if rt == "" {
 			return fmt.Errorf("no refresh token available")
 		}
@@ -224,15 +218,19 @@ func buildRefreshHook(
 		}
 		newAccess := strings.TrimSpace(result.AccessToken)
 		if newAccess == "" {
-			return fmt.Errorf("refresh response missing access token")
+			return fmt.Errorf("%w: refresh response missing access token", woltgateway.ErrInvalidResponse)
 		}
 		auth.WToken = newAccess
 		if newRefresh := strings.TrimSpace(result.RefreshToken); newRefresh != "" {
 			auth.RefreshToken = newRefresh
 		}
-		if onRotated != nil {
-			if perr := onRotated(*auth); perr != nil {
-				writeDetail(progress, "  warning: persisting rotated tokens failed: %v", perr)
+		if onRefreshed != nil {
+			if persistErr := onRefreshed(*auth); persistErr != nil {
+				writeDetail(
+					progress,
+					"  warning: persisting refreshed access token failed: %v",
+					persistErr,
+				)
 			}
 		}
 		writeDetail(progress, "  access token refreshed mid-sync")

@@ -18,7 +18,6 @@ type mockWolt struct {
 	frontPageFunc           func(context.Context, domain.Location) (map[string]any, error)
 	sectionsFunc            func(context.Context, domain.Location) ([]domain.Section, error)
 	itemsFunc               func(context.Context, domain.Location) ([]domain.Item, error)
-	restaurantByIDFunc      func(context.Context, string) (*domain.Restaurant, error)
 	searchFunc              func(context.Context, domain.Location, string) (map[string]any, error)
 	venuePageStaticFunc     func(context.Context, string) (map[string]any, error)
 	venuePageDynamicFunc    func(context.Context, string, woltgateway.VenuePageDynamicOptions) (map[string]any, error)
@@ -69,13 +68,6 @@ func (m *mockWolt) Items(ctx context.Context, location domain.Location) ([]domai
 		return nil, errors.New("items not mocked")
 	}
 	return m.itemsFunc(ctx, location)
-}
-
-func (m *mockWolt) RestaurantByID(ctx context.Context, venueID string) (*domain.Restaurant, error) {
-	if m.restaurantByIDFunc == nil {
-		return nil, errors.New("restaurantByID not mocked")
-	}
-	return m.restaurantByIDFunc(ctx, venueID)
 }
 
 func (m *mockWolt) Search(ctx context.Context, location domain.Location, query string) (map[string]any, error) {
@@ -469,6 +461,54 @@ func mustJSON(t *testing.T, raw string) map[string]any {
 	return payload
 }
 
+const (
+	e2eVenueID   = "000000000000000000000701"
+	e2eVenueSlug = "example-venue"
+)
+
+func e2eVenueStaticPayload() map[string]any {
+	return map[string]any{
+		"order_minimum": 1000,
+		"venue": map[string]any{
+			"id":               e2eVenueID,
+			"slug":             e2eVenueSlug,
+			"name":             "Example Venue",
+			"address":          "1 Example Street",
+			"currency":         "EUR",
+			"timezone":         "Europe/Helsinki",
+			"delivery_methods": []any{"homedelivery"},
+		},
+		"venue_raw": map[string]any{
+			"opening_times": map[string]any{
+				"monday": []any{
+					map[string]any{"type": "open", "value": 36000},
+					map[string]any{"type": "close", "value": 74700},
+				},
+			},
+			"food_tags": []any{"example"},
+		},
+	}
+}
+
+func e2eVenueDynamicPayload() map[string]any {
+	return map[string]any{
+		"venue": map[string]any{
+			"id":     e2eVenueID,
+			"slug":   e2eVenueSlug,
+			"online": true,
+			"delivery_configs": []any{
+				map[string]any{
+					"method":   "homedelivery",
+					"schedule": "standard",
+					"price": map[string]any{
+						"price": map[string]any{"amount": 500},
+					},
+				},
+			},
+		},
+	}
+}
+
 func buildVenue(id, slug, address string) *domain.Venue {
 	return &domain.Venue{
 		ID:               id,
@@ -477,7 +517,7 @@ func buildVenue(id, slug, address string) *domain.Venue {
 		Address:          address,
 		Country:          "POL",
 		Currency:         "PLN",
-		Delivers:         true,
+		Delivers:         boolPtr(true),
 		DeliveryPriceInt: intPtr(1000),
 		EstimateRange:    "25-35",
 		Estimate:         30,
@@ -584,30 +624,18 @@ func TestSearchVenuesJSON(t *testing.T) {
 }
 
 func TestVenueShowJSON(t *testing.T) {
-	venueItem := &domain.Item{Title: "Burger Place", TrackID: "track-1", Link: domain.Link{Target: "venue-1"}, Venue: buildVenue("venue-1", "burger-place", "Burger Street")}
-	restaurant := &domain.Restaurant{
-		ID:                    "venue-1",
-		Slug:                  "burger-place",
-		Name:                  []domain.Translation{{Lang: "en", Value: "Burger Place"}},
-		Address:               "Street 1",
-		City:                  "Krakow",
-		Country:               "POL",
-		Currency:              "PLN",
-		FoodTags:              []string{"burger"},
-		PriceRange:            2,
-		PublicURL:             "https://wolt.com/test",
-		AllowedPaymentMethods: []string{"card"},
-		Description:           []domain.Translation{{Lang: "en", Value: "Description"}},
-		DeliveryMethods:       []string{"homedelivery"},
-	}
-
+	discoveryCalls := 0
 	deps := cli.Dependencies{
 		Wolt: &mockWolt{
 			itemBySlugFunc: func(context.Context, domain.Location, string) (*domain.Item, error) {
-				return venueItem, nil
+				discoveryCalls++
+				return nil, errors.New("venue show must not use discovery")
 			},
-			restaurantByIDFunc: func(context.Context, string) (*domain.Restaurant, error) {
-				return restaurant, nil
+			venuePageStaticFunc: func(context.Context, string) (map[string]any, error) {
+				return e2eVenueStaticPayload(), nil
+			},
+			venuePageDynamicFunc: func(context.Context, string, woltgateway.VenuePageDynamicOptions) (map[string]any, error) {
+				return e2eVenueDynamicPayload(), nil
 			},
 		},
 		Profiles: &mockProfiles{profile: domain.Profile{Name: "default", IsDefault: true, Location: domain.Location{Lat: 0, Lon: 0}}},
@@ -616,51 +644,35 @@ func TestVenueShowJSON(t *testing.T) {
 		Version:  "1.1.1",
 	}
 
-	exitCode, out := runCLIWithDeps(t, deps, "venue", "burger-place", "--include", "tags", "--format", "json")
+	exitCode, out := runCLIWithDeps(t, deps, "venue", e2eVenueSlug, "--include", "tags", "--format", "json")
 	if exitCode != 0 {
 		t.Fatalf("expected exit 0, got %d\noutput:\n%s", exitCode, out)
 	}
 	payload := mustJSON(t, out)
 	data := asMapPayload(t, payload["data"])
-	if data["venue_id"] != "venue-1" {
-		t.Fatalf("expected venue_id venue-1, got %v", data["venue_id"])
+	if data["venue_id"] != e2eVenueID {
+		t.Fatalf("expected venue_id %s, got %v", e2eVenueID, data["venue_id"])
 	}
-	if data["slug"] != "burger-place" {
-		t.Fatalf("expected slug burger-place, got %v", data["slug"])
+	if data["slug"] != e2eVenueSlug {
+		t.Fatalf("expected slug %s, got %v", e2eVenueSlug, data["slug"])
 	}
 	tags := asSlicePayload(t, data["tags"])
-	if len(tags) != 1 || tags[0] != "burger" {
-		t.Fatalf("expected tags [burger], got %v", tags)
+	if len(tags) != 1 || tags[0] != "example" {
+		t.Fatalf("expected tags [example], got %v", tags)
+	}
+	if discoveryCalls != 0 {
+		t.Fatalf("unexpected discovery lookup count: %d", discoveryCalls)
 	}
 }
 
-func TestVenueShowFallbackStaticWhenItemLookupFails(t *testing.T) {
-	restaurant := &domain.Restaurant{
-		ID:              "venue-1",
-		Slug:            "burger-place",
-		Address:         "Street 1",
-		Currency:        "PLN",
-		DeliveryMethods: []string{"homedelivery"},
-	}
+func TestVenueShowFallsBackToStaticWhenDynamicUnavailable(t *testing.T) {
 	deps := cli.Dependencies{
 		Wolt: &mockWolt{
-			itemBySlugFunc: func(context.Context, domain.Location, string) (*domain.Item, error) {
-				return nil, &woltgateway.UpstreamRequestError{StatusCode: 404}
-			},
 			venuePageStaticFunc: func(context.Context, string) (map[string]any, error) {
-				return map[string]any{
-					"venue": map[string]any{
-						"id":             "venue-1",
-						"slug":           "burger-place",
-						"name":           "Burger Place",
-						"address":        "Street 1",
-						"currency":       "PLN",
-						"delivery_price": 500,
-					},
-				}, nil
+				return e2eVenueStaticPayload(), nil
 			},
-			restaurantByIDFunc: func(context.Context, string) (*domain.Restaurant, error) {
-				return restaurant, nil
+			venuePageDynamicFunc: func(context.Context, string, woltgateway.VenuePageDynamicOptions) (map[string]any, error) {
+				return nil, &woltgateway.UpstreamRequestError{StatusCode: 503}
 			},
 		},
 		Profiles: &mockProfiles{profile: domain.Profile{Name: "default", IsDefault: true, Location: domain.Location{Lat: 0, Lon: 0}}},
@@ -669,44 +681,28 @@ func TestVenueShowFallbackStaticWhenItemLookupFails(t *testing.T) {
 		Version:  "1.1.1",
 	}
 
-	exitCode, out := runCLIWithDeps(t, deps, "venue", "burger-place", "--format", "json")
+	exitCode, out := runCLIWithDeps(t, deps, "venue", e2eVenueSlug, "--format", "json")
 	if exitCode != 0 {
 		t.Fatalf("expected exit 0, got %d\noutput:\n%s", exitCode, out)
 	}
 	payload := mustJSON(t, out)
 	data := asMapPayload(t, payload["data"])
-	if data["venue_id"] != "venue-1" {
-		t.Fatalf("expected venue_id venue-1, got %v", data["venue_id"])
+	if data["venue_id"] != e2eVenueID {
+		t.Fatalf("expected venue_id %s, got %v", e2eVenueID, data["venue_id"])
 	}
-	if data["slug"] != "burger-place" {
-		t.Fatalf("expected slug burger-place, got %v", data["slug"])
+	if data["slug"] != e2eVenueSlug {
+		t.Fatalf("expected slug %s, got %v", e2eVenueSlug, data["slug"])
 	}
 }
 
-func TestVenueShowFallbackWhenRestaurantEndpointGone(t *testing.T) {
-	venueItem := &domain.Item{
-		Title: "Burger Place",
-		Link:  domain.Link{Target: "venue-1"},
-		Venue: buildVenue("venue-1", "burger-place", "Street 1"),
-	}
+func TestVenueShowUsesDynamicDeliveryFee(t *testing.T) {
 	deps := cli.Dependencies{
 		Wolt: &mockWolt{
-			itemBySlugFunc: func(context.Context, domain.Location, string) (*domain.Item, error) {
-				return venueItem, nil
-			},
 			venuePageStaticFunc: func(context.Context, string) (map[string]any, error) {
-				return map[string]any{
-					"venue": map[string]any{
-						"id":       "venue-1",
-						"slug":     "burger-place",
-						"name":     "Burger Place",
-						"address":  "Street 1",
-						"currency": "PLN",
-					},
-				}, nil
+				return e2eVenueStaticPayload(), nil
 			},
-			restaurantByIDFunc: func(context.Context, string) (*domain.Restaurant, error) {
-				return nil, &woltgateway.UpstreamRequestError{StatusCode: 410}
+			venuePageDynamicFunc: func(context.Context, string, woltgateway.VenuePageDynamicOptions) (map[string]any, error) {
+				return e2eVenueDynamicPayload(), nil
 			},
 		},
 		Profiles: &mockProfiles{profile: domain.Profile{Name: "default", IsDefault: true, Location: domain.Location{Lat: 0, Lon: 0}}},
@@ -715,22 +711,22 @@ func TestVenueShowFallbackWhenRestaurantEndpointGone(t *testing.T) {
 		Version:  "1.1.1",
 	}
 
-	exitCode, out := runCLIWithDeps(t, deps, "venue", "burger-place", "--include", "fees", "--format", "json")
+	exitCode, out := runCLIWithDeps(t, deps, "venue", e2eVenueSlug, "--include", "fees", "--format", "json")
 	if exitCode != 0 {
 		t.Fatalf("expected exit 0, got %d\noutput:\n%s", exitCode, out)
 	}
 	payload := mustJSON(t, out)
 	data := asMapPayload(t, payload["data"])
-	if data["venue_id"] != "venue-1" {
-		t.Fatalf("expected venue_id venue-1, got %v", data["venue_id"])
+	if data["venue_id"] != e2eVenueID {
+		t.Fatalf("expected venue_id %s, got %v", e2eVenueID, data["venue_id"])
 	}
-	if asMapPayload(t, data["delivery_fee"])["amount"] == nil {
-		t.Fatalf("expected delivery fee in fallback output, got %v", data["delivery_fee"])
+	deliveryFee := asMapPayload(t, data["delivery_fee"])
+	if asIntPayload(deliveryFee["amount"]) != 500 || deliveryFee["currency"] != "EUR" {
+		t.Fatalf("expected dynamic delivery fee 500 EUR, got %v", deliveryFee)
 	}
 }
 
 func TestItemShowJSON(t *testing.T) {
-	venueItem := &domain.Item{Title: "Burger Place", TrackID: "track-1", Link: domain.Link{Target: "venue-1"}, Venue: buildVenue("venue-1", "burger-place", "Street")}
 	itemPayload := map[string]any{
 		"item_id":       "item-1",
 		"name":          "Whopper Meal",
@@ -742,8 +738,14 @@ func TestItemShowJSON(t *testing.T) {
 
 	deps := cli.Dependencies{
 		Wolt: &mockWolt{
-			itemBySlugFunc: func(context.Context, domain.Location, string) (*domain.Item, error) {
-				return venueItem, nil
+			venuePageStaticFunc: func(context.Context, string) (map[string]any, error) {
+				return map[string]any{
+					"venue": map[string]any{
+						"id":       e2eVenueID,
+						"slug":     "burger-place",
+						"currency": "PLN",
+					},
+				}, nil
 			},
 			venueItemPageFunc: func(context.Context, string, string) (map[string]any, error) {
 				return itemPayload, nil

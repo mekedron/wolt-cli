@@ -137,7 +137,13 @@ func newSearchVenuesCommand(deps Dependencies) *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&query, "query", "", "Search query (optional; omit to list venues)")
-	cmd.Flags().StringVar(&sortValue, "sort", string(observability.VenueSortRecommended), "Sort strategy")
+	cmd.Flags().StringVar(
+		&sortValue,
+		"sort",
+		string(observability.VenueSortRecommended),
+		"Sort: recommended, distance, rating, delivery_time/delivery/"+
+			"delivery-time, or delivery_price/fee/delivery-price",
+	)
 	cmd.Flags().StringVar(&typeValue, "type", "", "Venue type")
 	cmd.Flags().StringVar(&category, "category", "", "Category slug")
 	cmd.Flags().BoolVar(&openNow, "open-now", false, "Only include currently open venues")

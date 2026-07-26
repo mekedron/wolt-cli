@@ -50,8 +50,12 @@ the Chrome DevTools cookie store every ~1.5s. It returns only after the user
 has actually signed in (a real `__wtoken` cookie is set); telemetry cookies
 do not satisfy the polling guard. Default timeout is 2 minutes.
 
-When refresh credentials are available, expired/401 access tokens are refreshed
-automatically and persisted back to local config.
+When refresh credentials are available, missing, expired, or rejected access
+tokens are refreshed automatically. The refreshed access token is saved only
+when the complete persisted credential snapshot is unchanged, so a concurrent
+explicit login or logout wins. Any refresh token returned by the rotation
+endpoint remains process-local; the saved bootstrap refresh token and cookies
+stay pinned.
 
 ## Location Rules
 
@@ -60,7 +64,8 @@ Apply exactly:
 - Use either `--address "<text>"` or both `--lat` + `--lon`.
 - Do not combine `--address` with `--lat/--lon`.
 - If no override is passed, current account location is used.
-- `venues` and `venue`/`venue hours` use `--address` or current account location (no direct `--lat/--lon` flags).
+- `venues` and `venue` use `--address` or current account location (no direct `--lat/--lon` flags).
+- `venue hours` reads venue-local static data and does not require a location.
 - `venues`, `cart`, `checkout`, and `account favorites` support `--lat/--lon`.
 
 ## Command Selection
@@ -110,7 +115,7 @@ Protocol (Claude Desktop, Claude Code, Cursor, …), prefer the `wolt-mcp`
 server tools (`wolt_feed`, `wolt_top`, `wolt_cart_show`, `wolt_cart_add`,
 `wolt_checkout_preview`, …) over shelling out to the CLI. They share the same
 auth state (`~/.wolt/.wolt-config.json`) and return typed, schema-described
-JSON instead of human-formatted tables. See `../docs/mcp.md` for the full
+JSON instead of human-formatted tables. See `../../docs/mcp.md` for the full
 catalog and client setup.
 
 ## References
@@ -118,4 +123,4 @@ catalog and client setup.
 - Full command and flag matrix: `references/command-reference.md`
 - Reusable high-confidence workflows: `references/workflows.md`
 - Envelope/error parsing and automation notes: `references/output-and-errors.md`
-- MCP server tool catalog and setup: `../docs/mcp.md`
+- MCP server tool catalog and setup: `../../docs/mcp.md`

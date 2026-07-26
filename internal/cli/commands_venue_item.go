@@ -2,14 +2,13 @@ package cli
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/mekedron/wolt-cli/internal/domain"
 	woltgateway "github.com/mekedron/wolt-cli/internal/gateway/wolt"
 	"github.com/mekedron/wolt-cli/internal/service/catalogitem"
+	"github.com/mekedron/wolt-cli/internal/service/catalogload"
 	"github.com/mekedron/wolt-cli/internal/service/observability"
 	"github.com/mekedron/wolt-cli/internal/service/output"
 	"github.com/spf13/cobra"
@@ -24,11 +23,10 @@ func newVenueShowCommand(deps Dependencies) *cobra.Command {
 		Short: "Show venue details by slug.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			venueRef, err := resolveVenueReference(cmd.Context(), deps, args[0])
-			if err != nil {
-				return err
+			reference := normalizeVenueInput(args[0])
+			if reference == "" {
+				return fmt.Errorf("venue identifier is required")
 			}
-			slug := fallbackString(venueRef.VenueSlug, normalizeVenueInput(args[0]))
 			format, err := parseOutputFormat(flags.Format)
 			if err != nil {
 				return err
@@ -48,32 +46,56 @@ func newVenueShowCommand(deps Dependencies) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			item, venueID, staticPayload, fallbackWarnings, err := resolveVenueBySlug(cmd.Context(), deps, location, slug)
-			if err != nil {
-				return emitUpstreamError(cmd, format, profile, flags.Locale, flags.Output, flags.Verbose, err)
-			}
-			if item == nil || strings.TrimSpace(venueID) == "" {
-				return fmt.Errorf("venue slug %q was not found in profile %q catalog", slug, profile)
-			}
-			restaurant, err := deps.Wolt.RestaurantByID(cmd.Context(), venueID)
-			if err != nil {
-				if isRecoverableRestaurantError(err) {
-					data, warnings := observability.BuildVenueDetailFallback(slug, venueID, item, staticPayload, splitCSV(include))
-					warnings = append(warnings, fallbackWarnings...)
-					if format == output.FormatTable {
-						return writeTable(cmd, buildVenueDetailTable(data), flags.Output)
-					}
-					env := output.BuildEnvelope(profile, flags.Locale, data, warnings, nil)
-					return writeMachinePayload(cmd, env, format, flags.Output)
+			fallback := venueIdentityFromInput(args[0])
+			staticPayload, staticErr := cachedVenuePageStatic(cmd.Context(), deps, reference)
+			identity := observability.ExtractVenueIdentity(fallback, staticPayload)
+			dynamicReference := fallbackString(identity.Slug, reference)
+			dynamicPayload, dynamicErr := loadVenuePageDynamic(
+				cmd.Context(),
+				deps,
+				dynamicReference,
+				woltgateway.VenuePageDynamicOptions{
+					Location:               &location,
+					SelectedDeliveryMethod: "homedelivery",
+					Auth:                   locationAuth,
+				},
+			)
+			if staticPayload == nil && dynamicPayload == nil {
+				sourceErr := dynamicErr
+				if sourceErr == nil {
+					sourceErr = staticErr
 				}
-				return emitUpstreamError(cmd, format, profile, flags.Locale, flags.Output, flags.Verbose, err)
+				if sourceErr == nil {
+					sourceErr = fmt.Errorf("venue payload is unavailable")
+				}
+				return emitUpstreamError(
+					cmd,
+					format,
+					profile,
+					flags.Locale,
+					flags.Output,
+					flags.Verbose,
+					sourceErr,
+				)
 			}
-
-			data, warnings, err := observability.BuildVenueDetail(item, restaurant, splitCSV(include))
-			if err != nil {
-				return err
+			data, warnings, buildErr := observability.BuildVenueDetailFromPayload(
+				fallback,
+				staticPayload,
+				dynamicPayload,
+				nil,
+				&location,
+				splitCSV(include),
+			)
+			if buildErr != nil {
+				return buildErr
 			}
-			warnings = append(warnings, fallbackWarnings...)
+			if staticErr != nil {
+				warnings = append(warnings, "venue static page endpoint unavailable")
+			}
+			if dynamicErr != nil {
+				warnings = append(warnings, "location-aware venue availability could not be loaded")
+			}
+			warnings = dedupeStrings(warnings)
 
 			if format == output.FormatTable {
 				return writeTable(cmd, buildVenueDetailTable(data), flags.Output)
@@ -116,7 +138,7 @@ func newVenueCategoriesCommand(deps Dependencies) *cobra.Command {
 				return profileError(err, format, flags.Profile, flags.Locale, flags.Output, cmd)
 			}
 
-			venueID := fallbackString(venueRef.VenueID, strings.TrimSpace(slug))
+			venueID := strings.TrimSpace(venueRef.VenueID)
 			staticWarnings := []string{}
 			if payload, err := cachedVenuePageStatic(cmd.Context(), deps, slug); err == nil {
 				if resolvedID := venueIDFromPayload(payload); strings.TrimSpace(resolvedID) != "" {
@@ -131,7 +153,11 @@ func newVenueCategoriesCommand(deps Dependencies) *cobra.Command {
 				return emitUpstreamError(cmd, format, profile.Name, flags.Locale, flags.Output, flags.Verbose, err)
 			}
 
-			data := buildVenueCategoriesData(venueID, assortmentPayload)
+			identity := observability.ExtractVenueIdentity(
+				observability.VenueIdentity{ID: venueID, Slug: slug},
+				assortmentPayload,
+			)
+			data := buildVenueCategoriesData(identity.ID, assortmentPayload)
 			resolvedOffset, err := resolvePageOffset(limit, limitSet, offset, offsetSet, page, pageSet)
 			if err != nil {
 				return err
@@ -169,56 +195,23 @@ func buildVenueCategoriesData(venueID string, assortmentPayload map[string]any) 
 	return map[string]any{
 		"venue_id":         venueID,
 		"loading_strategy": strings.TrimSpace(asString(assortmentPayload["loading_strategy"])),
-		"categories":       collectVenueCategoryRows(assortmentPayload),
+		"categories":       venueCategoryRows(catalogload.Categories(assortmentPayload)),
 	}
 }
 
-func collectVenueCategoryRows(assortmentPayload map[string]any) []map[string]any {
-	rows := []map[string]any{}
-	seen := map[string]struct{}{}
-
-	var walk func(category map[string]any, parentSlug string, level int)
-	walk = func(category map[string]any, parentSlug string, level int) {
-		if category == nil {
-			return
-		}
-		subcategories := asSlice(category["subcategories"])
-		slug := strings.TrimSpace(asString(coalesceAny(category["slug"], category["id"])))
-		if slug != "" {
-			if _, exists := seen[slug]; !exists {
-				seen[slug] = struct{}{}
-				rows = append(rows, map[string]any{
-					"id":              strings.TrimSpace(asString(category["id"])),
-					"slug":            slug,
-					"name":            strings.TrimSpace(asString(coalesceAny(category["name"], category["title"], slug))),
-					"parent_slug":     emptyToNil(strings.TrimSpace(parentSlug)),
-					"level":           level,
-					"leaf":            len(subcategories) == 0,
-					"item_refs_count": len(asSlice(category["item_ids"])),
-				})
-			}
-			parentSlug = slug
-		}
-		for _, rawSubcategory := range subcategories {
-			walk(asMap(rawSubcategory), parentSlug, level+1)
-		}
+func venueCategoryRows(categories []catalogload.Category) []map[string]any {
+	rows := make([]map[string]any, 0, len(categories))
+	for _, category := range categories {
+		rows = append(rows, map[string]any{
+			"id":              category.ID,
+			"slug":            category.Slug,
+			"name":            category.Name,
+			"parent_slug":     emptyToNil(category.ParentSlug),
+			"level":           category.Level,
+			"leaf":            category.Leaf,
+			"item_refs_count": category.ItemRefsCount,
+		})
 	}
-
-	for _, rawCategory := range asSlice(assortmentPayload["categories"]) {
-		walk(asMap(rawCategory), "", 0)
-	}
-	for _, rawSubcategory := range asSlice(assortmentPayload["subcategories"]) {
-		walk(asMap(rawSubcategory), "", 0)
-	}
-
-	sort.SliceStable(rows, func(i, j int) bool {
-		leftLevel := asInt(rows[i]["level"])
-		rightLevel := asInt(rows[j]["level"])
-		if leftLevel != rightLevel {
-			return leftLevel < rightLevel
-		}
-		return strings.ToLower(asString(rows[i]["name"])) < strings.ToLower(asString(rows[j]["name"]))
-	})
 	return rows
 }
 
@@ -285,12 +278,29 @@ func newVenueMenuCommand(deps Dependencies) *cobra.Command {
 			if minPriceSet && maxPriceSet && minPrice > maxPrice {
 				return fmt.Errorf("--min-price cannot be greater than --max-price")
 			}
-			venueID := fallbackString(venueRef.VenueID, strings.TrimSpace(slug))
-			payloads := []map[string]any{}
+			rowOptions := venueMenuRowOptions{
+				includeOptions: includeOptions,
+				filters: itemRowFilters{
+					MinPriceSet:   minPriceSet,
+					MinPrice:      minPrice,
+					MaxPriceSet:   maxPriceSet,
+					MaxPrice:      maxPrice,
+					HideSoldOut:   hideSoldOut,
+					DiscountsOnly: discountsOnly,
+				},
+				sort:    sortMode,
+				limit:   limitPtr,
+				offset:  resolvedOffset,
+				page:    page,
+				pageSet: pageSet,
+			}
+			venueID := strings.TrimSpace(venueRef.VenueID)
+			metadataPayloads := []map[string]any{}
+			itemPayloads := []map[string]any{}
 			warnings := []string{}
 			assortmentPayload := map[string]any{}
 			if payload, err := cachedVenuePageStatic(cmd.Context(), deps, slug); err == nil {
-				payloads = append(payloads, payload)
+				metadataPayloads = append(metadataPayloads, payload)
 				if resolvedID := venueIDFromPayload(payload); strings.TrimSpace(resolvedID) != "" {
 					venueID = strings.TrimSpace(resolvedID)
 				}
@@ -298,6 +308,16 @@ func newVenueMenuCommand(deps Dependencies) *cobra.Command {
 				warnings = append(warnings, "venue static page endpoint unavailable")
 			}
 			if strings.TrimSpace(query) != "" {
+				if strings.TrimSpace(category) != "" {
+					if payload, err := deps.Wolt.AssortmentByVenueSlug(cmd.Context(), slug); err == nil {
+						metadataPayloads = append(metadataPayloads, payload)
+					} else {
+						warnings = append(
+							warnings,
+							"venue assortment metadata is unavailable; category slug matching may be incomplete",
+						)
+					}
+				}
 				searchPayload, err := requestAssortmentItemsSearchPayload(
 					cmd.Context(),
 					deps,
@@ -309,34 +329,32 @@ func newVenueMenuCommand(deps Dependencies) *cobra.Command {
 				if err != nil {
 					return emitUpstreamError(cmd, format, profile.Name, flags.Locale, flags.Output, flags.Verbose, err)
 				}
-				fallbackCurrency := resolveVenueSearchFallbackCurrency(firstPayload(payloads), searchPayload)
-				data, searchWarnings := buildVenueItemSearchData(
-					venueID,
-					slug,
-					query,
-					category,
-					searchPayload,
-					fallbackCurrency,
-					includeOptions,
-					nil,
+				identityPayloads := append(append([]map[string]any{}, metadataPayloads...), searchPayload)
+				identity := observability.ExtractVenueIdentity(
+					observability.VenueIdentity{
+						ID:           venueID,
+						Slug:         slug,
+						CanonicalURL: domain.CanonicalVenueURL(args[0], slug),
+					},
+					identityPayloads...,
 				)
-				data["items"] = applyItemRowFilters(
-					asSlice(data["items"]),
-					itemRowFilters{
-						MinPriceSet:   minPriceSet,
-						MinPrice:      minPrice,
-						MaxPriceSet:   maxPriceSet,
-						MaxPrice:      maxPrice,
-						HideSoldOut:   hideSoldOut,
-						DiscountsOnly: discountsOnly,
+				data, searchWarnings := observability.BuildItemSearchResult(
+					query,
+					[]map[string]any{searchPayload},
+					observability.ItemSortRelevance,
+					category,
+					nil,
+					0,
+					nil,
+					observability.ItemVenueContext{
+						VenueID:               identity.ID,
+						VenueSlug:             identity.Slug,
+						CanonicalURL:          identity.CanonicalURL,
+						IncludeOptionGroupIDs: includeOptions,
+						MetadataPayloads:      metadataPayloads,
 					},
 				)
-				sortItemRows(asSlice(data["items"]), sortMode)
-				data["sort"] = string(sortMode)
-				paginateFlatRows(data, "items", limitPtr, resolvedOffset)
-				if pageSet {
-					data["page"] = page
-				}
+				applyVenueMenuRowOptions(data, rowOptions)
 				warnings = append(warnings, searchWarnings...)
 				if format == output.FormatTable {
 					return writeTable(cmd, buildVenueItemSearchTable(data), flags.Output)
@@ -377,33 +395,24 @@ func newVenueMenuCommand(deps Dependencies) *cobra.Command {
 				Location: dynamicLocation,
 				Auth:     auth,
 			}
-			if payload, err := deps.Wolt.VenuePageDynamic(
-				cmd.Context(),
-				slug,
-				dynamicOptions,
-			); err == nil {
-				payloads = append(payloads, payload)
-			} else if isUnauthorized(err) && dynamicOptions.Auth.HasCredentials() {
-				dynamicOptions.Auth = woltgateway.AuthContext{}
-				if payload, retryErr := deps.Wolt.VenuePageDynamic(cmd.Context(), slug, dynamicOptions); retryErr == nil {
-					payloads = append(payloads, payload)
-				} else {
-					warnings = append(warnings, "venue dynamic page endpoint unavailable")
-				}
+			if payload, err := loadVenuePageDynamic(cmd.Context(), deps, slug, dynamicOptions); err == nil {
+				metadataPayloads = append(metadataPayloads, payload)
 			} else {
 				warnings = append(warnings, "venue dynamic page endpoint unavailable")
 			}
 			if payload, err := deps.Wolt.AssortmentByVenueSlug(cmd.Context(), slug); err == nil {
 				assortmentPayload = payload
-				payloads = append(payloads, payload)
+				itemPayloads = append(itemPayloads, payload)
+				metadataPayloads = append(metadataPayloads, payload)
 			} else {
 				warnings = append(warnings, "venue assortment endpoint unavailable")
 			}
 			categorySlug := strings.TrimSpace(category)
 			categoryFilter := categorySlug
+			assortmentPartial, _ := venueAssortmentState(assortmentPayload, venueID)
 			switch {
 			case categorySlug != "":
-				categoryPayload, err := requestAssortmentCategoryPayload(
+				categoryLoad, err := loadAssortmentCategory(
 					cmd.Context(),
 					deps,
 					slug,
@@ -414,10 +423,11 @@ func newVenueMenuCommand(deps Dependencies) *cobra.Command {
 				if err != nil {
 					return emitUpstreamError(cmd, format, profile.Name, flags.Locale, flags.Output, flags.Verbose, err)
 				}
-				categoryPayload = hydrateAssortmentCategoryItems(cmd.Context(), deps, slug, categoryPayload, auth)
-				payloads = append(payloads, categoryPayload)
+				itemPayloads = []map[string]any{categoryLoad.Payload}
+				metadataPayloads = append(metadataPayloads, categoryLoad.Payload)
+				warnings = append(warnings, categoryLoad.Warnings...)
 				categoryFilter = ""
-			case isAssortmentPartial(assortmentPayload) && !fullCatalog:
+			case assortmentPartial && !fullCatalog:
 				return emitError(
 					cmd,
 					format,
@@ -433,48 +443,70 @@ func newVenueMenuCommand(deps Dependencies) *cobra.Command {
 					),
 				)
 			case needsVenueContentFallback(assortmentPayload, venueID):
-				if isAssortmentPartial(assortmentPayload) && fullCatalog {
+				contentFallbackNeeded := true
+				if assortmentPartial && fullCatalog {
 					warnings = append(warnings, "full catalog mode enabled for partial assortment; loading all categories (this may be slow)")
-					categoryPayloads, categoryWarnings := loadAssortmentCategoryPayloads(
+					categoryPayloads, categoryWarnings, categoriesComplete, categoryErr := loadAssortmentCategoryPayloads(
 						cmd.Context(),
 						deps,
 						slug,
 						domain.ResolveAssortmentLanguage(flags.Locale),
 						auth,
 						assortmentPayload,
-						derefPositiveInt(limitPtr),
 					)
-					payloads = append(payloads, categoryPayloads...)
+					if categoryErr != nil {
+						return emitUpstreamError(
+							cmd,
+							format,
+							profile.Name,
+							flags.Locale,
+							flags.Output,
+							flags.Verbose,
+							categoryErr,
+						)
+					}
+					if len(categoryPayloads) > 0 {
+						// Hydrated category responses are authoritative for a
+						// partial catalog. Root rows are often stale previews.
+						itemPayloads = append([]map[string]any(nil), categoryPayloads...)
+						contentFallbackNeeded = !categoriesComplete
+					}
+					metadataPayloads = append(metadataPayloads, categoryPayloads...)
 					warnings = append(warnings, categoryWarnings...)
 				}
-				venueContentPayloads, fallbackWarnings := loadVenueContentPayloads(cmd.Context(), deps, slug, auth, 2)
-				payloads = append(payloads, venueContentPayloads...)
-				warnings = append(warnings, fallbackWarnings...)
+				if contentFallbackNeeded {
+					venueContentPayloads, fallbackWarnings := loadVenueContentPayloads(cmd.Context(), deps, slug, auth, 2)
+					itemPayloads = append(itemPayloads, venueContentPayloads...)
+					metadataPayloads = append(metadataPayloads, venueContentPayloads...)
+					warnings = append(warnings, fallbackWarnings...)
+				}
 			}
 
-			data, menuWarnings := observability.BuildVenueMenu(venueID, payloads, categoryFilter, includeOptions, nil)
-			if strings.TrimSpace(query) != "" {
-				filterItemsByQuery(data, query)
-				data["query"] = strings.TrimSpace(query)
-			}
-			data["venue_slug"] = slug
-			data["items"] = applyItemRowFilters(
-				asSlice(data["items"]),
-				itemRowFilters{
-					MinPriceSet:   minPriceSet,
-					MinPrice:      minPrice,
-					MaxPriceSet:   maxPriceSet,
-					MaxPrice:      maxPrice,
-					HideSoldOut:   hideSoldOut,
-					DiscountsOnly: discountsOnly,
+			identity := observability.ExtractVenueIdentity(
+				observability.VenueIdentity{
+					ID:           venueID,
+					Slug:         slug,
+					CanonicalURL: domain.CanonicalVenueURL(args[0], slug),
+				},
+				metadataPayloads...,
+			)
+			data, menuWarnings := observability.BuildVenueMenu(
+				identity.ID,
+				itemPayloads,
+				categoryFilter,
+				includeOptions,
+				nil,
+				observability.ItemVenueContext{
+					VenueID:          identity.ID,
+					VenueSlug:        identity.Slug,
+					CanonicalURL:     identity.CanonicalURL,
+					MetadataPayloads: metadataPayloads,
 				},
 			)
-			sortItemRows(asSlice(data["items"]), sortMode)
-			data["sort"] = string(sortMode)
-			paginateFlatRows(data, "items", limitPtr, resolvedOffset)
-			if pageSet {
-				data["page"] = page
+			if strings.TrimSpace(asString(data["venue_slug"])) == "" {
+				data["venue_slug"] = slug
 			}
+			applyVenueMenuRowOptions(data, rowOptions)
 			warnings = append(warnings, menuWarnings...)
 
 			if format == output.FormatTable {
@@ -508,6 +540,31 @@ func newVenueMenuCommand(deps Dependencies) *cobra.Command {
 	return cmd
 }
 
+type venueMenuRowOptions struct {
+	includeOptions bool
+	filters        itemRowFilters
+	sort           itemRowSort
+	limit          *int
+	offset         int
+	page           int
+	pageSet        bool
+}
+
+func applyVenueMenuRowOptions(data map[string]any, options venueMenuRowOptions) {
+	if !options.includeOptions {
+		for _, rawItem := range asSlice(data["items"]) {
+			delete(asMap(rawItem), "option_group_ids")
+		}
+	}
+	data["items"] = applyItemRowFilters(asSlice(data["items"]), options.filters)
+	sortItemRows(asSlice(data["items"]), options.sort)
+	data["sort"] = string(options.sort)
+	paginateFlatRows(data, "items", options.limit, options.offset)
+	if options.pageSet {
+		data["page"] = options.page
+	}
+}
+
 func venueIDFromPayload(payload map[string]any) string {
 	venue := asMap(payload["venue"])
 	if venue == nil {
@@ -520,191 +577,61 @@ func venueIDFromPayload(payload map[string]any) string {
 	)))
 }
 
-func derefPositiveInt(value *int) int {
-	if value == nil {
-		return 0
-	}
-	if *value <= 0 {
-		return 0
-	}
-	return *value
-}
-
-func isAssortmentPartial(payload map[string]any) bool {
-	return strings.EqualFold(strings.TrimSpace(asString(payload["loading_strategy"])), "partial")
-}
-
 func newVenueHoursCommand(deps Dependencies) *cobra.Command {
 	var flags globalFlags
 	var timezone string
 
 	cmd := &cobra.Command{
-		Use:   "hours <slug>",
-		Short: "Show venue opening hours by slug.",
+		Use:   "hours <venue>",
+		Short: "Show venue opening hours by slug, ID, or Wolt URL.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			slug := args[0]
+			reference := normalizeVenueInput(args[0])
+			if reference == "" {
+				return fmt.Errorf("venue identifier is required")
+			}
 			format, err := parseOutputFormat(flags.Format)
 			if err != nil {
 				return err
 			}
-			locationAuth := buildAuthContextWithProfile(cmd.Context(), deps, flags)
-			location, profile, err := resolveProfileLocation(
-				cmd.Context(),
-				deps,
-				flags.Address,
-				flags.Profile,
-				format,
-				flags.Locale,
-				flags.Output,
-				&locationAuth,
-				cmd,
+			profile, err := deps.Profiles.Find(cmd.Context(), flags.Profile)
+			if err != nil {
+				return profileError(err, format, flags.Profile, flags.Locale, flags.Output, cmd)
+			}
+			staticPayload, err := cachedVenuePageStatic(cmd.Context(), deps, reference)
+			if err != nil {
+				return emitUpstreamError(cmd, format, profile.Name, flags.Locale, flags.Output, flags.Verbose, err)
+			}
+			if staticPayload == nil {
+				return emitUpstreamError(
+					cmd,
+					format,
+					profile.Name,
+					flags.Locale,
+					flags.Output,
+					flags.Verbose,
+					fmt.Errorf("venue hours payload is unavailable"),
+				)
+			}
+			data, warnings, buildErr := observability.BuildVenueHoursFromPayload(
+				venueIdentityFromInput(args[0]),
+				staticPayload,
+				timezone,
 			)
-			if err != nil {
-				return err
+			if buildErr != nil {
+				return buildErr
 			}
-			item, venueID, staticPayload, fallbackWarnings, err := resolveVenueBySlug(cmd.Context(), deps, location, slug)
-			if err != nil {
-				return emitUpstreamError(cmd, format, profile, flags.Locale, flags.Output, flags.Verbose, err)
-			}
-			if item == nil || strings.TrimSpace(venueID) == "" {
-				return fmt.Errorf("venue slug %q was not found in profile %q catalog", slug, profile)
-			}
-			restaurant, err := deps.Wolt.RestaurantByID(cmd.Context(), venueID)
-			if err != nil {
-				if isRecoverableRestaurantError(err) {
-					if len(staticPayload) == 0 {
-						if fetched, fetchErr := cachedVenuePageStatic(cmd.Context(), deps, slug); fetchErr == nil {
-							staticPayload = fetched
-						}
-					}
-					data, warnings := observability.BuildVenueHoursFallback(venueID, timezone, staticPayload)
-					warnings = append(warnings, fallbackWarnings...)
-					if format == output.FormatTable {
-						return writeTable(cmd, buildVenueHoursTable(data), flags.Output)
-					}
-					env := output.BuildEnvelope(profile, flags.Locale, data, warnings, nil)
-					return writeMachinePayload(cmd, env, format, flags.Output)
-				}
-				return emitUpstreamError(cmd, format, profile, flags.Locale, flags.Output, flags.Verbose, err)
-			}
-
-			data := observability.BuildVenueHours(restaurant, timezone)
 			if format == output.FormatTable {
 				return writeTable(cmd, buildVenueHoursTable(data), flags.Output)
 			}
-			env := output.BuildEnvelope(profile, flags.Locale, data, fallbackWarnings, nil)
+			env := output.BuildEnvelope(profile.Name, flags.Locale, data, warnings, nil)
 			return writeMachinePayload(cmd, env, format, flags.Output)
 		},
 	}
 
-	cmd.Flags().StringVar(&timezone, "timezone", "", "Timezone override")
+	cmd.Flags().StringVar(&timezone, "timezone", "", "Expected venue timezone or fallback label; does not convert weekly hours.")
 	addGlobalFlags(cmd, &flags)
 	return cmd
-}
-
-func resolveVenueBySlug(
-	ctx context.Context,
-	deps Dependencies,
-	location domain.Location,
-	slug string,
-) (*domain.Item, string, map[string]any, []string, error) {
-	warnings := []string{}
-	staticPayload := map[string]any{}
-	item, itemErr := deps.Wolt.ItemBySlug(ctx, location, slug)
-	if itemErr == nil && item != nil {
-		venueID := strings.TrimSpace(item.Link.Target)
-		if item.Venue != nil && strings.TrimSpace(asString(item.Venue.ID)) != "" {
-			venueID = strings.TrimSpace(asString(item.Venue.ID))
-		}
-		if venueID != "" {
-			return item, venueID, staticPayload, warnings, nil
-		}
-	}
-	if itemErr != nil {
-		warnings = append(warnings, "venue catalog lookup failed; using static venue payload fallback")
-	}
-
-	staticPayload, staticErr := cachedVenuePageStatic(ctx, deps, slug)
-	if staticErr != nil {
-		if itemErr != nil {
-			return nil, "", map[string]any{}, warnings, itemErr
-		}
-		return nil, "", map[string]any{}, warnings, staticErr
-	}
-	venueID := strings.TrimSpace(venueIDFromPayload(staticPayload))
-	if venueID == "" {
-		return nil, "", staticPayload, warnings, nil
-	}
-	if item != nil {
-		if item.Venue == nil {
-			item.Venue = &domain.Venue{}
-		}
-		if strings.TrimSpace(asString(item.Venue.ID)) == "" {
-			item.Venue.ID = venueID
-		}
-		if strings.TrimSpace(item.Venue.Slug) == "" {
-			item.Venue.Slug = strings.TrimSpace(slug)
-		}
-		if strings.TrimSpace(item.Link.Target) == "" {
-			item.Link.Target = venueID
-		}
-		if strings.TrimSpace(item.Title) == "" {
-			item.Title = strings.TrimSpace(asString(coalesceAny(
-				asMap(staticPayload["venue"])["name"],
-				asMap(staticPayload["venue_raw"])["name"],
-				staticPayload["name"],
-				observability.SluggifiedTitle(slug),
-			)))
-		}
-		return item, venueID, staticPayload, warnings, nil
-	}
-
-	return fallbackVenueItemFromStaticPayload(slug, venueID, staticPayload), venueID, staticPayload, warnings, nil
-}
-
-func fallbackVenueItemFromStaticPayload(slug string, venueID string, payload map[string]any) *domain.Item {
-	venuePayload := asMap(payload["venue"])
-	if venuePayload == nil {
-		venuePayload = asMap(payload["venue_raw"])
-	}
-
-	venue := &domain.Venue{
-		ID:       venueID,
-		Slug:     strings.TrimSpace(asString(coalesceAny(venuePayload["slug"], slug))),
-		Name:     strings.TrimSpace(asString(venuePayload["name"])),
-		Address:  strings.TrimSpace(asString(coalesceAny(venuePayload["address"], venuePayload["street_address"]))),
-		Currency: strings.TrimSpace(asString(coalesceAny(venuePayload["currency"], payload["currency"]))),
-	}
-	if venue.Name == "" {
-		venue.Name = observability.SluggifiedTitle(slug)
-	}
-	if deliveryPrice := asInt(coalesceAny(
-		asMap(venuePayload["delivery_fee"])["amount"],
-		venuePayload["delivery_price"],
-		venuePayload["delivery_price_int"],
-	)); deliveryPrice > 0 {
-		venue.DeliveryPriceInt = &deliveryPrice
-	}
-
-	title := venue.Name
-	if title == "" {
-		title = observability.SluggifiedTitle(slug)
-	}
-
-	return &domain.Item{
-		Title: title,
-		Link:  domain.Link{Target: venueID},
-		Venue: venue,
-	}
-}
-
-func isRecoverableRestaurantError(err error) bool {
-	var upstreamErr *woltgateway.UpstreamRequestError
-	if !errors.As(err, &upstreamErr) {
-		return false
-	}
-	return upstreamErr.StatusCode == 404 || upstreamErr.StatusCode == 410
 }
 
 func newItemShowCommand(deps Dependencies) *cobra.Command {
@@ -764,7 +691,14 @@ func newItemShowCommand(deps Dependencies) *cobra.Command {
 			}
 			auth := buildAuthContextWithProfile(cmd.Context(), deps, flags)
 
-			venueID, payload, warnings := resolveVenueItemPayloadBySlug(cmd.Context(), deps, venueSlug, itemID, auth)
+			venueID, payload, availabilityVerified, warnings := resolveVenueItemPayloadBySlug(
+				cmd.Context(),
+				deps,
+				venueRef.VenueID,
+				venueSlug,
+				itemID,
+				auth,
+			)
 			if !payloadContainsItem(payload, venueID, itemID) {
 				return fmt.Errorf(
 					"item %q was not found for venue slug %q; run \"wolt venue menu %s --include-options\" to list valid item IDs",
@@ -773,7 +707,29 @@ func newItemShowCommand(deps Dependencies) *cobra.Command {
 					venueSlug,
 				)
 			}
-			data, itemWarnings := observability.BuildItemDetail(itemID, venueID, payload, includeUpsell)
+			identity := observability.ExtractVenueIdentity(
+				observability.VenueIdentity{
+					ID:   venueID,
+					Slug: venueSlug,
+					CanonicalURL: fallbackString(
+						domain.CanonicalVenueURL(venueArg, venueSlug),
+						domain.CanonicalVenueURL(itemArg, venueSlug),
+					),
+				},
+				payload,
+			)
+			data, itemWarnings := observability.BuildItemDetail(
+				itemID,
+				venueID,
+				payload,
+				includeUpsell,
+				observability.ItemVenueContext{
+					VenueID:              identity.ID,
+					VenueSlug:            identity.Slug,
+					CanonicalURL:         identity.CanonicalURL,
+					AvailabilityVerified: &availabilityVerified,
+				},
+			)
 			warnings = append(warnings, itemWarnings...)
 
 			if format == output.FormatTable {
@@ -812,16 +768,21 @@ func buildVenueDetailTable(data map[string]any) string {
 func resolveVenueItemPayloadBySlug(
 	ctx context.Context,
 	deps Dependencies,
+	verifiedVenueID string,
 	venueSlug string,
 	itemID string,
 	auth woltgateway.AuthContext,
-) (string, map[string]any, []string) {
-	venueID := strings.TrimSpace(venueSlug)
+) (string, map[string]any, bool, []string) {
+	venueID := strings.TrimSpace(verifiedVenueID)
+	if !domain.IsObjectID(venueID) {
+		venueID = ""
+	}
 	warnings := []string{}
 	assortmentPayload := map[string]any{}
 	venueContentPayloads := []map[string]any{}
 	venueContentLoaded := false
 	currentItem := map[string]any{}
+	currentLookupSucceeded := false
 	loadVenueContent := func() {
 		if venueContentLoaded {
 			return
@@ -833,7 +794,7 @@ func resolveVenueItemPayloadBySlug(
 	}
 
 	if payload, err := cachedVenuePageStatic(ctx, deps, venueSlug); err == nil {
-		if resolvedID := venueIDFromPayload(payload); strings.TrimSpace(resolvedID) != "" {
+		if resolvedID := venueIDFromPayload(payload); domain.IsObjectID(resolvedID) {
 			venueID = strings.TrimSpace(resolvedID)
 		}
 	} else {
@@ -845,7 +806,8 @@ func resolveVenueItemPayloadBySlug(
 		warnings = append(warnings, "venue assortment endpoint unavailable")
 	}
 	if payload, err := requestAssortmentItemsPayload(ctx, deps, venueSlug, []string{itemID}, auth); err == nil {
-		currentItem = catalogitem.Find(payload, itemID)
+		currentLookupSucceeded = true
+		currentItem = catalogitem.ScopedItem(payload, itemID)
 	} else {
 		warnings = append(warnings, "current item endpoint unavailable")
 	}
@@ -854,7 +816,7 @@ func resolveVenueItemPayloadBySlug(
 	}
 
 	payload := map[string]any{}
-	if venueID != "" {
+	if domain.IsObjectID(venueID) {
 		if itemPayload, err := deps.Wolt.VenueItemPage(ctx, venueID, itemID); err == nil {
 			payload = itemPayload
 			if len(currentItem) > 0 {
@@ -894,8 +856,15 @@ func resolveVenueItemPayloadBySlug(
 	if len(payload) == 0 && len(assortmentPayload) > 0 {
 		payload = assortmentPayload
 	}
+	if scoped := catalogitem.ScopedItem(payload, itemID); scoped != nil {
+		payload = scoped
+	}
 	if len(currentItem) > 0 {
 		payload = catalogitem.MergeCurrentItem(payload, currentItem)
+	}
+	if currentLookupSucceeded && len(currentItem) == 0 {
+		payload = catalogitem.MarkMissingFromCurrentAssortment(payload, itemID)
+		warnings = append(warnings, "item is missing from the current assortment")
 	}
 	if len(payload) > 0 {
 		if currency := currencyFromVenue(ctx, deps, venueSlug); currency != "" {
@@ -905,7 +874,7 @@ func resolveVenueItemPayloadBySlug(
 	if len(payload) == 0 {
 		warnings = append(warnings, "item payload fallback unavailable")
 	}
-	return venueID, payload, dedupeStrings(warnings)
+	return venueID, payload, currentLookupSucceeded, dedupeStrings(warnings)
 }
 
 func payloadContainsItem(payload map[string]any, venueID string, itemID string) bool {
@@ -952,69 +921,6 @@ func hasItemSignals(item map[string]any) bool {
 	return false
 }
 
-func buildVenueItemSearchData(
-	venueID string,
-	venueSlug string,
-	query string,
-	category string,
-	payload map[string]any,
-	fallbackCurrency string,
-	includeOptions bool,
-	limit *int,
-) (map[string]any, []string) {
-	warnings := []string{}
-	items := observability.ExtractMenuItems(payload, venueID, venueSlug)
-	categoryFilter := strings.ToLower(strings.TrimSpace(category))
-	if categoryFilter != "" {
-		filtered := make([]map[string]any, 0, len(items))
-		for _, item := range items {
-			if strings.Contains(strings.ToLower(asString(item["category"])), categoryFilter) {
-				filtered = append(filtered, item)
-			}
-		}
-		items = filtered
-	}
-
-	total := len(items)
-	if limit != nil && *limit > 0 && len(items) > *limit {
-		items = items[:*limit]
-	}
-	if total == 0 {
-		warnings = append(warnings, "no items matched this venue search query")
-	}
-
-	rows := make([]any, 0, len(items))
-	for _, item := range items {
-		basePrice := normalizeVenueSearchPrice(asMap(item["base_price"]), fallbackCurrency)
-		originalPrice := normalizeVenueSearchPrice(asMap(item["original_price"]), fallbackCurrency)
-		row := map[string]any{
-			"item_id":     item["item_id"],
-			"name":        item["name"],
-			"category":    item["category"],
-			"base_price":  basePrice,
-			"discounts":   item["discounts"],
-			"is_sold_out": item["is_sold_out"],
-		}
-		observability.CopyItemMetadata(row, item)
-		if hasAmountValue(originalPrice) {
-			row["original_price"] = originalPrice
-		}
-		if includeOptions {
-			row["option_group_ids"] = item["option_group_ids"]
-		}
-		rows = append(rows, row)
-	}
-
-	return map[string]any{
-		"venue_id":   venueID,
-		"venue_slug": venueSlug,
-		"query":      query,
-		"category":   emptyToNil(strings.TrimSpace(category)),
-		"total":      total,
-		"items":      rows,
-	}, warnings
-}
-
 func buildVenueMenuTable(data map[string]any) string {
 	headers := []string{"Item ID", "Name", "Price", "Discounts"}
 	rows := [][]string{}
@@ -1039,38 +945,6 @@ func buildVenueMenuTable(data map[string]any) string {
 		title += " (Wolt+)"
 	}
 	return output.RenderTable(title, headers, rows)
-}
-
-func filterItemsByQuery(data map[string]any, query string) {
-	if data == nil {
-		return
-	}
-	needle := strings.ToLower(strings.TrimSpace(query))
-	if needle == "" {
-		return
-	}
-	items := asSlice(data["items"])
-	filtered := make([]any, 0, len(items))
-	for _, value := range items {
-		item := asMap(value)
-		if item == nil {
-			continue
-		}
-		if strings.Contains(strings.ToLower(asString(item["name"])), needle) ||
-			strings.Contains(strings.ToLower(asString(item["item_id"])), needle) ||
-			strings.Contains(strings.ToLower(asString(item["category"])), needle) {
-			filtered = append(filtered, item)
-		}
-	}
-	data["total"] = len(filtered)
-	data["items"] = filtered
-}
-
-func firstPayload(payloads []map[string]any) map[string]any {
-	if len(payloads) == 0 {
-		return nil
-	}
-	return payloads[0]
 }
 
 func buildVenueItemSearchTable(data map[string]any) string {
@@ -1142,75 +1016,6 @@ func formatVenueSearchPriceForTable(basePrice map[string]any, originalPrice map[
 	return fmt.Sprintf("%s (was %s)", base, original)
 }
 
-func resolveVenueSearchFallbackCurrency(staticPayload map[string]any, searchPayload map[string]any) string {
-	candidates := []any{
-		asMap(staticPayload["venue"])["currency"],
-		asMap(asMap(staticPayload["venue"])["price"])["currency"],
-		asMap(staticPayload["venue_raw"])["currency"],
-		asMap(asMap(staticPayload["venue_raw"])["price"])["currency"],
-		staticPayload["currency"],
-		staticPayload["currency_code"],
-		asMap(searchPayload["venue"])["currency"],
-		asMap(asMap(searchPayload["venue"])["price"])["currency"],
-		searchPayload["currency"],
-		searchPayload["currency_code"],
-	}
-	for _, candidate := range candidates {
-		currency := strings.TrimSpace(asString(candidate))
-		if currency != "" {
-			return currency
-		}
-	}
-	for _, rawItem := range asSlice(searchPayload["items"]) {
-		item := asMap(rawItem)
-		if item == nil {
-			continue
-		}
-		for _, candidate := range []any{
-			asMap(item["price"])["currency"],
-			asMap(item["base_price"])["currency"],
-			asMap(item["original_price"])["currency"],
-		} {
-			currency := strings.TrimSpace(asString(candidate))
-			if currency != "" {
-				return currency
-			}
-		}
-	}
-	return ""
-}
-
-func normalizeVenueSearchPrice(price map[string]any, fallbackCurrency string) map[string]any {
-	normalized := map[string]any{
-		"amount":           nil,
-		"currency":         nil,
-		"formatted_amount": nil,
-	}
-	for key, value := range price {
-		normalized[key] = value
-	}
-
-	currency := strings.TrimSpace(asString(normalized["currency"]))
-	if currency == "" {
-		currency = strings.TrimSpace(fallbackCurrency)
-	}
-	if currency != "" {
-		normalized["currency"] = currency
-	}
-	if !hasAmountValue(normalized) {
-		return normalized
-	}
-	if strings.TrimSpace(asString(normalized["formatted_amount"])) == "" {
-		amount := asInt(normalized["amount"])
-		if currency != "" {
-			normalized["formatted_amount"] = formatMinorAmount(amount, currency)
-		} else {
-			normalized["formatted_amount"] = fmt.Sprintf("%.2f", float64(amount)/100)
-		}
-	}
-	return normalized
-}
-
 func hasAmountValue(price map[string]any) bool {
 	if price == nil {
 		return false
@@ -1256,7 +1061,8 @@ func buildVenueHoursTable(data map[string]any) string {
 		window := asMap(value)
 		rows = append(rows, []string{asString(window["day"]), asString(window["open"]), asString(window["close"])})
 	}
-	return output.RenderTable("Venue hours ("+asString(data["timezone"])+")", headers, rows)
+	timezone := fallbackString(asString(data["timezone"]), "unknown timezone")
+	return output.RenderTable("Venue hours ("+timezone+")", headers, rows)
 }
 
 func buildItemDetailTable(data map[string]any) string {
@@ -1273,7 +1079,7 @@ func buildItemDetailTable(data map[string]any) string {
 	}
 	sections := []string{
 		output.RenderTable("Item: "+asString(data["name"]), headers, rows),
-		output.RenderTable("Option groups", []string{"Group ID", "Name", "Required", "Min", "Max"}, buildItemGroupRows(optionGroups)),
+		output.RenderTable("Option groups", []string{"Group ID", "Name", "Required", "Min", "Max", "Values"}, buildItemGroupRows(optionGroups)),
 	}
 	if len(upsellItems) > 0 {
 		sections = append(sections, output.RenderTable("Upsell items", []string{"Item ID", "Name", "Price"}, buildUpsellRows(upsellItems)))
@@ -1292,16 +1098,35 @@ func buildItemGroupRows(optionGroups []any) [][]string {
 		if asBool(group["required"]) {
 			required = "yes"
 		}
+		values := []string{}
+		for _, rawValue := range asSlice(group["values"]) {
+			value := asMap(rawValue)
+			if value == nil {
+				continue
+			}
+			valueID := strings.TrimSpace(asString(coalesceAny(
+				value["value_id"],
+				value["id"],
+			)))
+			name := strings.TrimSpace(asString(value["name"]))
+			if name != "" && name != valueID {
+				valueID += " (" + name + ")"
+			}
+			if valueID != "" {
+				values = append(values, valueID)
+			}
+		}
 		rows = append(rows, []string{
-			fallbackString(asString(group["group_id"]), "-"),
+			fallbackString(asString(coalesceAny(group["group_id"], group["id"])), "-"),
 			fallbackString(asString(group["name"]), "-"),
 			required,
 			asString(group["min"]),
 			asString(group["max"]),
+			fallbackString(strings.Join(values, ", "), "-"),
 		})
 	}
 	if len(rows) == 0 {
-		rows = append(rows, []string{"-", "-", "-", "-", "-"})
+		rows = append(rows, []string{"-", "-", "-", "-", "-", "-"})
 	}
 	return rows
 }

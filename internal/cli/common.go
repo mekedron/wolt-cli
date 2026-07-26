@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -298,23 +299,78 @@ func emitUpstreamError(
 	if err == nil {
 		err = woltgateway.ErrUpstream
 	}
-	if verbose {
-		return emitErrorWithWarnings(cmd, format, profile, locale, outputPath, "WOLT_UPSTREAM_ERROR", err.Error(), warnings)
+
+	classifiedErr := err
+	refresh := false
+	var refreshFailure *cliTokenRefreshError
+	if errors.As(err, &refreshFailure) {
+		classifiedErr = refreshFailure.refreshErr
+		refresh = true
 	}
 
-	message := woltgateway.ErrUpstream.Error() + " (use --verbose for details)"
 	code := "WOLT_UPSTREAM_ERROR"
+	message := woltgateway.ErrUpstream.Error() + " (use --verbose for details)"
+	if classifiedCode, classifiedMessage, ok := classifyCLIUpstreamError(classifiedErr, refresh); ok {
+		code = classifiedCode
+		message = classifiedMessage
+	}
+	if verbose {
+		message = classifiedErr.Error()
+	}
+	return emitErrorWithWarnings(
+		cmd,
+		format,
+		profile,
+		locale,
+		outputPath,
+		code,
+		message,
+		warnings,
+	)
+}
+
+func classifyCLIUpstreamError(err error, refresh bool) (string, string, bool) {
 	var upstreamErr *woltgateway.UpstreamRequestError
-	if errors.As(err, &upstreamErr) && upstreamErr.StatusCode > 0 {
+	if errors.As(err, &upstreamErr) {
 		switch upstreamErr.StatusCode {
-		case 401, 403:
-			message = "Your Wolt session expired or is missing. Run \"wolt login\" to refresh."
-			code = "WOLT_AUTH_REQUIRED"
-		default:
-			message = fmt.Sprintf("%s (status %d, use --verbose for details)", woltgateway.ErrUpstream.Error(), upstreamErr.StatusCode)
+		case 0:
+			return "WOLT_UPSTREAM_TEMPORARY", "Could not reach Wolt. Check the network connection and retry.", true
+		case 401:
+			return "WOLT_AUTH_REQUIRED", "Your Wolt session expired or is missing. Run \"wolt login\" to refresh.", true
+		case 403:
+			return "WOLT_FORBIDDEN", "Wolt rejected this request; the current account or operation is not allowed.", true
+		case 404:
+			if refresh {
+				return "WOLT_UNSUPPORTED_ENDPOINT", "Wolt's session refresh endpoint is unavailable; update wolt-cli and retry.", true
+			}
+			return "WOLT_NOT_FOUND", "The requested Wolt resource was not found.", true
+		case 410:
+			if woltgateway.LooksLikeOutdatedClient(upstreamErr.Body) {
+				return "WOLT_CLIENT_OUTDATED", "Wolt rejected the configured client version; update wolt-cli and retry.", true
+			}
+			return "WOLT_UNSUPPORTED_ENDPOINT", "This Wolt API operation is unavailable or unsupported; update wolt-cli and retry.", true
+		case 405, 501:
+			return "WOLT_UNSUPPORTED_ENDPOINT", "This Wolt API operation is unavailable or unsupported; update wolt-cli and retry.", true
+		case 429:
+			return "WOLT_RATE_LIMITED", "Wolt is rate-limiting requests; retry later.", true
+		case 408, 425, 500, 502, 503, 504:
+			return "WOLT_UPSTREAM_TEMPORARY", "Wolt is temporarily unavailable; retry later.", true
+		}
+		if upstreamErr.StatusCode >= 200 &&
+			upstreamErr.StatusCode < 300 &&
+			errors.Is(err, woltgateway.ErrInvalidResponse) {
+			return "WOLT_UPSTREAM_INVALID_RESPONSE", "Wolt returned an invalid response; retry later.", true
+		}
+		if upstreamErr.StatusCode > 0 {
+			return "WOLT_UPSTREAM_ERROR",
+				fmt.Sprintf("%s (status %d, use --verbose for details)", woltgateway.ErrUpstream.Error(), upstreamErr.StatusCode),
+				true
 		}
 	}
-	return emitErrorWithWarnings(cmd, format, profile, locale, outputPath, code, message, warnings)
+	if errors.Is(err, woltgateway.ErrInvalidResponse) {
+		return "WOLT_UPSTREAM_INVALID_RESPONSE", "Wolt returned an invalid response; retry later.", true
+	}
+	return "", "", false
 }
 
 func splitCSV(value string) map[string]struct{} {
@@ -330,10 +386,6 @@ func splitCSV(value string) map[string]struct{} {
 		result[token] = struct{}{}
 	}
 	return result
-}
-
-func requiredArg(name string) string {
-	return fmt.Sprintf("%s is required", name)
 }
 
 // browserOpenCommand is the package-level hook that resolves the platform-specific
@@ -399,14 +451,18 @@ func buildAuthContext(flags globalFlags) woltgateway.AuthContext {
 	return auth
 }
 
-func buildAuthContextWithProfile(ctx context.Context, deps Dependencies, flags globalFlags) woltgateway.AuthContext {
+func loadAuthContextWithProfile(
+	ctx context.Context,
+	deps Dependencies,
+	flags globalFlags,
+) (woltgateway.AuthContext, error) {
 	auth := buildAuthContext(flags)
-	if deps.Profiles == nil {
-		return auth
+	if auth.CanAuthenticate() || deps.Profiles == nil {
+		return auth, nil
 	}
 	profile, err := deps.Profiles.Find(ctx, flags.Profile)
 	if err != nil {
-		return auth
+		return woltgateway.AuthContext{}, err
 	}
 	if len(auth.Cookies) == 0 {
 		auth.Cookies = normalizeCookieInputs(profile.Cookies)
@@ -426,7 +482,37 @@ func buildAuthContextWithProfile(ctx context.Context, deps Dependencies, flags g
 	if strings.TrimSpace(auth.RefreshToken) == "" {
 		auth.RefreshToken = extractRefreshTokenFromCookieInputs(auth.Cookies)
 	}
+	return auth, nil
+}
+
+func buildAuthContextWithProfile(ctx context.Context, deps Dependencies, flags globalFlags) woltgateway.AuthContext {
+	auth, _ := loadAuthContextWithProfile(ctx, deps, flags)
 	return auth
+}
+
+func loadRequiredAuth(
+	ctx context.Context,
+	deps Dependencies,
+	flags globalFlags,
+	format output.Format,
+	cmd *cobra.Command,
+) (woltgateway.AuthContext, error) {
+	profileName := defaultProfileName(flags.Profile)
+	auth, err := loadAuthContextWithProfile(ctx, deps, flags)
+	if err != nil {
+		return woltgateway.AuthContext{}, profileError(
+			err,
+			format,
+			profileName,
+			flags.Locale,
+			flags.Output,
+			cmd,
+		)
+	}
+	if err := requireAuth(cmd, format, profileName, flags.Locale, flags.Output, auth); err != nil {
+		return woltgateway.AuthContext{}, err
+	}
+	return auth, nil
 }
 
 func requireAuth(
@@ -437,7 +523,7 @@ func requireAuth(
 	outputPath string,
 	auth woltgateway.AuthContext,
 ) error {
-	if auth.HasCredentials() {
+	if auth.CanAuthenticate() {
 		return nil
 	}
 	return emitError(
@@ -459,58 +545,24 @@ func defaultProfileName(raw string) string {
 	return trimmed
 }
 
-func isUnauthorizedUpstream(err error) bool {
-	var upstreamErr *woltgateway.UpstreamRequestError
-	if !errors.As(err, &upstreamErr) {
-		return false
-	}
-	return upstreamErr.StatusCode == 401
+type cliTokenRefreshError struct {
+	requestErr error
+	refreshErr error
 }
 
-// upsertProfileTokens writes refreshed credentials back to the on-disk profile.
-// writeRefreshToken=false matches the browser: the rotated refresh_token from a
-// /access_token response stays in memory only. The bootstrap refresh token in
-// the config remains pinned (just like wolt.com's __wrtoken cookie). Wolt's
-// server tolerates replaying the bootstrap value within a grace window and
-// keeps minting new access tokens; persisting every rotation forks our chain
-// off whatever the browser is on, which is what caused the "session expired"
-// hourly loop.
-func upsertProfileTokens(
-	ctx context.Context,
-	deps Dependencies,
-	selectedProfile string,
-	accessToken string,
-	refreshToken string,
-	writeRefreshToken bool,
-) error {
-	if deps.Config == nil {
-		return nil
-	}
-	cfg, err := deps.Config.Load(ctx)
-	if err != nil {
-		cfg = domain.Config{
-			Profiles: []domain.Profile{{Name: "default", IsDefault: true}},
-		}
-	}
-	if len(cfg.Profiles) == 0 {
-		cfg.Profiles = []domain.Profile{{Name: "default", IsDefault: true}}
-	}
-	if strings.TrimSpace(accessToken) != "" {
-		cfg.Profiles[0].WToken = normalizeWToken(accessToken)
-	}
-	if writeRefreshToken && strings.TrimSpace(refreshToken) != "" {
-		cfg.Profiles[0].WRefreshToken = normalizeRefreshToken(refreshToken)
-	}
-	cfg.Profiles[0].Name = "default"
-	cfg.Profiles[0].IsDefault = true
-	return deps.Config.Save(ctx, cfg)
+func (e *cliTokenRefreshError) Error() string {
+	return fmt.Sprintf("%v: automatic token refresh failed: %v", e.requestErr, e.refreshErr)
+}
+
+func (e *cliTokenRefreshError) Unwrap() []error {
+	return []error{e.requestErr, e.refreshErr}
 }
 
 func refreshAuthContext(
 	ctx context.Context,
 	deps Dependencies,
-	selectedProfile string,
 	auth *woltgateway.AuthContext,
+	persistence *credentialPersistence,
 ) (bool, []string, error) {
 	warnings := []string{}
 	if auth == nil {
@@ -526,18 +578,26 @@ func refreshAuthContext(
 	}
 	accessToken := normalizeWToken(result.AccessToken)
 	if accessToken == "" {
-		return false, warnings, fmt.Errorf("refresh response did not include access token")
+		return false, warnings, fmt.Errorf("%w: refresh response did not include access token", woltgateway.ErrInvalidResponse)
 	}
 	auth.WToken = accessToken
 	if candidate := normalizeRefreshToken(result.RefreshToken); candidate != "" {
 		// In-memory only — keep walking the chain within this process, but the
-		// bootstrap token in the config stays put. See upsertProfileTokens.
+		// browser-style bootstrap token in the config stays pinned.
 		auth.RefreshToken = candidate
 	}
 	warnings = append(warnings, "access token refreshed automatically")
-	if err := upsertProfileTokens(ctx, deps, selectedProfile, auth.WToken, auth.RefreshToken, false); err != nil {
-		warnings = append(warnings, "failed to persist refreshed access token in profile config")
-	}
+	attempted, persisted, persistErr := persistence.persistAccess(ctx, auth.WToken)
+	warnings = append(
+		warnings,
+		credentialPersistenceWarnings(
+			"refreshed access token",
+			attempted,
+			persisted,
+			persistErr,
+			false,
+		)...,
+	)
 	return true, warnings, nil
 }
 
@@ -548,28 +608,62 @@ func invokeWithAuthAutoRefresh[T any](
 	auth *woltgateway.AuthContext,
 	invoke func(woltgateway.AuthContext) (T, error),
 ) (T, []string, error) {
+	if auth == nil {
+		var zero T
+		return zero, nil, fmt.Errorf("auth context is nil")
+	}
+	persistence := newCredentialPersistence(
+		ctx,
+		deps,
+		*auth,
+		allowAutomaticCredentialPersistence(flags),
+	)
+	return invokeWithAuthAutoRefreshUsingPersistence(
+		ctx,
+		deps,
+		flags,
+		auth,
+		invoke,
+		persistence,
+	)
+}
+
+func invokeWithAuthAutoRefreshUsingPersistence[T any](
+	ctx context.Context,
+	deps Dependencies,
+	flags globalFlags,
+	auth *woltgateway.AuthContext,
+	invoke func(woltgateway.AuthContext) (T, error),
+	persistence *credentialPersistence,
+) (T, []string, error) {
 	var zero T
 	warnings := []string{}
 	if auth == nil {
 		return zero, warnings, fmt.Errorf("auth context is nil")
 	}
-	selectedProfile := strings.TrimSpace(flags.Profile)
+	var proactiveRefreshErr error
 	if tokenExpired(auth.WToken, time.Now().UTC(), 30*time.Second) {
 		// Opportunistic re-sync from a running Chrome. Mirrors browser
 		// behaviour: if the user has wolt.com open, their cookies are
 		// almost certainly fresher than ours, and adopting them keeps the
 		// CLI on the same refresh chain as the browser.
-		if chromeAuth, found, _ := pullAuthFromRunningChrome(ctx, ""); found && chromeAuthIsFresherThan(chromeAuth, auth.WToken) {
-			if err := adoptChromeAuth(ctx, deps, auth, chromeAuth); err == nil {
+		if chromeAuth, found, _ := pullOpportunisticChromeAuth(ctx, ""); found && chromeAuthIsFresherThan(chromeAuth, auth.WToken) {
+			if err := adoptChromeAuth(auth, chromeAuth); err == nil {
+				persistence.disable()
 				warnings = append(warnings, "adopted fresher Wolt session from running Chrome")
 			}
 		}
 	}
 	if tokenExpired(auth.WToken, time.Now().UTC(), 30*time.Second) {
-		_, refreshWarnings, refreshErr := refreshAuthContext(ctx, deps, selectedProfile, auth)
+		_, refreshWarnings, refreshErr := refreshAuthContext(ctx, deps, auth, persistence)
 		warnings = append(warnings, refreshWarnings...)
 		if refreshErr != nil {
-			warnings = append(warnings, fmt.Sprintf("automatic token refresh failed before request: %v", refreshErr))
+			proactiveRefreshErr = refreshErr
+			warning := "automatic token refresh failed before request"
+			if flags.Verbose {
+				warning += ": " + refreshErr.Error()
+			}
+			warnings = append(warnings, warning)
 		}
 	}
 
@@ -577,25 +671,44 @@ func invokeWithAuthAutoRefresh[T any](
 	if err == nil {
 		return result, warnings, nil
 	}
-	if !isUnauthorizedUpstream(err) {
+	if !woltgateway.HasStatus(err, http.StatusUnauthorized) {
 		return result, warnings, err
 	}
+	if proactiveRefreshErr != nil {
+		if retryResult, retryErr, attempted := retryWithChromeAuth(
+			ctx,
+			auth,
+			invoke,
+			persistence,
+		); attempted && retryErr == nil {
+			warnings = append(warnings, "recovered Wolt session from running Chrome after refresh failure")
+			return retryResult, warnings, nil
+		}
+		return result, warnings, &cliTokenRefreshError{
+			requestErr: err,
+			refreshErr: proactiveRefreshErr,
+		}
+	}
 
-	refreshed, refreshWarnings, refreshErr := refreshAuthContext(ctx, deps, selectedProfile, auth)
+	refreshed, refreshWarnings, refreshErr := refreshAuthContext(ctx, deps, auth, persistence)
 	warnings = append(warnings, refreshWarnings...)
 	if refreshErr != nil {
 		// Refresh chain is dead — last-ditch attempt to recover from Chrome
 		// before surrendering. If the user has a running browser session,
 		// adopting it gives us a working chain again without a re-login.
-		if chromeAuth, found, _ := pullAuthFromRunningChrome(ctx, ""); found {
-			if adoptErr := adoptChromeAuth(ctx, deps, auth, chromeAuth); adoptErr == nil {
-				warnings = append(warnings, "recovered Wolt session from running Chrome after refresh failure")
-				if retryResult, retryErr := invoke(*auth); retryErr == nil {
-					return retryResult, warnings, nil
-				}
-			}
+		if retryResult, retryErr, attempted := retryWithChromeAuth(
+			ctx,
+			auth,
+			invoke,
+			persistence,
+		); attempted && retryErr == nil {
+			warnings = append(warnings, "recovered Wolt session from running Chrome after refresh failure")
+			return retryResult, warnings, nil
 		}
-		return result, warnings, fmt.Errorf("%w: automatic token refresh failed: %v", err, refreshErr)
+		return result, warnings, &cliTokenRefreshError{
+			requestErr: err,
+			refreshErr: refreshErr,
+		}
 	}
 	if !refreshed {
 		return result, warnings, err
@@ -603,4 +716,43 @@ func invokeWithAuthAutoRefresh[T any](
 
 	retryResult, retryErr := invoke(*auth)
 	return retryResult, warnings, retryErr
+}
+
+func retryWithChromeAuth[T any](
+	ctx context.Context,
+	auth *woltgateway.AuthContext,
+	invoke func(woltgateway.AuthContext) (T, error),
+	persistence *credentialPersistence,
+) (T, error, bool) {
+	var zero T
+	chromeAuth, found, _ := pullOpportunisticChromeAuth(ctx, "")
+	if !found {
+		return zero, nil, false
+	}
+	if err := adoptChromeAuth(auth, chromeAuth); err != nil {
+		return zero, err, true
+	}
+	persistence.disable()
+	result, err := invoke(*auth)
+	return result, err, true
+}
+
+func credentialPersistenceWarnings(
+	label string,
+	attempted bool,
+	persisted bool,
+	err error,
+	verbose bool,
+) []string {
+	if !attempted || persisted {
+		return nil
+	}
+	if err == nil {
+		return []string{label + " was not persisted because saved credentials changed concurrently"}
+	}
+	warning := "failed to persist " + label
+	if verbose {
+		warning += ": " + err.Error()
+	}
+	return []string{warning}
 }

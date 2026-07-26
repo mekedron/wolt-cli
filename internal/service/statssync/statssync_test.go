@@ -263,13 +263,12 @@ func TestSyncSurfacesResumableHintWhen429PersistsThroughBackoff(t *testing.T) {
 	}
 }
 
-func TestSyncRefreshesAccessTokenOn401AndPersistsRotation(t *testing.T) {
+func TestSyncRefreshesAccessTokenOn401InMemory(t *testing.T) {
 	client := newFakeClient(twoOrderCorpus())
 	client.rejectAccessToken = "expired-wt"
 	client.nextAccessToken = "fresh-wt"
 	client.nextRefreshToken = "rotated-rt"
 
-	var rotated []woltgateway.AuthContext
 	dbPath := filepath.Join(t.TempDir(), "wolt.sqlite")
 
 	res, err := Sync(context.Background(), client, Options{
@@ -280,12 +279,8 @@ func TestSyncRefreshesAccessTokenOn401AndPersistsRotation(t *testing.T) {
 		Now:       fixedClock(),
 		Auth:      woltgateway.AuthContext{WToken: "expired-wt", RefreshToken: "old-rt"},
 		Refresher: client.Refresher,
-		OnAuthRotated: func(updated woltgateway.AuthContext) error {
-			rotated = append(rotated, updated)
-			return nil
-		},
-		sleep:   (&recordingSleeper{}).sleep,
-		backoff: &backoffPolicy{MaxAttempts: 3, BaseDelay: time.Second, MaxDelay: 10 * time.Second},
+		sleep:     (&recordingSleeper{}).sleep,
+		backoff:   &backoffPolicy{MaxAttempts: 3, BaseDelay: time.Second, MaxDelay: 10 * time.Second},
 	})
 	if err != nil {
 		t.Fatalf("Sync should recover from 401, got %v", err)
@@ -295,12 +290,6 @@ func TestSyncRefreshesAccessTokenOn401AndPersistsRotation(t *testing.T) {
 	}
 	if client.refreshCalls != 1 {
 		t.Fatalf("expected exactly 1 refresh call, got %d", client.refreshCalls)
-	}
-	if len(rotated) != 1 {
-		t.Fatalf("expected OnAuthRotated invoked once, got %d", len(rotated))
-	}
-	if rotated[0].WToken != "fresh-wt" || rotated[0].RefreshToken != "rotated-rt" {
-		t.Fatalf("OnAuthRotated saw unexpected context: %+v", rotated[0])
 	}
 }
 

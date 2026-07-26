@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -61,7 +62,11 @@ func buildWoltMCP(t *testing.T) string {
 	if err != nil {
 		t.Fatalf("repo root: %v", err)
 	}
-	binPath := filepath.Join(t.TempDir(), "wolt-mcp")
+	binaryName := "wolt-mcp"
+	if runtime.GOOS == "windows" {
+		binaryName += ".exe"
+	}
+	binPath := filepath.Join(t.TempDir(), binaryName)
 	cmd := exec.Command("go", "build", "-o", binPath, "./cmd/wolt-mcp")
 	cmd.Dir = repoRoot
 	cmd.Stderr = os.Stderr

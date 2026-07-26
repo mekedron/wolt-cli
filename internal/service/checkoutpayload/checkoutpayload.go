@@ -3,15 +3,13 @@ package checkoutpayload
 import (
 	"context"
 	"fmt"
-	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/mekedron/wolt-cli/internal/domain"
 	woltgateway "github.com/mekedron/wolt-cli/internal/gateway/wolt"
 	"github.com/mekedron/wolt-cli/internal/service/payloadutil"
 )
-
-var objectIDPattern = regexp.MustCompile(`^[a-f0-9]{24}$`)
 
 type VenuePageStaticFunc func(context.Context, string) (map[string]any, error)
 
@@ -26,17 +24,23 @@ func Build(
 	tip int,
 	promoCode string,
 ) (map[string]any, []string, error) {
+	if tip < 0 {
+		return nil, nil, fmt.Errorf("tip must be zero or greater")
+	}
 	deliveryMode = strings.ToLower(strings.TrimSpace(deliveryMode))
 	if deliveryMode == "" {
 		deliveryMode = "standard"
 	}
-	if deliveryMode != "standard" && deliveryMode != "priority" && deliveryMode != "schedule" {
+	if deliveryMode != "standard" && deliveryMode != "priority" {
 		return nil, nil, fmt.Errorf("unsupported --delivery-mode %q", deliveryMode)
 	}
 
 	venue := payloadutil.Map(basket["venue"])
 	venueID := strings.TrimSpace(payloadutil.String(venue["id"]))
 	warnings := []string{}
+	if !looksLikeObjectID(venueID) {
+		return nil, warnings, fmt.Errorf("unable to resolve canonical venue id for checkout preview")
+	}
 	itemDetails := map[string]map[string]any{}
 	categoryIDsByItemID := map[string]string{}
 	assortmentPayload := map[string]any{}
@@ -68,21 +72,31 @@ func Build(
 		}
 	}
 
-	menuItems := make([]any, 0, len(payloadutil.Slice(basket["items"])))
-	for _, value := range payloadutil.Slice(basket["items"]) {
-		item := payloadutil.Map(value)
+	basketItems, err := payloadutil.BasketItemRowsForMutation(basket)
+	if err != nil {
+		return nil, warnings, fmt.Errorf("basket cannot be used for checkout preview: %w", err)
+	}
+	if len(basketItems) == 0 {
+		return nil, warnings, fmt.Errorf("basket has no items for checkout preview")
+	}
+	menuItems := make([]any, 0, len(basketItems))
+	for index, item := range basketItems {
 		itemID := strings.TrimSpace(payloadutil.String(item["id"]))
+		if itemID == "" {
+			return nil, warnings, fmt.Errorf("unable to resolve item id for basket item at index %d", index)
+		}
 		count := payloadutil.Int(item["count"])
 		if count <= 0 {
 			count = 1
 		}
-		price := payloadutil.Int(item["price"])
-		if price <= 0 {
-			return nil, warnings, fmt.Errorf("unable to resolve base_price for basket item %q", itemID)
+		replacement, replacementErr := payloadutil.BuildBasketUpsertItem(item, count)
+		if replacementErr != nil {
+			return nil, warnings, fmt.Errorf("basket cannot be used for checkout preview: %w", replacementErr)
 		}
+		price := payloadutil.MinorAmount(replacement["price"])
 
 		detail := map[string]any{}
-		if itemID != "" && wolt != nil {
+		if wolt != nil {
 			if cached, ok := itemDetails[itemID]; ok {
 				detail = cached
 			} else if payload, err := wolt.VenueItemPage(ctx, venueID, itemID); err == nil {
@@ -99,23 +113,22 @@ func Build(
 
 		categoryID := resolveCheckoutCategoryID(item, detail, itemID, categoryIDsByItemID)
 		if categoryID == "" {
-			if looksLikeObjectID(itemID) {
-				categoryID = itemID
-				warnings = append(warnings, fmt.Sprintf("unable to resolve category_id for item %s; falling back to item id", itemID))
-			} else {
-				return nil, warnings, fmt.Errorf("unable to resolve category_id for basket item %q", itemID)
-			}
+			return nil, warnings, fmt.Errorf("unable to resolve category_id for basket item %q", itemID)
 		}
 		categoryIDs := resolveCheckoutCategoryIDs(item, categoryID)
 		valuePrices := buildOptionValuePriceIndex(detail)
-		options := buildCheckoutOptions(item["options"], valuePrices)
+		options := buildCheckoutOptions(replacement["options"], valuePrices)
+		endAmount, ok := payloadutil.CheckedMultiplyInt(count, price)
+		if !ok {
+			return nil, warnings, fmt.Errorf("basket item %q total exceeds the supported integer range", itemID)
+		}
 
 		menuItems = append(menuItems, map[string]any{
 			"id":                                itemID,
 			"venue_id":                          venueID,
 			"count":                             count,
 			"base_price":                        price,
-			"end_amount":                        count * price,
+			"end_amount":                        endAmount,
 			"is_weighted_item":                  false,
 			"category_id":                       categoryID,
 			"category_ids":                      categoryIDs,
@@ -191,7 +204,7 @@ func resolveCheckoutCategoryID(item map[string]any, detail map[string]any, itemI
 	if id := resolveCheckoutCategoryIDFromDetails(detail, itemID); id != "" {
 		return id
 	}
-	if id := strings.TrimSpace(fallback[itemID]); id != "" {
+	if id := strings.TrimSpace(fallback[strings.ToLower(strings.TrimSpace(itemID))]); id != "" {
 		return id
 	}
 	return ""
@@ -202,7 +215,7 @@ func resolveCheckoutCategoryIDFromDetails(detail map[string]any, itemID string) 
 		return ""
 	}
 	categoryIDsByItemID := buildCheckoutCategoryIDIndex(detail)
-	if id := strings.TrimSpace(categoryIDsByItemID[itemID]); id != "" {
+	if id := strings.TrimSpace(categoryIDsByItemID[strings.ToLower(strings.TrimSpace(itemID))]); id != "" {
 		return id
 	}
 	return ""
@@ -251,14 +264,12 @@ func buildCheckoutCategoryIDIndex(payload map[string]any) map[string]string {
 	if payload == nil {
 		return index
 	}
-	var walk func(any)
-	walk = func(node any) {
+	var walk func(any, bool)
+	walk = func(node any, categoryContainer bool) {
 		switch value := node.(type) {
 		case map[string]any:
-			if categories := payloadutil.Slice(value["categories"]); len(categories) > 0 {
-				for _, categoryNode := range categories {
-					collectCheckoutCategoryMappings(categoryNode, index)
-				}
+			if categoryContainer {
+				collectCheckoutCategoryMappings(value, index)
 			}
 			if menuItems := payloadutil.Slice(value["menu_items"]); len(menuItems) > 0 {
 				for _, menuItemNode := range menuItems {
@@ -271,21 +282,35 @@ func buildCheckoutCategoryIDIndex(payload map[string]any) map[string]string {
 						continue
 					}
 					if categoryID := resolveCheckoutCategoryIDFromItemLikePayload(menuItem); categoryID != "" {
-						index[itemID] = categoryID
+						recordCheckoutCategoryMapping(index, itemID, categoryID)
 					}
 				}
 			}
-			collectCheckoutCategoryMappings(value, index)
-			for _, nested := range value {
-				walk(nested)
+			keys := make([]string, 0, len(value))
+			for key := range value {
+				keys = append(keys, key)
+			}
+			sort.Strings(keys)
+			for _, key := range keys {
+				nested := value[key]
+				switch strings.ToLower(strings.TrimSpace(key)) {
+				case "category":
+					walk(nested, true)
+				case "categories", "subcategories":
+					for _, categoryNode := range payloadutil.Slice(nested) {
+						walk(categoryNode, true)
+					}
+				default:
+					walk(nested, false)
+				}
 			}
 		case []any:
 			for _, nested := range value {
-				walk(nested)
+				walk(nested, categoryContainer)
 			}
 		}
 	}
-	walk(payload)
+	walk(payload, false)
 	return index
 }
 
@@ -303,7 +328,7 @@ func collectCheckoutCategoryMappings(node any, index map[string]string) {
 		if itemID == "" {
 			continue
 		}
-		index[itemID] = categoryID
+		recordCheckoutCategoryMapping(index, itemID, categoryID)
 	}
 	for _, itemNode := range payloadutil.Slice(category["items"]) {
 		itemID := strings.TrimSpace(payloadutil.String(itemNode))
@@ -313,40 +338,83 @@ func collectCheckoutCategoryMappings(node any, index map[string]string) {
 		if itemID == "" {
 			continue
 		}
-		index[itemID] = categoryID
+		recordCheckoutCategoryMapping(index, itemID, categoryID)
 	}
+}
+
+func recordCheckoutCategoryMapping(index map[string]string, itemID, categoryID string) {
+	itemKey := strings.ToLower(strings.TrimSpace(itemID))
+	categoryID = strings.TrimSpace(categoryID)
+	if itemKey == "" || categoryID == "" {
+		return
+	}
+	if _, exists := index[itemKey]; exists {
+		return
+	}
+	index[itemKey] = categoryID
 }
 
 func mergeCheckoutCategoryIndexes(target map[string]string, source map[string]string) {
 	if target == nil || len(source) == 0 {
 		return
 	}
-	for itemID, categoryID := range source {
-		itemID = strings.TrimSpace(itemID)
-		categoryID = strings.TrimSpace(categoryID)
-		if itemID == "" || categoryID == "" {
-			continue
-		}
-		if _, exists := target[itemID]; exists {
-			continue
-		}
-		target[itemID] = categoryID
+	itemIDs := make([]string, 0, len(source))
+	for itemID := range source {
+		itemIDs = append(itemIDs, itemID)
+	}
+	sort.Strings(itemIDs)
+	for _, itemID := range itemIDs {
+		recordCheckoutCategoryMapping(target, itemID, source[itemID])
 	}
 }
 
 func looksLikeObjectID(value string) bool {
-	return objectIDPattern.MatchString(strings.ToLower(strings.TrimSpace(value)))
+	return domain.IsObjectID(value)
 }
 
 func resolveCheckoutCategoryIDs(item map[string]any, categoryID string) []any {
-	categoryIDs := payloadutil.Slice(item["category_ids"])
-	if len(categoryIDs) > 0 {
+	canonicalID := strings.TrimSpace(categoryID)
+	rawIDs := make([]string, 0, len(payloadutil.Slice(item["category_ids"])))
+	seen := map[string]struct{}{}
+	canonicalPresent := false
+	for _, rawID := range payloadutil.Slice(item["category_ids"]) {
+		id := strings.TrimSpace(payloadutil.String(rawID))
+		if id == "" {
+			continue
+		}
+		key := strings.ToLower(id)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		if canonicalID != "" && strings.EqualFold(id, canonicalID) {
+			canonicalPresent = true
+		}
+		rawIDs = append(rawIDs, id)
+	}
+
+	if canonicalID == "" {
+		categoryIDs := make([]any, 0, len(rawIDs))
+		for _, id := range rawIDs {
+			categoryIDs = append(categoryIDs, id)
+		}
 		return categoryIDs
 	}
-	if strings.TrimSpace(categoryID) == "" {
-		return []any{}
+	if !canonicalPresent {
+		// A category_ids array that omits the separately resolved category_id
+		// is stale or belongs to a different item snapshot. Do not send
+		// contradictory category identities to checkout.
+		return []any{canonicalID}
 	}
-	return []any{categoryID}
+
+	categoryIDs := make([]any, 0, len(rawIDs))
+	categoryIDs = append(categoryIDs, canonicalID)
+	for _, id := range rawIDs {
+		if !strings.EqualFold(id, canonicalID) {
+			categoryIDs = append(categoryIDs, id)
+		}
+	}
+	return categoryIDs
 }
 
 func buildOptionValuePriceIndex(detail map[string]any) map[string]int {
@@ -354,7 +422,7 @@ func buildOptionValuePriceIndex(detail map[string]any) map[string]int {
 	for _, spec := range payloadutil.ExtractOptionSpecs(detail) {
 		for valueID, value := range spec.Values {
 			valueID = strings.TrimSpace(valueID)
-			if valueID == "" {
+			if valueID == "" || !value.HasPrice {
 				continue
 			}
 			index[valueID] = value.Price
@@ -385,7 +453,7 @@ func buildCheckoutOptions(raw any, valuePrices map[string]int) []any {
 			if count <= 0 {
 				count = 1
 			}
-			price := payloadutil.Int(value["price"])
+			price := payloadutil.MinorAmount(value["price"])
 			if inferred, ok := valuePrices[valueID]; ok {
 				price = inferred
 			}

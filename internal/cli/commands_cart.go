@@ -41,10 +41,8 @@ func newCartShowCommand(deps Dependencies) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			profileName := defaultProfileName(flags.Profile)
-
-			auth := buildAuthContextWithProfile(cmd.Context(), deps, flags)
-			if err := requireAuth(cmd, format, profileName, flags.Locale, flags.Output, auth); err != nil {
+			auth, err := loadRequiredAuth(cmd.Context(), deps, flags, format, cmd)
+			if err != nil {
 				return err
 			}
 
@@ -142,12 +140,20 @@ func newCartAddCommand(deps Dependencies) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if count <= 0 {
-				return fmt.Errorf("%s", requiredArg("--count must be greater than 0"))
-			}
 			profileName := defaultProfileName(flags.Profile)
-			auth := buildAuthContextWithProfile(cmd.Context(), deps, flags)
-			if err := requireAuth(cmd, format, profileName, flags.Locale, flags.Output, auth); err != nil {
+			if count <= 0 {
+				return emitError(
+					cmd,
+					format,
+					profileName,
+					flags.Locale,
+					flags.Output,
+					"WOLT_INVALID_ARGUMENT",
+					"--count must be greater than 0",
+				)
+			}
+			auth, err := loadRequiredAuth(cmd.Context(), deps, flags, format, cmd)
+			if err != nil {
 				return err
 			}
 
@@ -166,15 +172,43 @@ func newCartAddCommand(deps Dependencies) *cobra.Command {
 				}
 			}
 
-			venueID := strings.TrimSpace(venueArg)
-			if resolved, resolveErr := resolveVenueReference(cmd.Context(), deps, venueID); resolveErr == nil {
-				venueID = resolved.VenueID
-				if strings.TrimSpace(venueSlug) == "" {
-					venueSlug = resolved.VenueSlug
-				}
+			venueReference, err := resolveCartAddVenueReference(
+				cmd.Context(),
+				deps,
+				venueArg,
+				venueSlug,
+			)
+			if err != nil {
+				return emitError(
+					cmd,
+					format,
+					profileName,
+					flags.Locale,
+					flags.Output,
+					"WOLT_INVALID_ARGUMENT",
+					err.Error(),
+				)
 			}
+			venueID := venueReference.ID
+			venueSlug = venueReference.Slug
 
 			itemRef := resolveItemReference(rawItem)
+			if err := venueReference.applyItemSlugHint(
+				cmd.Context(),
+				deps,
+				itemRef.VenueSlugHint,
+			); err != nil {
+				return emitError(
+					cmd,
+					format,
+					profileName,
+					flags.Locale,
+					flags.Output,
+					"WOLT_INVALID_ARGUMENT",
+					err.Error(),
+				)
+			}
+			venueSlug = venueReference.Slug
 			itemID := itemRef.ItemID
 			trimmedItem := strings.TrimSpace(rawItem)
 			if itemID == "" && trimmedItem != "" {
@@ -185,9 +219,6 @@ func newCartAddCommand(deps Dependencies) *cobra.Command {
 				// stay compatible with internal identifiers and let Wolt reject if
 				// they are genuinely invalid.
 				itemID = trimmedItem
-			}
-			if strings.TrimSpace(venueSlug) == "" && itemRef.VenueSlugHint != "" {
-				venueSlug = itemRef.VenueSlugHint
 			}
 			if itemID == "" {
 				slugForLookup := strings.TrimSpace(venueSlug)
@@ -236,10 +267,6 @@ func newCartAddCommand(deps Dependencies) *cobra.Command {
 					return fmt.Errorf("either <item-id> or --query is required")
 				}
 			}
-			if venueID == "" || itemID == "" {
-				return fmt.Errorf("venue and item-id are required")
-			}
-
 			var latPtr *float64
 			var lonPtr *float64
 			if latSet {
@@ -266,6 +293,98 @@ func newCartAddCommand(deps Dependencies) *cobra.Command {
 			}
 
 			warnings := []string{}
+			venueMutationID := venueID
+			currency := payloadutil.NormalizeCurrency(currencyOverride)
+			existingPage, preAddAuthWarnings, preAddErr := invokeWithAuthAutoRefresh(
+				cmd.Context(),
+				deps,
+				flags,
+				&auth,
+				func(authCtx woltgateway.AuthContext) (map[string]any, error) {
+					return deps.Wolt.BasketsPage(cmd.Context(), location, authCtx)
+				},
+			)
+			warnings = append(warnings, preAddAuthWarnings...)
+			if preAddErr != nil {
+				return emitUpstreamError(
+					cmd,
+					format,
+					profile,
+					flags.Locale,
+					flags.Output,
+					flags.Verbose,
+					preAddErr,
+					warnings...,
+				)
+			}
+			selectedBasket, _, _, selectionErr := selectBasketForMutationWithMeta(
+				existingPage,
+				venueReference.basketSelectionKey(),
+			)
+			if selectionErr != nil {
+				return emitError(
+					cmd,
+					format,
+					profile,
+					flags.Locale,
+					flags.Output,
+					"WOLT_INVALID_BASKET",
+					"Basket state could not be verified; the item was not added: "+selectionErr.Error(),
+				)
+			}
+			if selectedBasket != nil {
+				identity := payloadutil.ExtractBasketVenueIdentity(selectedBasket)
+				if err := venueReference.verifyBasket(identity); err != nil {
+					return emitError(
+						cmd,
+						format,
+						profile,
+						flags.Locale,
+						flags.Output,
+						"WOLT_VENUE_CONFLICT",
+						err.Error()+"; the item was not added.",
+					)
+				}
+				if identity.ID != "" {
+					venueMutationID = identity.ID
+				}
+				if venueSlug == "" && identity.Slug != "" {
+					venueSlug = identity.Slug
+				}
+				if currency == "" {
+					currency = payloadutil.CurrencyFromBasket(selectedBasket)
+				}
+			}
+			if !venueReference.explicitSlugVerified {
+				return emitError(
+					cmd,
+					format,
+					profile,
+					flags.Locale,
+					flags.Output,
+					"WOLT_VENUE_UNRESOLVED",
+					fmt.Sprintf(
+						"Could not verify that --venue-slug %q belongs to venue %q, so the item was not added.",
+						venueReference.ExplicitSlug,
+						strings.TrimSpace(venueArg),
+					),
+				)
+			}
+			if !looksLikeObjectID(venueMutationID) {
+				return emitErrorWithWarnings(
+					cmd,
+					format,
+					profile,
+					flags.Locale,
+					flags.Output,
+					"WOLT_VENUE_UNRESOLVED",
+					fmt.Sprintf(
+						"Could not resolve venue %q to a Wolt venue id, so the item was NOT added (the basket would not persist). Pass the 24-character venue id or a full wolt.com venue URL.",
+						strings.TrimSpace(venueArg),
+					),
+					dedupeStrings(warnings),
+				)
+			}
 			slugCandidates := []string{}
 			if overrideSlug := strings.TrimSpace(venueSlug); overrideSlug != "" {
 				slugCandidates = append(slugCandidates, overrideSlug)
@@ -275,29 +394,6 @@ func newCartAddCommand(deps Dependencies) *cobra.Command {
 			}
 			slugCandidates = dedupeStrings(slugCandidates)
 
-			// The id→slug lookup is an extra upstream round-trip on the path of
-			// every add, so it is consulted lazily: only when no slug was given
-			// explicitly, or when the explicit ones did not resolve the item.
-			venuePageSlugTried := false
-			appendVenuePageSlug := func() bool {
-				if venuePageSlugTried {
-					return false
-				}
-				venuePageSlugTried = true
-				pageSlug := resolveVenueSlugFromID(cmd.Context(), deps, venueID)
-				if pageSlug == "" {
-					return false
-				}
-				extended := dedupeStrings(append(slugCandidates, pageSlug))
-				if len(extended) == len(slugCandidates) {
-					return false
-				}
-				slugCandidates = extended
-				return true
-			}
-			if len(slugCandidates) == 0 {
-				appendVenuePageSlug()
-			}
 			if len(slugCandidates) == 0 {
 				return emitError(
 					cmd,
@@ -312,8 +408,7 @@ func newCartAddCommand(deps Dependencies) *cobra.Command {
 
 			currentAssortmentPayload := map[string]any{}
 			availabilityLookupSucceeded := false
-			for index := 0; index < len(slugCandidates); index++ {
-				candidateSlug := slugCandidates[index]
+			for _, candidateSlug := range slugCandidates {
 				payload, availabilityWarnings, availabilityErr := invokeWithAuthAutoRefresh(
 					cmd.Context(),
 					deps,
@@ -339,11 +434,6 @@ func newCartAddCommand(deps Dependencies) *cobra.Command {
 						venueSlug = candidateSlug
 						break
 					}
-				}
-				// Explicit candidates are exhausted without a hit; fall back to
-				// the slug Wolt reports for this venue id before giving up.
-				if index == len(slugCandidates)-1 {
-					appendVenuePageSlug()
 				}
 			}
 			if !availabilityLookupSucceeded {
@@ -374,13 +464,15 @@ func newCartAddCommand(deps Dependencies) *cobra.Command {
 			}
 
 			itemPayload := map[string]any{}
-			if payload, itemErr := deps.Wolt.VenueItemPage(cmd.Context(), venueID, itemID); itemErr == nil {
-				itemPayload = payload
-			} else {
-				warnings = append(warnings, "item endpoint unavailable")
+			if looksLikeObjectID(venueMutationID) {
+				if payload, itemErr := deps.Wolt.VenueItemPage(cmd.Context(), venueMutationID, itemID); itemErr == nil {
+					itemPayload = payload
+				} else {
+					warnings = append(warnings, "item endpoint unavailable")
+				}
 			}
 			if fallback := buildItemPayloadFromAssortment(currentAssortmentPayload, itemID); fallback != nil {
-				itemPayload = mergeItemPayloadFallback(itemPayload, fallback)
+				itemPayload = catalogitem.MergeCurrentItem(itemPayload, fallback)
 			}
 			if needsAssortmentFallback(itemPayload) {
 				for _, candidateSlug := range dedupeStrings(slugCandidates) {
@@ -432,7 +524,6 @@ func newCartAddCommand(deps Dependencies) *cobra.Command {
 				)
 			}
 
-			currency := payloadutil.NormalizeCurrency(currencyOverride)
 			if currency == "" {
 				currency = currencyFromItemPayload(itemPayload)
 			}
@@ -445,12 +536,32 @@ func newCartAddCommand(deps Dependencies) *cobra.Command {
 
 			selectedOptions, err := parseOptionSelections(optionFlags)
 			if err != nil {
-				return err
+				return emitError(
+					cmd,
+					format,
+					profile,
+					flags.Locale,
+					flags.Output,
+					"WOLT_INVALID_ARGUMENT",
+					err.Error(),
+				)
 			}
-			if len(selectedOptions) > 0 && len(extractOptionSpecs(itemPayload)) == 0 {
+			if len(selectedOptions) > 0 && !hasHydratedOptionSpecs(itemPayload) {
 				warnings = append(warnings, "option metadata unavailable; provide option IDs or use --venue-slug to resolve option names")
 			}
-			options := buildBasketOptions(itemPayload, selectedOptions)
+			options, err := buildBasketOptions(itemPayload, selectedOptions)
+			if err != nil {
+				return emitErrorWithWarnings(
+					cmd,
+					format,
+					profile,
+					flags.Locale,
+					flags.Output,
+					"WOLT_INVALID_ARGUMENT",
+					err.Error(),
+					warnings,
+				)
+			}
 			newLineItem := map[string]any{
 				"id":      itemID,
 				"count":   count,
@@ -463,55 +574,19 @@ func newCartAddCommand(deps Dependencies) *cobra.Command {
 			}
 
 			mergedItems := []any{newLineItem}
-			venueMutationID := venueID
-			existingPage, preAddAuthWarnings, preAddErr := invokeWithAuthAutoRefresh(
-				cmd.Context(),
-				deps,
-				flags,
-				&auth,
-				func(authCtx woltgateway.AuthContext) (map[string]any, error) {
-					return deps.Wolt.BasketsPage(cmd.Context(), location, authCtx)
-				},
-			)
-			warnings = append(warnings, preAddAuthWarnings...)
-			if preAddErr == nil {
-				selectedBasket, _, _ := selectBasketWithMeta(existingPage, venueID)
-				if selectedBasket != nil {
-					if currency == "" {
-						currency = payloadutil.CurrencyFromBasket(selectedBasket)
-					}
-					resolvedVenue := asMap(selectedBasket["venue"])
-					if resolvedVenueID := strings.TrimSpace(asString(resolvedVenue["id"])); resolvedVenueID != "" {
-						venueMutationID = resolvedVenueID
-					}
-					existingItems := asSlice(selectedBasket["items"])
-					if len(existingItems) > 0 {
-						mergedItems = make([]any, 0, len(existingItems)+1)
-						mergedCurrentLine := false
-						for _, rawValue := range existingItems {
-							line := asMap(rawValue)
-							if line == nil {
-								continue
-							}
-							lineID := strings.TrimSpace(asString(line["id"]))
-							lineCount := asInt(line["count"])
-							if lineCount <= 0 {
-								lineCount = 1
-							}
-							if lineID != "" && strings.EqualFold(lineID, itemID) {
-								mergedItems = append(mergedItems, buildBasketUpsertItem(line, lineCount+count))
-								mergedCurrentLine = true
-								continue
-							}
-							mergedItems = append(mergedItems, buildBasketUpsertItem(line, lineCount))
-						}
-						if !mergedCurrentLine {
-							mergedItems = append(mergedItems, newLineItem)
-						}
-					}
+			if selectedBasket != nil {
+				mergedItems, err = payloadutil.MergeBasketItems(selectedBasket, itemID, count, newLineItem)
+				if err != nil {
+					return emitError(
+						cmd,
+						format,
+						profile,
+						flags.Locale,
+						flags.Output,
+						"WOLT_INVALID_BASKET",
+						err.Error()+"; the item was not added.",
+					)
 				}
-			} else {
-				warnings = append(warnings, "unable to load existing basket snapshot before add; upstream may replace existing lines")
 			}
 			if currency == "" {
 				return emitError(
@@ -525,29 +600,18 @@ func newCartAddCommand(deps Dependencies) *cobra.Command {
 				)
 			}
 
-			// Refuse to POST when the venue still hasn't resolved to a real
-			// Wolt venue id (a 24-char ObjectID). Posting a slug as venue_id
-			// makes the Wolt backend return a success-shaped response and bump
-			// the basket count, but the basket never persists to the listable
-			// cart — a silent "phantom basket" (issue #19). Failing here is far
-			// better than reporting a fake success.
-			if !looksLikeObjectID(venueMutationID) {
-				warnings = dedupeStrings(warnings)
-				return emitErrorWithWarnings(
+			fallbackTotal, err := basketItemsSubtotal(mergedItems)
+			if err != nil {
+				return emitError(
 					cmd,
 					format,
 					profile,
 					flags.Locale,
 					flags.Output,
-					"WOLT_VENUE_UNRESOLVED",
-					fmt.Sprintf(
-						"Could not resolve venue %q to a Wolt venue id, so the item was NOT added (the basket would not persist). Pass the 24-character venue id or a full wolt.com venue URL.",
-						strings.TrimSpace(venueArg),
-					),
-					warnings,
+					"WOLT_INVALID_BASKET",
+					err.Error()+"; the item was not added.",
 				)
 			}
-
 			addPayload := map[string]any{
 				"items":    mergedItems,
 				"venue_id": venueMutationID,
@@ -567,11 +631,11 @@ func newCartAddCommand(deps Dependencies) *cobra.Command {
 			}
 
 			total := map[string]any{
-				"amount":           count * price,
-				"formatted_amount": formatMinorAmount(count*price, currency),
+				"amount":           fallbackTotal,
+				"formatted_amount": formatMinorAmount(fallbackTotal, currency),
 			}
-			totalItems := count
-			if countPayload, _, err := invokeWithAuthAutoRefresh(
+			totalItems := basketPageItemCount(existingPage) + count
+			if countPayload, countWarnings, err := invokeWithAuthAutoRefresh(
 				cmd.Context(),
 				deps,
 				flags,
@@ -580,11 +644,12 @@ func newCartAddCommand(deps Dependencies) *cobra.Command {
 					return deps.Wolt.BasketCount(cmd.Context(), authCtx)
 				},
 			); err == nil {
-				if resolvedCount := asInt(countPayload["count"]); resolvedCount > 0 {
-					totalItems = resolvedCount
+				if refreshedCount, ok := basketCountValue(countPayload); ok {
+					totalItems = refreshedCount
 				}
+				warnings = append(warnings, countWarnings...)
 			}
-			if page, _, err := invokeWithAuthAutoRefresh(
+			if page, pageWarnings, err := invokeWithAuthAutoRefresh(
 				cmd.Context(),
 				deps,
 				flags,
@@ -593,15 +658,18 @@ func newCartAddCommand(deps Dependencies) *cobra.Command {
 					return deps.Wolt.BasketsPage(cmd.Context(), location, authCtx)
 				},
 			); err == nil {
-				state, _ := buildCartState(page, venueID)
-				if resolvedTotal := asMap(state["total"]); resolvedTotal != nil {
-					total = resolvedTotal
+				warnings = append(warnings, pageWarnings...)
+				if selected, _, _ := selectBasketWithMeta(page, venueMutationID); selected != nil {
+					state, _ := buildCartState(page, venueMutationID)
+					if resolvedTotal := asMap(state["total"]); resolvedTotal != nil {
+						total = resolvedTotal
+					}
 				}
 			}
 
 			data := map[string]any{
-				"basket_id":     asString(resultPayload["id"]),
-				"venue_id":      asString(coalesceAny(resultPayload["venue_id"], venueID)),
+				"basket_id":     payloadutil.BasketID(resultPayload),
+				"venue_id":      asString(coalesceAny(resultPayload["venue_id"], venueMutationID)),
 				"mutation":      "add",
 				"line_id":       itemID,
 				"total_items":   totalItems,
@@ -653,8 +721,8 @@ func newCartCountCommand(deps Dependencies) *cobra.Command {
 			}
 			profileName := defaultProfileName(flags.Profile)
 
-			auth := buildAuthContextWithProfile(cmd.Context(), deps, flags)
-			if err := requireAuth(cmd, format, profileName, flags.Locale, flags.Output, auth); err != nil {
+			auth, err := loadRequiredAuth(cmd.Context(), deps, flags, format, cmd)
+			if err != nil {
 				return err
 			}
 
@@ -703,12 +771,20 @@ func newCartRemoveCommand(deps Dependencies) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if count <= 0 {
-				return fmt.Errorf("%s", requiredArg("--count must be greater than 0"))
-			}
 			profileName := defaultProfileName(flags.Profile)
-			auth := buildAuthContextWithProfile(cmd.Context(), deps, flags)
-			if err := requireAuth(cmd, format, profileName, flags.Locale, flags.Output, auth); err != nil {
+			if count <= 0 {
+				return emitError(
+					cmd,
+					format,
+					profileName,
+					flags.Locale,
+					flags.Output,
+					"WOLT_INVALID_ARGUMENT",
+					"--count must be greater than 0",
+				)
+			}
+			auth, err := loadRequiredAuth(cmd.Context(), deps, flags, format, cmd)
+			if err != nil {
 				return err
 			}
 
@@ -749,7 +825,18 @@ func newCartRemoveCommand(deps Dependencies) *cobra.Command {
 			if err != nil {
 				return emitUpstreamError(cmd, format, profile, flags.Locale, flags.Output, flags.Verbose, err, authWarnings...)
 			}
-			selected, _, selectionWarnings := selectBasketWithMeta(page, venueID)
+			selected, _, selectionWarnings, selectionErr := selectBasketForMutationWithMeta(page, venueID)
+			if selectionErr != nil {
+				return emitError(
+					cmd,
+					format,
+					profile,
+					flags.Locale,
+					flags.Output,
+					"WOLT_INVALID_BASKET",
+					"Basket state could not be verified; no basket data was changed: "+selectionErr.Error(),
+				)
+			}
 			if selected == nil {
 				return emitError(
 					cmd,
@@ -771,7 +858,7 @@ func newCartRemoveCommand(deps Dependencies) *cobra.Command {
 				}
 				itemID = trimmed
 			}
-			line, currentCount := findBasketLineByID(selected, itemID)
+			line, _ := findBasketLineByID(selected, itemID)
 			if line == nil {
 				return emitError(
 					cmd,
@@ -784,49 +871,81 @@ func newCartRemoveCommand(deps Dependencies) *cobra.Command {
 				)
 			}
 			removeCount := count
-			if all || removeCount > currentCount {
-				removeCount = currentCount
+			if all {
+				removeCount = 0
 			}
-			nextCount := currentCount - removeCount
-			basketID := asString(selected["id"])
-			venue := asMap(selected["venue"])
-			venueResolvedID := asString(venue["id"])
-			currency := payloadutil.CurrencyFromBasket(selected)
-			if currency == "" {
-				currency = currencyFromVenue(cmd.Context(), deps, asString(coalesceAny(
-					venue["slug"],
-					venue["venue_slug"],
-					venue["public_slug"],
-					venue["url_slug"],
-				)))
-			}
-			if currency == "" && nextCount > 0 {
+			remainingItems, removedCount, removeErr := payloadutil.RemoveBasketItems(
+				selected,
+				itemID,
+				removeCount,
+			)
+			if removeErr != nil {
 				return emitError(
 					cmd,
 					format,
 					profile,
 					flags.Locale,
 					flags.Output,
-					"WOLT_CURRENCY_UNKNOWN",
-					"Item quantity was not changed because the venue currency could not be verified.",
+					"WOLT_INVALID_BASKET",
+					removeErr.Error()+"; no basket data was changed.",
+				)
+			}
+			if removedCount == 0 {
+				return emitError(
+					cmd,
+					format,
+					profile,
+					flags.Locale,
+					flags.Output,
+					"WOLT_ITEM_NOT_FOUND",
+					fmt.Sprintf("Item %q not found in selected basket.", itemID),
+				)
+			}
+			removeCount = removedCount
+			basketID := strings.TrimSpace(asString(coalesceAny(selected["id"], selected["basket_id"])))
+			identity := payloadutil.ExtractBasketVenueIdentity(selected)
+			if identity.Conflict {
+				return emitError(
+					cmd,
+					format,
+					profile,
+					flags.Locale,
+					flags.Output,
+					"WOLT_VENUE_CONFLICT",
+					"The selected basket contains conflicting canonical venue ids; no basket data was changed.",
+				)
+			}
+			venueResolvedID := identity.ID
+			currency := payloadutil.CurrencyFromBasket(selected)
+			fallbackTotal, err := basketItemsSubtotal(remainingItems)
+			if err != nil {
+				return emitError(
+					cmd,
+					format,
+					profile,
+					flags.Locale,
+					flags.Output,
+					"WOLT_INVALID_BASKET",
+					err.Error()+"; no basket data was changed.",
 				)
 			}
 
 			mutation := "remove"
-			if nextCount <= 0 {
-				if len(asSlice(selected["items"])) > 1 {
+			mutationWarnings := []string{}
+			if len(remainingItems) == 0 {
+				if basketID == "" {
 					return emitError(
 						cmd,
 						format,
 						profile,
 						flags.Locale,
 						flags.Output,
-						"WOLT_REMOVE_UNSUPPORTED",
-						"Removing a full line from multi-item baskets is not supported by this endpoint yet. Use `cart clear` or remove fewer items.",
+						"WOLT_BASKET_UNRESOLVED",
+						"Item was not removed because the basket id is unavailable.",
 					)
 				}
 				mutation = "clear"
-				if _, _, err := invokeWithAuthAutoRefresh(
+				_, refreshWarnings, err := invokeWithAuthAutoRefresh(
 					cmd.Context(),
 					deps,
 					flags,
@@ -834,18 +953,52 @@ func newCartRemoveCommand(deps Dependencies) *cobra.Command {
 					func(authCtx woltgateway.AuthContext) (map[string]any, error) {
 						return deps.Wolt.DeleteBaskets(cmd.Context(), []string{basketID}, authCtx)
 					},
-				); err != nil {
-					return emitUpstreamError(cmd, format, profile, flags.Locale, flags.Output, flags.Verbose, err, authWarnings...)
+				)
+				mutationWarnings = append(mutationWarnings, refreshWarnings...)
+				if err != nil {
+					return emitUpstreamError(
+						cmd,
+						format,
+						profile,
+						flags.Locale,
+						flags.Output,
+						flags.Verbose,
+						err,
+						append(append([]string{}, authWarnings...), mutationWarnings...)...,
+					)
 				}
 			} else {
+				if currency == "" {
+					currency = currencyFromVenue(cmd.Context(), deps, identity.Slug)
+				}
+				if currency == "" {
+					return emitError(
+						cmd,
+						format,
+						profile,
+						flags.Locale,
+						flags.Output,
+						"WOLT_CURRENCY_UNKNOWN",
+						"Item quantity was not changed because the venue currency could not be verified.",
+					)
+				}
+				if !looksLikeObjectID(venueResolvedID) {
+					return emitError(
+						cmd,
+						format,
+						profile,
+						flags.Locale,
+						flags.Output,
+						"WOLT_VENUE_UNRESOLVED",
+						"Item quantity was not changed because the basket venue id could not be verified.",
+					)
+				}
 				removePayload := map[string]any{
-					"items": []any{
-						buildBasketMutationItem(line, nextCount),
-					},
+					"items":    remainingItems,
 					"venue_id": venueResolvedID,
 					"currency": currency,
 				}
-				if _, _, err := invokeWithAuthAutoRefresh(
+				_, refreshWarnings, err := invokeWithAuthAutoRefresh(
 					cmd.Context(),
 					deps,
 					flags,
@@ -853,17 +1006,28 @@ func newCartRemoveCommand(deps Dependencies) *cobra.Command {
 					func(authCtx woltgateway.AuthContext) (map[string]any, error) {
 						return deps.Wolt.AddToBasket(cmd.Context(), removePayload, authCtx)
 					},
-				); err != nil {
-					return emitUpstreamError(cmd, format, profile, flags.Locale, flags.Output, flags.Verbose, err, authWarnings...)
+				)
+				mutationWarnings = append(mutationWarnings, refreshWarnings...)
+				if err != nil {
+					return emitUpstreamError(
+						cmd,
+						format,
+						profile,
+						flags.Locale,
+						flags.Output,
+						flags.Verbose,
+						err,
+						append(append([]string{}, authWarnings...), mutationWarnings...)...,
+					)
 				}
 			}
 
 			total := map[string]any{
-				"amount":           0,
-				"formatted_amount": formatMinorAmount(0, currency),
+				"amount":           fallbackTotal,
+				"formatted_amount": formatMinorAmount(fallbackTotal, currency),
 			}
-			totalItems := maxInt(0, asInt(selected["total_items"])-removeCount)
-			if countPayload, _, err := invokeWithAuthAutoRefresh(
+			totalItems := maxInt(0, basketPageItemCount(page)-removeCount)
+			if countPayload, countWarnings, err := invokeWithAuthAutoRefresh(
 				cmd.Context(),
 				deps,
 				flags,
@@ -872,9 +1036,12 @@ func newCartRemoveCommand(deps Dependencies) *cobra.Command {
 					return deps.Wolt.BasketCount(cmd.Context(), authCtx)
 				},
 			); err == nil {
-				totalItems = asInt(countPayload["count"])
+				if refreshedCount, ok := basketCountValue(countPayload); ok {
+					totalItems = refreshedCount
+				}
+				mutationWarnings = append(mutationWarnings, countWarnings...)
 			}
-			if refreshedPage, _, err := invokeWithAuthAutoRefresh(
+			if refreshedPage, pageWarnings, err := invokeWithAuthAutoRefresh(
 				cmd.Context(),
 				deps,
 				flags,
@@ -883,9 +1050,14 @@ func newCartRemoveCommand(deps Dependencies) *cobra.Command {
 					return deps.Wolt.BasketsPage(cmd.Context(), location, authCtx)
 				},
 			); err == nil {
-				state, _ := buildCartState(refreshedPage, venueID)
-				if resolvedTotal := asMap(state["total"]); resolvedTotal != nil {
-					total = resolvedTotal
+				mutationWarnings = append(mutationWarnings, pageWarnings...)
+				if strings.TrimSpace(venueResolvedID) != "" {
+					if selected, _, _ := selectBasketWithMeta(refreshedPage, venueResolvedID); selected != nil {
+						state, _ := buildCartState(refreshedPage, venueResolvedID)
+						if resolvedTotal := asMap(state["total"]); resolvedTotal != nil {
+							total = resolvedTotal
+						}
+					}
 				}
 			}
 
@@ -899,6 +1071,7 @@ func newCartRemoveCommand(deps Dependencies) *cobra.Command {
 				"total":         total,
 			}
 			selectionWarnings = append(selectionWarnings, authWarnings...)
+			selectionWarnings = append(selectionWarnings, mutationWarnings...)
 			if format == output.FormatTable {
 				return writeTable(cmd, buildCartMutationTable(data), flags.Output)
 			}
@@ -937,9 +1110,8 @@ func newCartClearCommand(deps Dependencies) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			profileName := defaultProfileName(flags.Profile)
-			auth := buildAuthContextWithProfile(cmd.Context(), deps, flags)
-			if err := requireAuth(cmd, format, profileName, flags.Locale, flags.Output, auth); err != nil {
+			auth, err := loadRequiredAuth(cmd.Context(), deps, flags, format, cmd)
+			if err != nil {
 				return err
 			}
 
@@ -983,23 +1155,55 @@ func newCartClearCommand(deps Dependencies) *cobra.Command {
 
 			basketIDs := []string{}
 			warnings := []string{}
+			selectedBasketUnresolved := false
 			if all {
-				for _, value := range asSlice(page["baskets"]) {
-					basket := asMap(value)
-					if basket == nil {
-						continue
-					}
-					basketIDs = append(basketIDs, asString(basket["id"]))
+				if !payloadutil.BasketIDsComplete(page) {
+					return emitError(
+						cmd,
+						format,
+						profile,
+						flags.Locale,
+						flags.Output,
+						"WOLT_BASKET_UNRESOLVED",
+						"Not all basket ids could be resolved; no baskets were cleared.",
+					)
 				}
+				basketIDs = payloadutil.BasketIDs(page)
 			} else {
-				selected, _, selectionWarnings := selectBasketWithMeta(page, venueID)
+				selected, _, selectionWarnings, selectionErr := selectBasketForMutationWithMeta(page, venueID)
+				if selectionErr != nil {
+					return emitError(
+						cmd,
+						format,
+						profile,
+						flags.Locale,
+						flags.Output,
+						"WOLT_BASKET_UNRESOLVED",
+						"Basket state could not be verified; no basket was cleared: "+selectionErr.Error(),
+					)
+				}
 				warnings = append(warnings, selectionWarnings...)
 				if selected != nil {
-					basketIDs = append(basketIDs, asString(selected["id"]))
+					if basketID := payloadutil.BasketID(selected); basketID != "" {
+						basketIDs = append(basketIDs, basketID)
+					} else {
+						selectedBasketUnresolved = true
+					}
 				}
 			}
 
 			if len(basketIDs) == 0 {
+				if selectedBasketUnresolved {
+					return emitError(
+						cmd,
+						format,
+						profile,
+						flags.Locale,
+						flags.Output,
+						"WOLT_BASKET_UNRESOLVED",
+						"The selected basket id is unavailable; no basket was cleared.",
+					)
+				}
 				return emitError(
 					cmd,
 					format,
@@ -1010,7 +1214,7 @@ func newCartClearCommand(deps Dependencies) *cobra.Command {
 					"No basket found to clear.",
 				)
 			}
-			if _, _, err := invokeWithAuthAutoRefresh(
+			_, deleteWarnings, err := invokeWithAuthAutoRefresh(
 				cmd.Context(),
 				deps,
 				flags,
@@ -1018,8 +1222,38 @@ func newCartClearCommand(deps Dependencies) *cobra.Command {
 				func(authCtx woltgateway.AuthContext) (map[string]any, error) {
 					return deps.Wolt.DeleteBaskets(cmd.Context(), basketIDs, authCtx)
 				},
-			); err != nil {
-				return emitUpstreamError(cmd, format, profile, flags.Locale, flags.Output, flags.Verbose, err, authWarnings...)
+			)
+			warnings = append(warnings, deleteWarnings...)
+			if err != nil {
+				return emitUpstreamError(
+					cmd,
+					format,
+					profile,
+					flags.Locale,
+					flags.Output,
+					flags.Verbose,
+					err,
+					append(append([]string{}, authWarnings...), warnings...)...,
+				)
+			}
+
+			totalItems := basketPageItemCountExcluding(page, basketIDs)
+			if all {
+				totalItems = 0
+			}
+			if countPayload, countWarnings, countErr := invokeWithAuthAutoRefresh(
+				cmd.Context(),
+				deps,
+				flags,
+				&auth,
+				func(authCtx woltgateway.AuthContext) (map[string]any, error) {
+					return deps.Wolt.BasketCount(cmd.Context(), authCtx)
+				},
+			); countErr == nil {
+				if refreshedCount, ok := basketCountValue(countPayload); ok {
+					totalItems = refreshedCount
+				}
+				warnings = append(warnings, countWarnings...)
 			}
 
 			clearedIDs := make([]any, 0, len(basketIDs))
@@ -1030,7 +1264,7 @@ func newCartClearCommand(deps Dependencies) *cobra.Command {
 				"mutation":        "clear",
 				"basket_ids":      clearedIDs,
 				"cleared_baskets": len(basketIDs),
-				"total_items":     0,
+				"total_items":     totalItems,
 				"total": map[string]any{
 					"amount":           0,
 					"formatted_amount": nil,
@@ -1058,7 +1292,33 @@ func newCartClearCommand(deps Dependencies) *cobra.Command {
 }
 
 func selectBasketWithMeta(page map[string]any, venueID string) (map[string]any, map[string]any, []string) {
-	baskets := asSlice(page["baskets"])
+	return selectBasketFromRowsWithMeta(payloadutil.BasketRows(page), venueID)
+}
+
+func selectBasketForMutationWithMeta(
+	page map[string]any,
+	venueID string,
+) (map[string]any, map[string]any, []string, error) {
+	baskets, err := payloadutil.BasketRowsForMutation(page)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if strings.TrimSpace(venueID) != "" {
+		for index, basket := range baskets {
+			identity := payloadutil.ExtractBasketVenueIdentity(basket)
+			if identity.ID == "" && identity.Slug == "" {
+				return nil, nil, nil, fmt.Errorf("basket at index %d has no venue identity", index)
+			}
+		}
+	}
+	selected, meta, warnings := selectBasketFromRowsWithMeta(baskets, venueID)
+	return selected, meta, warnings, nil
+}
+
+func selectBasketFromRowsWithMeta(
+	baskets []map[string]any,
+	venueID string,
+) (map[string]any, map[string]any, []string) {
 	warnings := []string{}
 	requestedVenueID := strings.TrimSpace(venueID)
 	meta := map[string]any{
@@ -1072,10 +1332,7 @@ func selectBasketWithMeta(page map[string]any, venueID string) (map[string]any, 
 	}
 
 	if requestedVenueID == "" {
-		selected := asMap(baskets[0])
-		if selected == nil {
-			return nil, meta, warnings
-		}
+		selected := baskets[0]
 		meta["selection_mode"] = "first-available"
 		if len(baskets) > 1 {
 			warnings = append(warnings, "multiple baskets found; using first basket (pass --venue-id to choose a specific cart)")
@@ -1084,19 +1341,14 @@ func selectBasketWithMeta(page map[string]any, venueID string) (map[string]any, 
 		return selected, meta, warnings
 	}
 
-	for _, value := range baskets {
-		basket := asMap(value)
-		if basket == nil {
-			continue
-		}
-		venue := asMap(basket["venue"])
-		if strings.TrimSpace(asString(venue["id"])) == requestedVenueID {
+	for _, basket := range baskets {
+		identity := payloadutil.ExtractBasketVenueIdentity(basket)
+		if strings.EqualFold(identity.ID, requestedVenueID) {
 			meta["selection_mode"] = "requested-venue-id"
 			meta["selected"] = buildBasketSelectionDetails(basket)
 			return basket, meta, warnings
 		}
-		venueSlug := strings.TrimSpace(asString(coalesceAny(venue["slug"], venue["venue_slug"], venue["public_slug"], venue["url_slug"])))
-		if venueSlug != "" && strings.EqualFold(venueSlug, requestedVenueID) {
+		if identity.Slug != "" && strings.EqualFold(identity.Slug, requestedVenueID) {
 			meta["selection_mode"] = "requested-venue-slug"
 			meta["selected"] = buildBasketSelectionDetails(basket)
 			return basket, meta, warnings
@@ -1108,11 +1360,12 @@ func selectBasketWithMeta(page map[string]any, venueID string) (map[string]any, 
 
 func buildBasketSelectionDetails(basket map[string]any) map[string]any {
 	venue := asMap(basket["venue"])
+	identity := payloadutil.ExtractBasketVenueIdentity(basket)
 	return map[string]any{
-		"basket_id":  asString(basket["id"]),
-		"venue_id":   asString(venue["id"]),
+		"basket_id":  payloadutil.BasketID(basket),
+		"venue_id":   identity.ID,
 		"venue_name": asString(venue["name"]),
-		"venue_slug": asString(coalesceAny(venue["slug"], venue["venue_slug"], venue["public_slug"], venue["url_slug"])),
+		"venue_slug": identity.Slug,
 	}
 }
 
@@ -1135,22 +1388,36 @@ func buildCartState(page map[string]any, venueID string) (map[string]any, []stri
 	}
 
 	venue := asMap(selected["venue"])
+	identity := payloadutil.ExtractBasketVenueIdentity(selected)
 	totalFormatted := asString(selected["total"])
 	currency := payloadutil.CurrencyFromBasket(selected)
 	items := asSlice(selected["items"])
 	lines := make([]any, 0, len(items))
 	subtotalAmount := 0
 	totalItems := 0
+	totalsValid := true
 	for _, value := range items {
 		item := asMap(value)
 		if item == nil {
 			continue
 		}
-		count := asInt(item["count"])
-		price := asInt(item["price"])
-		lineAmount := price * count
-		subtotalAmount += lineAmount
+		count := basketLineCount(item)
+		price := payloadutil.MinorAmount(item["price"])
+		lineAmount, totalErr := basketLineConfiguredTotal(item)
+		if totalErr != nil {
+			totalsValid = false
+			lineAmount = 0
+		} else if nextSubtotal, ok := payloadutil.CheckedAddInt(subtotalAmount, lineAmount); ok {
+			subtotalAmount = nextSubtotal
+		} else {
+			totalsValid = false
+			lineAmount = 0
+		}
 		totalItems += count
+		lineTotalDisplay := any(formatMinorAmount(lineAmount, currency))
+		if !totalsValid {
+			lineTotalDisplay = nil
+		}
 		lines = append(lines, map[string]any{
 			"line_id": asString(item["id"]),
 			"item_id": asString(item["id"]),
@@ -1163,13 +1430,17 @@ func buildCartState(page map[string]any, venueID string) (map[string]any, []stri
 			},
 			"line_total": map[string]any{
 				"amount":           lineAmount,
-				"formatted_amount": formatMinorAmount(lineAmount, currency),
+				"formatted_amount": lineTotalDisplay,
 			},
 		})
 	}
+	if !totalsValid {
+		subtotalAmount = 0
+		warnings = append(warnings, "basket totals exceed the supported integer range; computed totals were omitted")
+	}
 
-	totalAmount := asInt(asMap(selected["telemetry"])["basket_total"])
-	if totalAmount <= 0 {
+	totalAmount, hasTotal := nonNegativeIntValue(asMap(selected["telemetry"])["basket_total"])
+	if !hasTotal {
 		totalAmount = subtotalAmount
 	}
 	totalDisplay := totalFormatted
@@ -1178,10 +1449,10 @@ func buildCartState(page map[string]any, venueID string) (map[string]any, []stri
 	}
 
 	return map[string]any{
-		"basket_id":   asString(selected["id"]),
-		"venue_id":    asString(venue["id"]),
+		"basket_id":   payloadutil.BasketID(selected),
+		"venue_id":    identity.ID,
 		"venue_name":  asString(venue["name"]),
-		"venue_slug":  asString(coalesceAny(venue["slug"], venue["venue_slug"], venue["public_slug"], venue["url_slug"])),
+		"venue_slug":  identity.Slug,
 		"selection":   selection,
 		"currency":    currency,
 		"total_items": totalItems,
@@ -1196,6 +1467,105 @@ func buildCartState(page map[string]any, venueID string) (map[string]any, []stri
 			"formatted_amount": emptyToNil(totalDisplay),
 		},
 	}, warnings
+}
+
+func basketPageItemCountExcluding(page map[string]any, excludedBasketIDs []string) int {
+	excluded := make(map[string]struct{}, len(excludedBasketIDs))
+	for _, basketID := range excludedBasketIDs {
+		excluded[strings.ToLower(strings.TrimSpace(basketID))] = struct{}{}
+	}
+	total := 0
+	for _, basket := range payloadutil.BasketRows(page) {
+		basketID := strings.ToLower(payloadutil.BasketID(basket))
+		if _, skip := excluded[basketID]; basketID != "" && skip {
+			continue
+		}
+		total += basketItemsCount(asSlice(basket["items"]))
+	}
+	return total
+}
+
+func basketPageItemCount(page map[string]any) int {
+	return basketPageItemCountExcluding(page, nil)
+}
+
+func basketCountValue(payload map[string]any) (int, bool) {
+	raw, present := payload["count"]
+	if !present {
+		return 0, false
+	}
+	return nonNegativeIntValue(raw)
+}
+
+func nonNegativeIntValue(raw any) (int, bool) {
+	value, numeric := asFloat(raw)
+	if !numeric || value < 0 || value != float64(int(value)) {
+		return 0, false
+	}
+	return int(value), true
+}
+
+func basketItemsCount(items []any) int {
+	total := 0
+	for _, rawItem := range items {
+		total += basketLineCount(asMap(rawItem))
+	}
+	return total
+}
+
+func basketLineCount(item map[string]any) int {
+	count := asInt(item["count"])
+	if count <= 0 {
+		return 1
+	}
+	return count
+}
+
+func basketItemsSubtotal(items []any) (int, error) {
+	total := 0
+	for _, rawItem := range items {
+		lineTotal, err := basketLineConfiguredTotal(asMap(rawItem))
+		if err != nil {
+			return 0, err
+		}
+		var ok bool
+		total, ok = payloadutil.CheckedAddInt(total, lineTotal)
+		if !ok {
+			return 0, fmt.Errorf("basket subtotal exceeds the supported integer range")
+		}
+	}
+	return total, nil
+}
+
+func basketLineConfiguredTotal(item map[string]any) (int, error) {
+	count := basketLineCount(item)
+	unitAmount := payloadutil.MinorAmount(item["price"])
+	for _, rawOption := range asSlice(item["options"]) {
+		option := asMap(rawOption)
+		for _, rawValue := range asSlice(option["values"]) {
+			value := asMap(rawValue)
+			valueCount := asInt(value["count"])
+			if valueCount <= 0 {
+				valueCount = 1
+			}
+			optionAmount, ok := payloadutil.CheckedMultiplyInt(
+				payloadutil.MinorAmount(value["price"]),
+				valueCount,
+			)
+			if !ok {
+				return 0, fmt.Errorf("basket option total exceeds the supported integer range")
+			}
+			unitAmount, ok = payloadutil.CheckedAddInt(unitAmount, optionAmount)
+			if !ok {
+				return 0, fmt.Errorf("basket item unit total exceeds the supported integer range")
+			}
+		}
+	}
+	lineTotal, ok := payloadutil.CheckedMultiplyInt(unitAmount, count)
+	if !ok {
+		return 0, fmt.Errorf("basket item total exceeds the supported integer range")
+	}
+	return lineTotal, nil
 }
 
 func buildCartTable(data map[string]any, includeDetails bool) string {
@@ -1301,7 +1671,7 @@ func cartLineDetails(line map[string]any, currency string) []string {
 			if count > 1 {
 				part = fmt.Sprintf("%s x%d", label, count)
 			}
-			if extra := asInt(value["price"]); extra > 0 {
+			if extra := payloadutil.MinorAmount(value["price"]); extra > 0 {
 				if formatted := formatMinorAmount(extra, currency); formatted != "" {
 					part = fmt.Sprintf("%s (+%s)", part, formatted)
 				}
@@ -1348,72 +1718,32 @@ func findBasketLineByID(basket map[string]any, itemID string) (map[string]any, i
 		if line == nil {
 			continue
 		}
-		if strings.TrimSpace(asString(line["id"])) == target {
+		if strings.EqualFold(strings.TrimSpace(asString(line["id"])), target) {
 			return line, asInt(line["count"])
 		}
 	}
 	return nil, 0
 }
 
-func buildBasketMutationItem(line map[string]any, count int) map[string]any {
-	item := buildBasketUpsertItem(line, count)
-	item["price"] = asInt(item["price"]) * count
-	return item
-}
-
-func buildBasketUpsertItem(line map[string]any, count int) map[string]any {
-	if count <= 0 {
-		count = 1
-	}
-	price := asInt(line["price"])
-	lineOptions := make([]any, 0, len(asSlice(line["options"])))
-	for _, optionValue := range asSlice(line["options"]) {
-		option := asMap(optionValue)
-		if option == nil {
-			continue
-		}
-		values := make([]any, 0, len(asSlice(option["values"])))
-		for _, value := range asSlice(option["values"]) {
-			valueMap := asMap(value)
-			if valueMap == nil {
-				continue
-			}
-			valueCount := asInt(valueMap["count"])
-			if valueCount <= 0 {
-				valueCount = 1
-			}
-			values = append(values, map[string]any{
-				"id":    asString(valueMap["id"]),
-				"count": valueCount,
-				"price": asInt(valueMap["price"]),
-			})
-		}
-		lineOptions = append(lineOptions, map[string]any{
-			"id":     asString(option["id"]),
-			"values": values,
-		})
-	}
-	return map[string]any{
-		"id":      asString(line["id"]),
-		"count":   count,
-		"name":    asString(line["name"]),
-		"price":   price,
-		"options": lineOptions,
-		"substitution_settings": map[string]any{
-			"is_allowed": asBool(asMap(line["substitution_settings"])["is_allowed"]),
-		},
-	}
-}
-
 func needsAssortmentFallback(itemPayload map[string]any) bool {
 	if len(itemPayload) == 0 {
 		return true
 	}
-	if price := asInt(asMap(itemPayload["price"])["amount"]); price > 0 {
-		return len(extractOptionSpecs(itemPayload)) == 0
+	if payloadutil.MinorAmount(itemPayload["price"]) > 0 {
+		return !hasHydratedOptionSpecs(itemPayload)
 	}
-	if price := asInt(itemPayload["price"]); price > 0 {
-		return len(extractOptionSpecs(itemPayload)) == 0
+	return true
+}
+
+func hasHydratedOptionSpecs(payload map[string]any) bool {
+	specs := extractOptionSpecs(payload)
+	if len(specs) == 0 {
+		return false
+	}
+	for _, spec := range specs {
+		if len(spec.Values) == 0 {
+			return false
+		}
 	}
 	return true
 }
@@ -1433,10 +1763,9 @@ func mergeItemPayloadFallback(base map[string]any, fallback map[string]any) map[
 		merged["price"] = fallback["price"]
 		merged["base_price"] = fallback["base_price"]
 	}
-	if len(extractOptionSpecs(merged)) == 0 {
+	if !hasHydratedOptionSpecs(merged) && hasHydratedOptionSpecs(fallback) {
 		merged["option_groups"] = fallback["option_groups"]
 		merged["options"] = fallback["options"]
-		merged["items"] = fallback["items"]
 	}
 	return merged
 }

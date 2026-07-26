@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/mekedron/wolt-cli/internal/service/catalogitem"
+	"github.com/mekedron/wolt-cli/internal/service/payloadutil"
 )
 
 func walkObjects(node any) []map[string]any {
@@ -15,8 +16,13 @@ func walkObjects(node any) []map[string]any {
 		switch v := value.(type) {
 		case map[string]any:
 			objects = append(objects, v)
-			for _, nested := range v {
-				walk(nested)
+			keys := make([]string, 0, len(v))
+			for key := range v {
+				keys = append(keys, key)
+			}
+			sort.Strings(keys)
+			for _, key := range keys {
+				walk(v[key])
 			}
 		case []any:
 			for _, nested := range v {
@@ -159,103 +165,116 @@ func buildDerivedPriceDiscountLabel(originalAmount int, currentAmount int, curre
 }
 
 func extractOptionGroupIDs(node map[string]any) []string {
-	if ids := toSlice(node["option_group_ids"]); ids != nil {
-		out := make([]string, 0, len(ids))
-		for _, value := range ids {
-			if value == nil {
+	ids := []string{}
+	seen := map[string]struct{}{}
+	appendID := func(raw any) {
+		id := strings.TrimSpace(stringFromAny(raw))
+		key := strings.ToLower(id)
+		if id == "" {
+			return
+		}
+		if _, exists := seen[key]; exists {
+			return
+		}
+		seen[key] = struct{}{}
+		ids = append(ids, id)
+	}
+	for _, value := range toSlice(node["option_group_ids"]) {
+		appendID(value)
+	}
+	for _, alias := range []string{"option_groups", "options"} {
+		for _, rawGroup := range toSlice(node[alias]) {
+			group := toMap(rawGroup)
+			if group == nil {
 				continue
 			}
-			out = append(out, stringFromAny(value))
+			appendID(coalesce(group["group_id"], group["option_id"], group["id"]))
 		}
-		return out
-	}
-
-	groups := toSlice(node["option_groups"])
-	if groups != nil {
-		ids := make([]string, 0, len(groups))
-		for _, group := range groups {
-			groupMap := toMap(group)
-			if groupMap == nil {
-				continue
-			}
-			id := groupMap["group_id"]
-			if id == nil {
-				id = groupMap["id"]
-			}
-			if id == nil {
-				continue
-			}
-			ids = append(ids, stringFromAny(id))
-		}
-		return ids
-	}
-
-	options := toSlice(node["options"])
-	if options == nil {
-		return []string{}
-	}
-	ids := make([]string, 0, len(options))
-	for _, option := range options {
-		optionMap := toMap(option)
-		if optionMap == nil {
-			continue
-		}
-		id := optionMap["option_id"]
-		if id == nil {
-			id = optionMap["id"]
-		}
-		if id == nil {
-			continue
-		}
-		ids = append(ids, stringFromAny(id))
 	}
 	return ids
 }
 
-func extractOptionGroups(node any) []map[string]any {
-	groups := []map[string]any{}
-	for _, obj := range walkObjects(node) {
-		groupList := toSlice(obj["option_groups"])
-		if groupList == nil {
+func extractOptionGroups(node any, itemID string) []map[string]any {
+	payload := toMap(node)
+	if payload == nil {
+		return []map[string]any{}
+	}
+	target := catalogitem.Find(payload, itemID)
+	if target == nil {
+		rootID := strings.TrimSpace(stringFromAny(coalesce(payload["item_id"], payload["id"])))
+		if strings.EqualFold(rootID, strings.TrimSpace(itemID)) {
+			target = payload
+		}
+	}
+	if target == nil {
+		return []map[string]any{}
+	}
+
+	referenced := map[string]struct{}{}
+	for _, groupID := range extractOptionGroupIDs(target) {
+		referenced[strings.ToLower(groupID)] = struct{}{}
+	}
+	groups := payloadutil.MergeOptionGroups(
+		toSlice(target["options"]),
+		toSlice(target["option_groups"]),
+	)
+	rootGroups := payloadutil.MergeOptionGroups(
+		toSlice(payload["options"]),
+		toSlice(payload["option_groups"]),
+	)
+	for _, rawGroup := range rootGroups {
+		groupID := rawOptionGroupID(rawGroup)
+		if _, wanted := referenced[strings.ToLower(groupID)]; !wanted {
 			continue
 		}
-		for _, value := range groupList {
-			group := toMap(value)
-			if group == nil {
-				continue
-			}
-			id := group["group_id"]
-			if id == nil {
-				id = group["id"]
-			}
-			name, ok := group["name"].(string)
-			if !ok {
-				name, ok = group["title"].(string)
-			}
-			if !ok || id == nil {
-				continue
-			}
-			groups = append(groups, map[string]any{
-				"group_id": stringFromAny(id),
-				"name":     name,
-				"required": boolValue(group["required"]),
-				"min":      intValue(group["min"]),
-				"max":      intValue(group["max"]),
-			})
+		groups = payloadutil.MergeOptionGroups(groups, []any{rawGroup})
+	}
+	specs := payloadutil.ExtractOptionSpecs(map[string]any{"option_groups": groups})
+	groupIDs := make([]string, 0, len(specs))
+	for groupID := range specs {
+		groupIDs = append(groupIDs, groupID)
+	}
+	sort.Strings(groupIDs)
+
+	out := make([]map[string]any, 0, len(groupIDs))
+	for _, groupID := range groupIDs {
+		spec := specs[groupID]
+		valueIDs := make([]string, 0, len(spec.Values))
+		for valueID := range spec.Values {
+			valueIDs = append(valueIDs, valueID)
 		}
+		sort.Strings(valueIDs)
+		values := make([]any, 0, len(valueIDs))
+		for _, valueID := range valueIDs {
+			valueSpec := spec.Values[valueID]
+			value := map[string]any{
+				"value_id": valueID,
+				"name":     valueSpec.Name,
+			}
+			if valueSpec.HasPrice {
+				value["price"] = valueSpec.Price
+			}
+			values = append(values, value)
+		}
+		out = append(out, map[string]any{
+			"group_id": groupID,
+			"name":     spec.Name,
+			"required": spec.Required,
+			"min":      spec.MinSelect,
+			"max":      spec.MaxSelect,
+			"values":   values,
+		})
 	}
-	byID := map[string]map[string]any{}
-	for _, group := range groups {
-		byID[group["group_id"].(string)] = group
-	}
-	out := make([]map[string]any, 0, len(byID))
-	for _, group := range byID {
-		out = append(out, group)
-	}
-	sort.Slice(out, func(i, j int) bool {
-		return out[i]["group_id"].(string) < out[j]["group_id"].(string)
-	})
 	return out
+}
+
+func rawOptionGroupID(raw any) string {
+	group := toMap(raw)
+	return strings.TrimSpace(stringFromAny(coalesce(
+		group["id"],
+		group["group_id"],
+		group["option_id"],
+	)))
 }
 
 func extractUpsellItems(node any) []map[string]any {
@@ -434,13 +453,7 @@ func ExtractMenuItems(payload map[string]any, venueID string, venueSlug string) 
 		amount := extractAmount(obj)
 		currency := extractCurrency(obj)
 		originalAmount := extractOriginalAmount(obj)
-		categoryName := stringFromAny(coalesce(
-			obj["category_name"],
-			obj["category"],
-			obj["section_name"],
-			itemCategoryMap[resolvedItemID],
-			"uncategorized",
-		))
+		categoryContext := categoryContextForItem(obj, itemCategoryMap[resolvedItemID])
 		availability := catalogitem.ResolveAvailability(obj)
 		imageURLs := catalogitem.ImageURLs(obj)
 		var imageURL any
@@ -486,7 +499,7 @@ func ExtractMenuItems(payload map[string]any, venueID string, venueSlug string) 
 			}
 		}
 
-		items = append(items, map[string]any{
+		item := map[string]any{
 			"item_id":     resolvedItemID,
 			"venue_id":    resolvedVenueID,
 			"venue_slug":  resolvedVenueSlug,
@@ -503,7 +516,7 @@ func ExtractMenuItems(payload map[string]any, venueID string, venueSlug string) 
 				"formatted_amount": originalFormatted,
 			},
 			"option_group_ids": extractOptionGroupIDs(obj),
-			"category":         categoryName,
+			"category":         categoryContext.Label,
 			"is_available":     availability.IsAvailable,
 			"unavailable_reason": emptyToNil(
 				availability.Reason,
@@ -520,7 +533,18 @@ func ExtractMenuItems(payload map[string]any, venueID string, venueSlug string) 
 			"unit_price":            obj["unit_price"],
 			"sell_by_weight_config": obj["sell_by_weight_config"],
 			"discounts":             discounts,
-		})
+		}
+		if categoryContext.ID != "" {
+			item["category_id"] = categoryContext.ID
+		}
+		if categoryContext.Name != "" {
+			item["category_name"] = categoryContext.Name
+		}
+		if categoryContext.Slug != "" {
+			item["category_slug"] = categoryContext.Slug
+		}
+		copyItemLanguageVariants(item, obj)
+		items = append(items, item)
 	}
 
 	return items
@@ -607,30 +631,319 @@ func firstDiscountTextFromStringMap(payload map[string]string) string {
 	return ""
 }
 
-func categoryByItemID(payload map[string]any) map[string]any {
-	out := map[string]any{}
-	categories := toSlice(payload["categories"])
-	for _, rawCategory := range categories {
-		category := toMap(rawCategory)
-		if category == nil {
-			continue
-		}
-		categoryName := strings.TrimSpace(stringFromAny(coalesce(category["name"], category["slug"], category["id"])))
-		if categoryName == "" {
-			continue
-		}
-		for _, rawItemID := range toSlice(category["item_ids"]) {
-			itemID := strings.TrimSpace(stringFromAny(rawItemID))
-			if itemID == "" {
-				continue
+type itemCategoryContext struct {
+	ID    string
+	Slug  string
+	Name  string
+	Label string
+}
+
+func categoryContextForItem(item map[string]any, fallback itemCategoryContext) itemCategoryContext {
+	category := toMap(item["category"])
+	categoryID := firstNonEmptyValue(
+		stringFromAny(item["category_id"]),
+		stringFromAny(item["categoryId"]),
+		stringFromAny(category["id"]),
+		stringFromAny(category["_id"]),
+	)
+	if categoryID == "" {
+		for _, rawID := range toSlice(item["category_ids"]) {
+			if categoryID = strings.TrimSpace(stringFromAny(rawID)); categoryID != "" {
+				break
 			}
-			if _, exists := out[itemID]; exists {
-				continue
-			}
-			out[itemID] = categoryName
 		}
 	}
+	if categoryID == "" {
+		categoryID = fallback.ID
+	}
+
+	categorySlug := firstNonEmptyValue(
+		stringFromAny(item["category_slug"]),
+		stringFromAny(item["categorySlug"]),
+		stringFromAny(category["slug"]),
+		fallback.Slug,
+	)
+	categoryName := firstNonEmptyValue(
+		stringFromAny(item["category_name"]),
+		stringFromAny(item["categoryName"]),
+		stringFromAny(category["name"]),
+		stringFromAny(category["title"]),
+		fallback.Name,
+	)
+	legacyCategory := ""
+	if category == nil {
+		legacyCategory = strings.TrimSpace(stringFromAny(item["category"]))
+	}
+	label := firstNonEmptyValue(
+		categoryName,
+		legacyCategory,
+		stringFromAny(item["section_name"]),
+		fallback.Label,
+		categoryID,
+		"uncategorized",
+	)
+	return itemCategoryContext{ID: categoryID, Slug: categorySlug, Name: categoryName, Label: label}
+}
+
+func categoryByItemID(payload map[string]any) map[string]itemCategoryContext {
+	out := map[string]itemCategoryContext{}
+	walkPayloadCategories(payload, func(category map[string]any) {
+		context := categoryContextFromPayload(category)
+		for _, itemID := range categoryItemIDs(category) {
+			out[itemID] = mergeCategoryContext(out[itemID], context)
+		}
+	})
 	return out
+}
+
+func categoryByID(payloads []map[string]any) map[string]itemCategoryContext {
+	out := map[string]itemCategoryContext{}
+	for _, payload := range payloads {
+		walkPayloadCategories(payload, func(category map[string]any) {
+			context := categoryContextFromPayload(category)
+			if context.ID == "" {
+				return
+			}
+			out[context.ID] = mergeCategoryContext(out[context.ID], context)
+		})
+	}
+	return out
+}
+
+func enrichItemCategories(items []map[string]any, payloads []map[string]any) {
+	categories := categoryByID(payloads)
+	for _, item := range items {
+		categoryID := strings.TrimSpace(stringFromAny(item["category_id"]))
+		context, exists := categories[categoryID]
+		if categoryID == "" || !exists {
+			continue
+		}
+		categoryName := strings.TrimSpace(stringFromAny(item["category_name"]))
+		if categoryName == "" && context.Name != "" {
+			categoryName = context.Name
+			item["category_name"] = categoryName
+		}
+		label := strings.TrimSpace(stringFromAny(item["category"]))
+		if categoryName != "" &&
+			(label == "" || strings.EqualFold(label, categoryID) || strings.EqualFold(label, "uncategorized")) {
+			item["category"] = categoryName
+		}
+		if strings.TrimSpace(stringFromAny(item["category_slug"])) == "" && context.Slug != "" {
+			item["category_slug"] = context.Slug
+		}
+	}
+}
+
+func categoryContextFromPayload(category map[string]any) itemCategoryContext {
+	categoryID := firstNonEmptyValue(
+		stringFromAny(category["category_id"]),
+		stringFromAny(category["id"]),
+		stringFromAny(category["_id"]),
+	)
+	categoryName := firstNonEmptyValue(
+		stringFromAny(category["category_name"]),
+		stringFromAny(category["name"]),
+		stringFromAny(category["title"]),
+	)
+	categorySlug := strings.TrimSpace(stringFromAny(category["slug"]))
+	return itemCategoryContext{
+		ID:   categoryID,
+		Slug: categorySlug,
+		Name: categoryName,
+		Label: firstNonEmptyValue(
+			categoryName,
+			categorySlug,
+			categoryID,
+		),
+	}
+}
+
+func mergeCategoryContext(existing itemCategoryContext, incoming itemCategoryContext) itemCategoryContext {
+	if existing.ID == "" {
+		existing.ID = incoming.ID
+	}
+	if existing.Slug == "" {
+		existing.Slug = incoming.Slug
+	}
+	if existing.Name == "" {
+		existing.Name = incoming.Name
+	}
+	if existing.Label == "" {
+		existing.Label = incoming.Label
+	}
+	return existing
+}
+
+func walkPayloadCategories(payload map[string]any, visit func(map[string]any)) {
+	var walkCategory func(any)
+	walkCategory = func(raw any) {
+		category := toMap(raw)
+		if category == nil {
+			return
+		}
+		// Descendants remain authoritative when a parent repeats their items.
+		for _, key := range []string{"categories", "subcategories"} {
+			for _, child := range toSlice(category[key]) {
+				walkCategory(child)
+			}
+		}
+		visit(category)
+	}
+
+	var scan func(any)
+	scan = func(raw any) {
+		switch value := raw.(type) {
+		case map[string]any:
+			// A singular category is the endpoint-selected context and takes
+			// precedence over broader category collections. Slice order remains
+			// authoritative within each collection.
+			if category, exists := value["category"]; exists {
+				walkCategory(category)
+			}
+			for _, key := range []string{"categories", "subcategories"} {
+				for _, category := range toSlice(value[key]) {
+					walkCategory(category)
+				}
+			}
+			keys := make([]string, 0, len(value))
+			for key := range value {
+				switch key {
+				case "category", "categories", "subcategories":
+					continue
+				}
+				keys = append(keys, key)
+			}
+			sort.Strings(keys)
+			for _, key := range keys {
+				scan(value[key])
+			}
+		case []any:
+			for _, nested := range value {
+				scan(nested)
+			}
+		}
+	}
+	scan(payload)
+}
+
+func categoryItemIDs(category map[string]any) []string {
+	out := []string{}
+	seen := map[string]struct{}{}
+	appendID := func(raw any) {
+		itemID := strings.TrimSpace(stringFromAny(raw))
+		if itemID == "" {
+			return
+		}
+		if _, exists := seen[itemID]; exists {
+			return
+		}
+		seen[itemID] = struct{}{}
+		out = append(out, itemID)
+	}
+	for _, rawItemID := range toSlice(category["item_ids"]) {
+		appendID(rawItemID)
+	}
+	for _, rawItem := range toSlice(category["items"]) {
+		if item := toMap(rawItem); item != nil {
+			appendID(coalesce(item["item_id"], item["id"]))
+			continue
+		}
+		appendID(rawItem)
+	}
+	return out
+}
+
+func copyItemLanguageVariants(target map[string]any, source map[string]any) {
+	for key, value := range source {
+		if value == nil || !isItemLanguageVariantKey(key) {
+			continue
+		}
+		target[key] = value
+	}
+}
+
+func isItemLanguageVariantKey(key string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(key))
+	switch normalized {
+	case "translations",
+		"localizations",
+		"name_translations",
+		"description_translations",
+		"original_name",
+		"localized_name",
+		"name_original",
+		"name_localized",
+		"original_description",
+		"localized_description",
+		"description_original",
+		"description_localized":
+		return true
+	}
+	for _, prefix := range []string{"name_", "description_"} {
+		if !strings.HasPrefix(normalized, prefix) {
+			continue
+		}
+		suffix := strings.TrimPrefix(normalized, prefix)
+		primary := strings.Split(strings.ReplaceAll(suffix, "_", "-"), "-")[0]
+		if len(primary) < 2 || len(primary) > 3 {
+			return false
+		}
+		for _, char := range primary {
+			if char < 'a' || char > 'z' {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+// ItemMatchesQuery reports whether an item contains a query in its
+// upstream-provided display text or language variants. It never synthesizes
+// translations. Dedicated upstream search results are already authoritative
+// matches and should not be filtered again with this helper.
+func ItemMatchesQuery(item map[string]any, query string) bool {
+	needle := strings.ToLower(strings.TrimSpace(query))
+	if needle == "" {
+		return true
+	}
+	for _, key := range []string{"name", "description"} {
+		if queryTextContains(item[key], needle) {
+			return true
+		}
+	}
+	for key, value := range item {
+		if isItemLanguageVariantKey(key) && queryTextContains(value, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func queryTextContains(value any, needle string) bool {
+	switch typed := value.(type) {
+	case string:
+		return strings.Contains(strings.ToLower(typed), needle)
+	case map[string]any:
+		for _, nested := range typed {
+			if queryTextContains(nested, needle) {
+				return true
+			}
+		}
+	case map[string]string:
+		for _, nested := range typed {
+			if queryTextContains(nested, needle) {
+				return true
+			}
+		}
+	case []any:
+		for _, nested := range typed {
+			if queryTextContains(nested, needle) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func emptyToNil(v string) any {

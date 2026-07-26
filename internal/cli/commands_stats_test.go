@@ -14,6 +14,7 @@ func TestResolveStatsDirPrecedence(t *testing.T) {
 	t.Setenv(envStatsDir, "")
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 
 	t.Run("default falls back to ~/.wolt/stats", func(t *testing.T) {
 		dir, err := resolveStatsDir("")

@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
+	"time"
 
 	"github.com/mekedron/wolt-cli/internal/domain"
 )
@@ -15,6 +17,7 @@ const (
 	defaultDirName  = ".wolt"
 	defaultFileName = ".wolt-config.json"
 	envConfigPath   = "WOLT_CONFIG_PATH"
+	lockRetryDelay  = 25 * time.Millisecond
 )
 
 var (
@@ -27,7 +30,12 @@ var (
 // Store loads and writes profile configuration.
 type Store struct {
 	path string
+	mu   sync.RWMutex
 }
+
+// Mutator updates a configuration while Store holds its cross-process write
+// lock. It returns whether the resulting configuration should be persisted.
+type Mutator func(cfg *domain.Config) (bool, error)
 
 // NewStore creates a store using env overrides or defaults.
 func NewStore() (*Store, error) {
@@ -48,7 +56,14 @@ func (s *Store) Path() string {
 
 // Load reads and validates configuration.
 func (s *Store) Load(_ context.Context) (domain.Config, error) {
-	payload, err := os.ReadFile(s.path)
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	return s.loadUnlocked()
+}
+
+func (s *Store) loadUnlocked() (domain.Config, error) {
+	payload, err := readConfigFile(s.path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return domain.Config{}, ErrConfigNotFound
@@ -92,10 +107,61 @@ func normalizeSingleAccountConfig(cfg domain.Config) (domain.Config, error) {
 }
 
 // Save writes a configuration payload.
-func (s *Store) Save(_ context.Context, cfg domain.Config) error {
+func (s *Store) Save(ctx context.Context, cfg domain.Config) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	release, err := s.acquireWriteLock(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return s.saveUnlocked(cfg)
+}
+
+// Update applies a read-modify-write transaction under both the in-process
+// mutex and a cross-process lock. A missing file is presented as an empty
+// Config so explicit login can create it atomically.
+func (s *Store) Update(ctx context.Context, mutate Mutator) error {
+	if mutate == nil {
+		return fmt.Errorf("config mutator is nil")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	release, err := s.acquireWriteLock(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+
+	cfg, err := s.loadUnlocked()
+	if err != nil {
+		if !errors.Is(err, ErrConfigNotFound) {
+			return err
+		}
+		cfg = domain.Config{}
+	}
+	changed, err := mutate(&cfg)
+	if err != nil {
+		return err
+	}
+	if !changed {
+		return nil
+	}
+	return s.saveUnlocked(cfg)
+}
+
+func (s *Store) saveUnlocked(cfg domain.Config) error {
 	normalized, err := normalizeSingleAccountConfig(cfg)
 	if err != nil {
 		return err
+	}
+	if !accountHasData(normalized.Account) {
+		if err := os.Remove(s.path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("remove empty config: %w", err)
+		}
+		return nil
 	}
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
 		return fmt.Errorf("create config directory: %w", err)
@@ -104,11 +170,62 @@ func (s *Store) Save(_ context.Context, cfg domain.Config) error {
 	if err != nil {
 		return fmt.Errorf("marshal config: %w", err)
 	}
-	if err := os.WriteFile(s.path, payload, 0o600); err != nil {
-		return fmt.Errorf("write config: %w", err)
+	temp, err := os.CreateTemp(filepath.Dir(s.path), "."+filepath.Base(s.path)+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("create temporary config: %w", err)
+	}
+	tempPath := temp.Name()
+	defer func() {
+		_ = temp.Close()
+		_ = os.Remove(tempPath)
+	}()
+	if err := temp.Chmod(0o600); err != nil {
+		return fmt.Errorf("secure temporary config: %w", err)
+	}
+	if _, err := temp.Write(payload); err != nil {
+		return fmt.Errorf("write temporary config: %w", err)
+	}
+	if err := temp.Sync(); err != nil {
+		return fmt.Errorf("sync temporary config: %w", err)
+	}
+	if err := temp.Close(); err != nil {
+		return fmt.Errorf("close temporary config: %w", err)
+	}
+	if err := replaceFile(tempPath, s.path); err != nil {
+		return fmt.Errorf("replace config: %w", err)
 	}
 	_ = os.Chmod(s.path, 0o600)
 	return nil
+}
+
+func (s *Store) acquireWriteLock(ctx context.Context) (func(), error) {
+	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
+		return nil, fmt.Errorf("create config directory: %w", err)
+	}
+	lockPath := s.path + ".lock"
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		release, acquired, err := tryAcquireConfigFileLock(lockPath)
+		if err != nil {
+			return nil, fmt.Errorf("acquire config lock: %w", err)
+		}
+		if acquired {
+			return func() {
+				_ = release()
+			}, nil
+		}
+		timer := time.NewTimer(lockRetryDelay)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
+	}
 }
 
 func accountHasData(account domain.Account) bool {

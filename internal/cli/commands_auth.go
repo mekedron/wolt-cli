@@ -26,8 +26,11 @@ func newAuthStatusCommand(deps Dependencies) *cobra.Command {
 
 			profileName := defaultProfileName(flags.Profile)
 
-			auth := buildAuthContextWithProfile(cmd.Context(), deps, flags)
-			if !auth.HasCredentials() {
+			auth, err := loadAuthContextWithProfile(cmd.Context(), deps, flags)
+			if err != nil {
+				return profileError(err, format, profileName, flags.Locale, flags.Output, cmd)
+			}
+			if !auth.CanAuthenticate() {
 				data := map[string]any{
 					"authenticated":        false,
 					"user_id":              "",

@@ -26,7 +26,6 @@ const (
 	defaultAssortmentAPIURL     = "https://consumer-api.wolt.com/consumer-api/consumer-assortment/v1/venues/slug/"
 	defaultVenueContentAPIURL   = "https://consumer-api.wolt.com/consumer-api/venue-content-api/v3/web/venue-content/slug/"
 	defaultVenueItemAPIURL      = "https://consumer-api.wolt.com/order-xp/web/v1/pages/venue/"
-	defaultRestaurantAPIURL     = "https://restaurant-api.wolt.com/v3/venues/"
 	defaultUserMeAPIURL         = "https://restaurant-api.wolt.com/v1/user/me"
 	defaultPaymentMethodsAPIURL = "https://restaurant-api.wolt.com/v3/user/me/payment_methods"
 	defaultPaymentProfileAPIURL = "https://payment-service.wolt.com/v1/payment-methods/profile"
@@ -78,6 +77,10 @@ var defaultPaymentProfileAvailableMethods = []string{
 // ErrUpstream indicates Wolt API failure.
 var ErrUpstream = errors.New("[Wolt] error when trying to get response from wolt api")
 
+// ErrInvalidResponse indicates that a response body could not be read or
+// decoded, or that a success payload failed validation.
+var ErrInvalidResponse = errors.New("invalid response from Wolt API")
+
 // HTTPClient is implemented by http.Client.
 type HTTPClient interface {
 	Do(req *http.Request) (*http.Response, error)
@@ -92,7 +95,6 @@ type Endpoints struct {
 	Assortment       string
 	VenueContent     string
 	VenueItem        string
-	Restaurant       string
 	UserMe           string
 	PaymentMethods   string
 	PaymentProfile   string
@@ -176,7 +178,6 @@ func NewClient(opts ...Option) *Client {
 			Assortment:       defaultAssortmentAPIURL,
 			VenueContent:     defaultVenueContentAPIURL,
 			VenueItem:        defaultVenueItemAPIURL,
-			Restaurant:       defaultRestaurantAPIURL,
 			UserMe:           defaultUserMeAPIURL,
 			PaymentMethods:   defaultPaymentMethodsAPIURL,
 			PaymentProfile:   defaultPaymentProfileAPIURL,
@@ -295,7 +296,7 @@ func (c *Client) doJSONRequest(ctx context.Context, method, rawURL string, param
 			Method:     method,
 			URL:        rawURL,
 			StatusCode: res.StatusCode,
-			Cause:      fmt.Errorf("read response body: %w", err),
+			Cause:      fmt.Errorf("%w: read response body: %w", ErrInvalidResponse, err),
 		}
 		c.traceRequestDone(method, rawURL, res.StatusCode, 0, startedAt, upstreamErr)
 		return nil, upstreamErr
@@ -324,7 +325,7 @@ func (c *Client) doJSONRequest(ctx context.Context, method, rawURL string, param
 			URL:        rawURL,
 			StatusCode: res.StatusCode,
 			Body:       string(rawResponse),
-			Cause:      fmt.Errorf("decode response body: %w", err),
+			Cause:      fmt.Errorf("%w: decode response body: %w", ErrInvalidResponse, err),
 		}
 		c.traceRequestDone(method, rawURL, res.StatusCode, len(rawResponse), startedAt, upstreamErr)
 		return nil, upstreamErr
@@ -440,7 +441,7 @@ func decodeResponsePayload(method string, rawURL string, statusCode int, rawResp
 			URL:        rawURL,
 			StatusCode: statusCode,
 			Body:       string(rawResponse),
-			Cause:      fmt.Errorf("decode response body: %w", err),
+			Cause:      fmt.Errorf("%w: decode response body: %w", ErrInvalidResponse, err),
 		}
 	}
 	return payload, nil
@@ -453,7 +454,7 @@ func readResponseBody(res *http.Response, method string, rawURL string) ([]byte,
 			Method:     method,
 			URL:        rawURL,
 			StatusCode: res.StatusCode,
-			Cause:      fmt.Errorf("read response body: %w", err),
+			Cause:      fmt.Errorf("%w: read response body: %w", ErrInvalidResponse, err),
 		}
 	}
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
@@ -539,11 +540,11 @@ func (c *Client) Sections(ctx context.Context, location domain.Location) ([]doma
 	}
 	sectionsRaw, ok := payload["sections"]
 	if !ok {
-		return nil, fmt.Errorf("%w: missing sections", ErrUpstream)
+		return nil, fmt.Errorf("%w: %w: missing sections", ErrUpstream, ErrInvalidResponse)
 	}
 	sections, err := decodeAny[[]domain.Section](sectionsRaw)
 	if err != nil {
-		return nil, fmt.Errorf("decode sections: %w", err)
+		return nil, fmt.Errorf("%w: %w: decode sections: %w", ErrUpstream, ErrInvalidResponse, err)
 	}
 	return sections, nil
 }
@@ -570,30 +571,6 @@ func (c *Client) Items(ctx context.Context, location domain.Location) ([]domain.
 		}
 	}
 	return items, nil
-}
-
-func (c *Client) restaurant(ctx context.Context, venueID string) (*domain.Restaurant, error) {
-	payload, err := c.doJSONRequest(ctx, http.MethodGet, c.endpoints.Restaurant+venueID, nil, nil, c.headers(nil, nil))
-	if err != nil {
-		return nil, err
-	}
-	resultsRaw, ok := payload["results"]
-	if !ok {
-		return nil, fmt.Errorf("%w: missing results", ErrUpstream)
-	}
-	results, err := decodeAny[[]domain.Restaurant](resultsRaw)
-	if err != nil {
-		return nil, fmt.Errorf("decode restaurant: %w", err)
-	}
-	if len(results) == 0 {
-		return nil, fmt.Errorf("%w: empty results", ErrUpstream)
-	}
-	return &results[0], nil
-}
-
-// RestaurantByID loads a detailed restaurant payload.
-func (c *Client) RestaurantByID(ctx context.Context, venueID string) (*domain.Restaurant, error) {
-	return c.restaurant(ctx, venueID)
 }
 
 // Search returns raw search endpoint payload.
@@ -996,7 +973,7 @@ func (c *Client) RefreshAccessToken(ctx context.Context, refreshToken string, au
 	}
 
 	if strings.TrimSpace(accessToken) == "" {
-		return TokenRefreshResult{}, fmt.Errorf("%w: refresh response missing access_token", ErrUpstream)
+		return TokenRefreshResult{}, fmt.Errorf("%w: %w: refresh response missing access_token", ErrUpstream, ErrInvalidResponse)
 	}
 	if strings.TrimSpace(resolvedRefreshToken) == "" {
 		resolvedRefreshToken = refreshToken

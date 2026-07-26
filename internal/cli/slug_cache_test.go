@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -43,7 +44,7 @@ func TestSlugCacheRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected cache file on disk, got error: %v", err)
 	}
-	if mode := info.Mode().Perm(); mode != 0o600 {
+	if mode := info.Mode().Perm(); runtime.GOOS != "windows" && mode != 0o600 {
 		t.Fatalf("expected 0600 perms, got %#o", mode)
 	}
 }

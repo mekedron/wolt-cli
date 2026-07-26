@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -127,8 +129,68 @@ func TestEmitUpstreamErrorFormatting(t *testing.T) {
 	if !errors.As(err, &exitErr) || exitErr.code != 1 {
 		t.Fatalf("expected controlled exit error, got %v", err)
 	}
-	if got := buf.String(); !strings.Contains(got, "status 500") {
-		t.Fatalf("expected status 500 hint for non-auth errors, got %q", got)
+	if got := buf.String(); !strings.Contains(got, "temporarily unavailable") {
+		t.Fatalf("expected friendly temporary-error hint, got %q", got)
+	}
+}
+
+func TestEmitUpstreamErrorKeepsCodeStableInVerboseMode(t *testing.T) {
+	upstreamErr := &woltgateway.UpstreamRequestError{
+		Method:     "GET",
+		URL:        "https://example.invalid/private",
+		StatusCode: 503,
+		Body:       "diagnostic body",
+	}
+
+	codes := make([]string, 0, 2)
+	messages := make([]string, 0, 2)
+	for _, verbose := range []bool{false, true} {
+		cmd := &cobra.Command{}
+		buf := &bytes.Buffer{}
+		cmd.SetOut(buf)
+		err := emitUpstreamError(
+			cmd,
+			output.FormatJSON,
+			"default",
+			"en-FI",
+			"",
+			verbose,
+			upstreamErr,
+		)
+		var exitErr *exitError
+		if !errors.As(err, &exitErr) || exitErr.code != 1 {
+			t.Fatalf("verbose=%v: expected controlled exit error, got %v", verbose, err)
+		}
+		var envelope struct {
+			Error map[string]any `json:"error"`
+		}
+		if err := json.Unmarshal(buf.Bytes(), &envelope); err != nil {
+			t.Fatalf("verbose=%v: decode output: %v", verbose, err)
+		}
+		codes = append(codes, asString(envelope.Error["code"]))
+		messages = append(messages, asString(envelope.Error["message"]))
+	}
+
+	if codes[0] != "WOLT_UPSTREAM_TEMPORARY" || codes[1] != codes[0] {
+		t.Fatalf("codes = %v, want stable WOLT_UPSTREAM_TEMPORARY", codes)
+	}
+	if strings.Contains(messages[0], upstreamErr.URL) {
+		t.Fatalf("non-verbose message leaked request URL: %q", messages[0])
+	}
+	if !strings.Contains(messages[1], upstreamErr.URL) ||
+		!strings.Contains(messages[1], upstreamErr.Body) {
+		t.Fatalf("verbose message omitted diagnostics: %q", messages[1])
+	}
+}
+
+func TestClassifyCLIUpstreamInvalidSuccessResponse(t *testing.T) {
+	err := &woltgateway.UpstreamRequestError{
+		StatusCode: 200,
+		Cause:      woltgateway.ErrInvalidResponse,
+	}
+	code, _, ok := classifyCLIUpstreamError(err, false)
+	if !ok || code != "WOLT_UPSTREAM_INVALID_RESPONSE" {
+		t.Fatalf("classification = (%q, %v), want WOLT_UPSTREAM_INVALID_RESPONSE", code, ok)
 	}
 }
 
@@ -402,8 +464,12 @@ func TestOpenBrowserDispatchesPerPlatform(t *testing.T) {
 	prev := browserOpenCommand
 	t.Cleanup(func() { browserOpenCommand = prev })
 
+	testExecutable, err := os.Executable()
+	if err != nil {
+		t.Fatalf("resolve test executable: %v", err)
+	}
 	browserOpenCommand = func(target string) (string, []string, error) {
-		return "echo", []string{"--launched", target}, nil
+		return testExecutable, []string{"-test.run=^$"}, nil
 	}
 
 	if err := openBrowser(context.Background(), "https://example.test"); err != nil {
@@ -414,7 +480,7 @@ func TestOpenBrowserDispatchesPerPlatform(t *testing.T) {
 	browserOpenCommand = func(target string) (string, []string, error) {
 		capturedName = "stub"
 		capturedArgs = []string{target}
-		return "echo", []string{target}, nil
+		return testExecutable, []string{"-test.run=^$"}, nil
 	}
 	if err := openBrowser(context.Background(), "https://example.test"); err != nil {
 		t.Fatalf("openBrowser stub returned error: %v", err)

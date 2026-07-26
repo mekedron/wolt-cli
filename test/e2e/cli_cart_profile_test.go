@@ -12,6 +12,17 @@ import (
 	woltgateway "github.com/mekedron/wolt-cli/internal/gateway/wolt"
 )
 
+const (
+	primaryBasketVenueID   = "5f9a1b2c3d4e5f6071829304"
+	secondaryBasketVenueID = "5f9a1b2c3d4e5f6071829305"
+)
+
+func selectedStandardDeliveryConfigs() []any {
+	return []any{
+		map[string]any{"type": "standard", "selected": true},
+	}
+}
+
 func TestAuthStatusJSONWithToken(t *testing.T) {
 	seenToken := ""
 	seenSubscriptionsToken := ""
@@ -216,7 +227,7 @@ func TestAuthStatusUsesProfileCookieTokenWhenFlagMissing(t *testing.T) {
 	}
 }
 
-func TestAuthStatusAutoRefreshesExpiredTokenAndPersistsProfile(t *testing.T) {
+func TestAuthStatusAutoRefreshPersistsAccessOnly(t *testing.T) {
 	cfg := &recordingConfig{
 		loadCfg: domain.Config{
 			Profiles: []domain.Profile{
@@ -275,18 +286,11 @@ func TestAuthStatusAutoRefreshesExpiredTokenAndPersistsProfile(t *testing.T) {
 	if userMeCalls != 2 {
 		t.Fatalf("expected two user/me attempts (before and after refresh), got %d", userMeCalls)
 	}
-	if cfg.saved == nil {
-		t.Fatal("expected rotated tokens to be persisted in config")
-	}
-	savedProfile := cfg.saved.Profiles[0]
-	if savedProfile.WToken != "rotated-token" {
-		t.Fatalf("expected persisted wtoken rotated-token, got %q", savedProfile.WToken)
-	}
-	// The rotated refresh token must NOT be persisted — see
-	// upsertProfileTokens. We pin the bootstrap value, mirroring how
-	// wolt.com's __wrtoken cookie never gets rewritten after a refresh.
-	if savedProfile.WRefreshToken != "refresh-old" {
-		t.Fatalf("expected bootstrap wrefresh_token to remain refresh-old, got %q", savedProfile.WRefreshToken)
+	if cfg.saved == nil ||
+		len(cfg.saved.Profiles) != 1 ||
+		cfg.saved.Profiles[0].WToken != "rotated-token" ||
+		cfg.saved.Profiles[0].WRefreshToken != "refresh-old" {
+		t.Fatalf("automatic refresh persisted unexpected credentials: %+v", cfg.saved)
 	}
 
 	payload := mustJSON(t, out)
@@ -494,9 +498,6 @@ func TestCartAddAcceptsWoltItemURL(t *testing.T) {
 	var capturedItemID string
 	deps := cli.Dependencies{
 		Wolt: &mockWolt{
-			restaurantByIDFunc: func(_ context.Context, id string) (*domain.Restaurant, error) {
-				return &domain.Restaurant{ID: id, Slug: "bastard-burgers-mikonkatu"}, nil
-			},
 			venuePageStaticFunc: func(_ context.Context, slug string) (map[string]any, error) {
 				return map[string]any{"venue": map[string]any{"id": "6348098a9157ab2b10bdaf65"}}, nil
 			},
@@ -725,9 +726,17 @@ func TestCartAddRejectsBrokenURL(t *testing.T) {
 }
 
 func TestCartAddUsesVenueSlugAssortmentFallback(t *testing.T) {
+	const venueID = "6348098a9157ab2b10bdaf65"
 	seenAddPayload := map[string]any{}
 	deps := cli.Dependencies{
 		Wolt: &mockWolt{
+			venuePageStaticFunc: func(_ context.Context, reference string) (map[string]any, error) {
+				venue := map[string]any{"id": venueID}
+				if reference == "venue-slug" {
+					venue["slug"] = reference
+				}
+				return map[string]any{"venue": venue}, nil
+			},
 			venueItemPageFunc: func(context.Context, string, string) (map[string]any, error) {
 				return nil, errors.New("item endpoint unavailable")
 			},
@@ -740,9 +749,6 @@ func TestCartAddUsesVenueSlugAssortmentFallback(t *testing.T) {
 						"purchasable_balance": 10,
 					},
 				}}, nil
-			},
-			restaurantByIDFunc: func(context.Context, string) (*domain.Restaurant, error) {
-				return nil, errors.New("restaurant endpoint unavailable")
 			},
 			assortmentBySlugFunc: func(context.Context, string) (map[string]any, error) {
 				return map[string]any{
@@ -767,7 +773,7 @@ func TestCartAddUsesVenueSlugAssortmentFallback(t *testing.T) {
 			},
 			addToBasketFunc: func(_ context.Context, payload map[string]any, _ woltgateway.AuthContext) (map[string]any, error) {
 				seenAddPayload = payload
-				return map[string]any{"id": "basket-1", "venue_id": "6348098a9157ab2b10bdaf65"}, nil
+				return map[string]any{"id": "basket-1", "venue_id": venueID}, nil
 			},
 			basketCountFunc: func(context.Context, woltgateway.AuthContext) (map[string]any, error) {
 				return map[string]any{"count": 1}, nil
@@ -778,7 +784,7 @@ func TestCartAddUsesVenueSlugAssortmentFallback(t *testing.T) {
 						map[string]any{
 							"id":    "basket-1",
 							"total": "€17.00",
-							"venue": map[string]any{"id": "6348098a9157ab2b10bdaf65", "slug": "venue-1"},
+							"venue": map[string]any{"id": venueID, "slug": "venue-slug"},
 							"items": []any{
 								map[string]any{"id": "line-1", "name": "Classics set", "count": 1, "price": 1700, "options": []any{}},
 							},
@@ -799,7 +805,7 @@ func TestCartAddUsesVenueSlugAssortmentFallback(t *testing.T) {
 		deps,
 		"cart",
 		"add",
-		"venue-1",
+		venueID,
 		"item-1",
 		"--venue-slug",
 		"venue-slug",
@@ -1032,6 +1038,9 @@ func TestCartAddBlocksUnavailableItemEvenWithOverrides(t *testing.T) {
 					},
 				}}, nil
 			},
+			basketsPageFunc: func(context.Context, domain.Location, woltgateway.AuthContext) (map[string]any, error) {
+				return map[string]any{"baskets": []any{}}, nil
+			},
 			addToBasketFunc: func(context.Context, map[string]any, woltgateway.AuthContext) (map[string]any, error) {
 				addCalled = true
 				return map[string]any{}, nil
@@ -1078,7 +1087,7 @@ func TestCartRemoveJSON(t *testing.T) {
 						map[string]any{
 							"id":    "basket-1",
 							"total": "€34.00",
-							"venue": map[string]any{"id": "venue-1"},
+							"venue": map[string]any{"id": primaryBasketVenueID},
 							"items": []any{
 								map[string]any{
 									"id":    "item-1",
@@ -1102,7 +1111,7 @@ func TestCartRemoveJSON(t *testing.T) {
 			},
 			addToBasketFunc: func(_ context.Context, payload map[string]any, _ woltgateway.AuthContext) (map[string]any, error) {
 				seenPayload = payload
-				return map[string]any{"id": "basket-1", "venue_id": "venue-1"}, nil
+				return map[string]any{"id": "basket-1", "venue_id": primaryBasketVenueID}, nil
 			},
 			basketCountFunc: func(context.Context, woltgateway.AuthContext) (map[string]any, error) {
 				return map[string]any{"count": 1}, nil
@@ -1125,6 +1134,9 @@ func TestCartRemoveJSON(t *testing.T) {
 	}
 	if asIntPayload(asMapPayload(t, items[0])["count"]) != 1 {
 		t.Fatalf("expected remaining item count 1, got %v", asMapPayload(t, items[0])["count"])
+	}
+	if seenPayload["venue_id"] != primaryBasketVenueID {
+		t.Fatalf("expected canonical venue_id %s, got %v", primaryBasketVenueID, seenPayload["venue_id"])
 	}
 
 	payload := mustJSON(t, out)
@@ -1236,7 +1248,7 @@ func TestCheckoutPreviewJSON(t *testing.T) {
 						map[string]any{
 							"id":    "basket-1",
 							"total": "€17.00",
-							"venue": map[string]any{"id": "venue-1", "country": "FIN", "slug": "venue-1-slug"},
+							"venue": map[string]any{"id": primaryBasketVenueID, "country": "FIN", "slug": "venue-1-slug"},
 							"items": []any{
 								map[string]any{
 									"id":    "item-1",
@@ -1246,7 +1258,7 @@ func TestCheckoutPreviewJSON(t *testing.T) {
 										map[string]any{
 											"id": "group-1",
 											"values": []any{
-												map[string]any{"id": "value-1", "count": 1},
+												map[string]any{"id": "value-1", "count": 1, "price": 100},
 											},
 										},
 									},
@@ -1294,7 +1306,7 @@ func TestCheckoutPreviewJSON(t *testing.T) {
 							},
 						},
 					},
-					"delivery_configs": []any{},
+					"delivery_configs": selectedStandardDeliveryConfigs(),
 					"offers":           map[string]any{"selectable": []any{}, "applied": []any{}},
 					"tip_config":       map[string]any{"min_amount": 50},
 				}, nil
@@ -1342,8 +1354,8 @@ func TestCheckoutPreviewJSON(t *testing.T) {
 	if data["basket_id"] != "basket-1" {
 		t.Fatalf("expected basket_id basket-1, got %v", data["basket_id"])
 	}
-	if data["venue_id"] != "venue-1" {
-		t.Fatalf("expected venue_id venue-1, got %v", data["venue_id"])
+	if data["venue_id"] != primaryBasketVenueID {
+		t.Fatalf("expected venue_id %s, got %v", primaryBasketVenueID, data["venue_id"])
 	}
 	selection := asMapPayload(t, data["selection"])
 	if selection["selection_mode"] != "first-available" {
@@ -1370,7 +1382,7 @@ func TestCheckoutPreviewUsesVenuePayloadCategoryFallback(t *testing.T) {
 						map[string]any{
 							"id":    "basket-1",
 							"total": "€17.00",
-							"venue": map[string]any{"id": "venue-1", "country": "FIN", "slug": "venue-1-slug"},
+							"venue": map[string]any{"id": primaryBasketVenueID, "country": "FIN", "slug": "venue-1-slug"},
 							"items": []any{
 								map[string]any{
 									"id":      "item-1",
@@ -1402,8 +1414,9 @@ func TestCheckoutPreviewUsesVenuePayloadCategoryFallback(t *testing.T) {
 			checkoutPreviewFunc: func(_ context.Context, payload map[string]any, _ woltgateway.AuthContext) (map[string]any, error) {
 				seenPayload = payload
 				return map[string]any{
-					"payable_amount": 1700,
-					"checkout_rows":  []any{},
+					"payable_amount":   1700,
+					"checkout_rows":    []any{},
+					"delivery_configs": selectedStandardDeliveryConfigs(),
 				}, nil
 			},
 		},
@@ -1428,7 +1441,7 @@ func TestCheckoutPreviewUsesVenuePayloadCategoryFallback(t *testing.T) {
 	}
 }
 
-func TestCheckoutPreviewFallsBackCategoryToItemID(t *testing.T) {
+func TestCheckoutPreviewUsesItemCategory(t *testing.T) {
 	seenPayload := map[string]any{}
 	deps := cli.Dependencies{
 		Wolt: &mockWolt{
@@ -1438,7 +1451,7 @@ func TestCheckoutPreviewFallsBackCategoryToItemID(t *testing.T) {
 						map[string]any{
 							"id":    "basket-1",
 							"total": "€17.00",
-							"venue": map[string]any{"id": "venue-1", "country": "FIN", "slug": "venue-1-slug"},
+							"venue": map[string]any{"id": primaryBasketVenueID, "country": "FIN", "slug": "venue-1-slug"},
 							"items": []any{
 								map[string]any{
 									"id":      "693f837c465e0fe77eef4630",
@@ -1453,14 +1466,16 @@ func TestCheckoutPreviewFallsBackCategoryToItemID(t *testing.T) {
 			},
 			venueItemPageFunc: func(context.Context, string, string) (map[string]any, error) {
 				return map[string]any{
-					"id": "693f837c465e0fe77eef4630",
+					"id":          "693f837c465e0fe77eef4630",
+					"category_id": "category-a",
 				}, nil
 			},
 			checkoutPreviewFunc: func(_ context.Context, payload map[string]any, _ woltgateway.AuthContext) (map[string]any, error) {
 				seenPayload = payload
 				return map[string]any{
-					"payable_amount": 1700,
-					"checkout_rows":  []any{},
+					"payable_amount":   1700,
+					"checkout_rows":    []any{},
+					"delivery_configs": selectedStandardDeliveryConfigs(),
 				}, nil
 			},
 		},
@@ -1481,21 +1496,16 @@ func TestCheckoutPreviewFallsBackCategoryToItemID(t *testing.T) {
 		t.Fatalf("expected one menu item, got %d", len(menuItems))
 	}
 	firstItem := asMapPayload(t, menuItems[0])
-	if firstItem["category_id"] != "693f837c465e0fe77eef4630" {
-		t.Fatalf("expected category fallback to item id, got %v", firstItem["category_id"])
+	if firstItem["category_id"] != "category-a" {
+		t.Fatalf("expected item category_id category-a, got %v", firstItem["category_id"])
 	}
 
 	payload := mustJSON(t, out)
 	warnings := asSlicePayload(t, payload["warnings"])
-	found := false
 	for _, warning := range warnings {
 		if strings.Contains(asStringPayload(warning), "falling back to item id") {
-			found = true
-			break
+			t.Fatalf("unexpected fabricated-category warning: %v", warnings)
 		}
-	}
-	if !found {
-		t.Fatalf("expected fallback warning, got %v", warnings)
 	}
 }
 
@@ -1508,7 +1518,7 @@ func TestCheckoutPreviewMultipleBasketsSelectionWarning(t *testing.T) {
 						map[string]any{
 							"id":    "basket-1",
 							"total": "€17.00",
-							"venue": map[string]any{"id": "venue-1", "country": "FIN", "slug": "venue-1-slug"},
+							"venue": map[string]any{"id": primaryBasketVenueID, "country": "FIN", "slug": "venue-1-slug"},
 							"items": []any{
 								map[string]any{"id": "item-1", "count": 1, "price": 1700, "options": []any{}},
 							},
@@ -1516,7 +1526,7 @@ func TestCheckoutPreviewMultipleBasketsSelectionWarning(t *testing.T) {
 						map[string]any{
 							"id":    "basket-2",
 							"total": "€12.00",
-							"venue": map[string]any{"id": "venue-2", "country": "FIN", "slug": "venue-2-slug"},
+							"venue": map[string]any{"id": secondaryBasketVenueID, "country": "FIN", "slug": "venue-2-slug"},
 							"items": []any{
 								map[string]any{"id": "item-2", "count": 1, "price": 1200, "options": []any{}},
 							},
@@ -1540,8 +1550,9 @@ func TestCheckoutPreviewMultipleBasketsSelectionWarning(t *testing.T) {
 			},
 			checkoutPreviewFunc: func(_ context.Context, _ map[string]any, _ woltgateway.AuthContext) (map[string]any, error) {
 				return map[string]any{
-					"payable_amount": 1700,
-					"checkout_rows":  []any{},
+					"payable_amount":   1700,
+					"checkout_rows":    []any{},
+					"delivery_configs": selectedStandardDeliveryConfigs(),
 				}, nil
 			},
 		},

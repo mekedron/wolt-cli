@@ -1,6 +1,7 @@
 package observability_test
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -74,6 +75,168 @@ func TestBuildVenueSearchResultFiltersQuery(t *testing.T) {
 	}
 }
 
+func TestDiscoveryRowsExposeScheduledOrderingSignals(t *testing.T) {
+	online := false
+	delivers := false
+	item := domain.Item{
+		Title: "Closed scheduled venue",
+		Link:  domain.Link{Target: "venue-1"},
+		OverlayV2: map[string]any{
+			"telemetry_status": "scheduled_order__without_time",
+			"primary_text":     "Next opening at 10:00",
+			"next_open":        "2030-01-15T10:00:00Z",
+		},
+		Venue: &domain.Venue{
+			ID:       "venue-1",
+			Slug:     "closed-scheduled-venue",
+			Online:   &online,
+			Delivers: &delivers,
+		},
+	}
+
+	assertAvailability := func(t *testing.T, row map[string]any) {
+		t.Helper()
+		if row["order_now_available"] != false ||
+			row["scheduled_order_available"] != true ||
+			row["scheduled_pickup_available"] != nil ||
+			row["scheduled_only"] != true ||
+			row["delivers_to_location"] != true {
+			t.Fatalf("availability fields = %#v", row)
+		}
+		if row["next_opening_at"] != "2030-01-15T10:00:00Z" ||
+			row["status_text"] != "Next opening at 10:00" ||
+			row["telemetry_status"] != "scheduled_order__without_time" {
+			t.Fatalf("status fields = %#v", row)
+		}
+	}
+
+	feed := observability.BuildDiscoveryFeed(
+		[]domain.Section{{Name: "scheduled", Items: []domain.Item{item}}},
+		"Test area",
+		nil,
+		false,
+	)
+	sections := asSlice(t, feed["sections"])
+	feedRows := asSlice(t, asMap(t, sections[0])["items"])
+	assertAvailability(t, asMap(t, feedRows[0]))
+
+	search, warnings := observability.BuildVenueSearchResult(
+		[]domain.Item{item},
+		"scheduled",
+		observability.VenueSortRecommended,
+		nil,
+		"",
+		false,
+		false,
+		nil,
+		0,
+	)
+	if len(warnings) != 0 {
+		t.Fatalf("warnings = %v", warnings)
+	}
+	searchRows := asSlice(t, search["items"])
+	assertAvailability(t, asMap(t, searchRows[0]))
+
+	unknown := domain.Item{
+		Title: "Unknown state",
+		OverlayV2: map[string]any{
+			"telemetry_status": "future_availability_state",
+		},
+		Venue: &domain.Venue{ID: "venue-2"},
+	}
+	unknownSearch, _ := observability.BuildVenueSearchResult(
+		[]domain.Item{unknown},
+		"",
+		observability.VenueSortRecommended,
+		nil,
+		"",
+		false,
+		false,
+		nil,
+		0,
+	)
+	unknownRows := asSlice(t, unknownSearch["items"])
+	unknownRow := asMap(t, unknownRows[0])
+	for _, key := range []string{
+		"order_now_available",
+		"store_open_now",
+		"scheduled_order_available",
+		"scheduled_pickup_available",
+		"scheduled_only",
+		"delivers_to_location",
+	} {
+		if unknownRow[key] != nil {
+			t.Fatalf("%s = %#v, want nil for unknown state", key, unknownRow[key])
+		}
+	}
+	if unknownRow["telemetry_status"] != "future_availability_state" {
+		t.Fatalf("telemetry_status = %#v, want preserved upstream value", unknownRow["telemetry_status"])
+	}
+}
+
+func TestAscendingVenueSortsPlaceUnknownMetricsLastStably(t *testing.T) {
+	estimateItems := []domain.Item{
+		{Title: "Unknown A", Venue: &domain.Venue{ID: "unknown-a"}},
+		{Title: "Slow", Venue: &domain.Venue{ID: "slow", Estimate: 35}},
+		{Title: "Unknown B", Venue: &domain.Venue{ID: "unknown-b"}},
+		{Title: "Fast", Venue: &domain.Venue{ID: "fast", Estimate: 15}},
+	}
+	feeItems := []domain.Item{
+		{Title: "Unknown A", Venue: &domain.Venue{ID: "unknown-a"}},
+		{Title: "Paid", Venue: &domain.Venue{ID: "paid", DeliveryPriceInt: intPtr(300)}},
+		{Title: "Unknown B", Venue: &domain.Venue{ID: "unknown-b"}},
+		{Title: "Free", Venue: &domain.Venue{ID: "free", DeliveryPriceInt: intPtr(0)}},
+	}
+	for _, test := range []struct {
+		name  string
+		sort  observability.VenueSort
+		items []domain.Item
+		want  []string
+	}{
+		{
+			name:  "distance",
+			sort:  observability.VenueSortDistance,
+			items: estimateItems,
+			want:  []string{"Fast", "Slow", "Unknown A", "Unknown B"},
+		},
+		{
+			name:  "delivery time",
+			sort:  observability.VenueSortDeliveryTime,
+			items: estimateItems,
+			want:  []string{"Fast", "Slow", "Unknown A", "Unknown B"},
+		},
+		{
+			name:  "delivery fee",
+			sort:  observability.VenueSortDeliveryPrice,
+			items: feeItems,
+			want:  []string{"Free", "Paid", "Unknown A", "Unknown B"},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			data, _ := observability.BuildVenueSearchResult(
+				test.items,
+				"",
+				test.sort,
+				nil,
+				"",
+				false,
+				false,
+				nil,
+				0,
+			)
+			rows := asSlice(t, data["items"])
+			if len(rows) != len(test.want) {
+				t.Fatalf("rows = %#v", rows)
+			}
+			for index, want := range test.want {
+				if got := asMap(t, rows[index])["name"]; got != want {
+					t.Fatalf("row %d = %v, want %s", index, got, want)
+				}
+			}
+		})
+	}
+}
+
 func TestBuildItemSearchResultFallback(t *testing.T) {
 	fallback := []domain.Item{
 		{
@@ -96,6 +259,7 @@ func TestBuildItemSearchResultFallback(t *testing.T) {
 		nil,
 		0,
 		fallback,
+		observability.ItemVenueContext{},
 	)
 	if intValue(data["total"]) != 1 {
 		t.Fatalf("expected total 1, got %v", data["total"])
@@ -129,6 +293,7 @@ func TestBuildItemSearchResultNormalizesBasePrice(t *testing.T) {
 		nil,
 		0,
 		nil,
+		observability.ItemVenueContext{},
 	)
 	if len(warnings) != 0 {
 		t.Fatalf("expected no warnings, got %v", warnings)
@@ -151,44 +316,115 @@ func TestBuildItemSearchResultNormalizesBasePrice(t *testing.T) {
 	}
 }
 
-func TestBuildVenueDetailIncludesTags(t *testing.T) {
-	item := &domain.Item{
-		Title: "Burger Place",
-		Link:  domain.Link{Target: "venue-1"},
-		Venue: &domain.Venue{ID: "venue-1", Slug: "burger-place", Currency: "PLN", DeliveryPriceInt: intPtr(500)},
-	}
-	restaurant := &domain.Restaurant{ID: "venue-1", Slug: "burger-place", Address: "Street 1", Currency: "PLN", FoodTags: []string{"burger"}}
-
-	data, warnings, err := observability.BuildVenueDetail(item, restaurant, map[string]struct{}{"tags": {}})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(warnings) == 0 {
-		t.Fatalf("expected warnings")
-	}
-	tags := asSlice(t, data["tags"])
-	if len(tags) != 1 || tags[0] != "burger" {
-		t.Fatalf("expected tags [burger], got %v", tags)
-	}
-}
-
 func TestBuildItemDetailIncludesUpsell(t *testing.T) {
 	payload := map[string]any{
-		"item_id":       "item-1",
-		"name":          "Whopper Meal",
-		"description":   "Burger with fries",
-		"price":         map[string]any{"amount": 1595, "currency": "PLN"},
-		"option_groups": []any{map[string]any{"id": "group-1", "name": "Choose drink", "required": true, "min": 1, "max": 1}},
-		"upsell_items":  []any{map[string]any{"item_id": "item-2", "name": "Nuggets", "price": map[string]any{"amount": 745, "currency": "PLN"}}},
+		"item_id":     "item-1",
+		"name":        "Whopper Meal",
+		"description": "Burger with fries",
+		"price":       map[string]any{"amount": 1595, "currency": "PLN"},
+		"options": []any{map[string]any{
+			"id":       "group-1",
+			"name":     "Choose drink",
+			"required": true,
+			"min":      1,
+			"max":      1,
+			"values": []any{
+				map[string]any{"id": "water", "name": "Water", "price": 0},
+				map[string]any{"id": "juice", "name": "Juice", "price": 150},
+			},
+		}},
+		"upsell_items": []any{
+			map[string]any{
+				"item_id": "item-2",
+				"name":    "Nuggets",
+				"price":   map[string]any{"amount": 745, "currency": "PLN"},
+				"options": []any{
+					map[string]any{
+						"id":   "upsell-only",
+						"name": "Upsell option",
+						"values": []any{
+							map[string]any{"id": "extra", "name": "Extra", "price": 25},
+						},
+					},
+				},
+			},
+		},
 	}
 
-	data, warnings := observability.BuildItemDetail("item-1", "venue-1", payload, true)
+	data, warnings := observability.BuildItemDetail(
+		"item-1", "venue-1", payload, true, observability.ItemVenueContext{},
+	)
 	if len(warnings) != 0 {
 		t.Fatalf("expected no warnings, got %v", warnings)
 	}
 	upsell := asSlice(t, data["upsell_items"])
 	if len(upsell) != 1 {
 		t.Fatalf("expected one upsell item, got %d", len(upsell))
+	}
+	groups := asSlice(t, data["option_groups"])
+	if len(groups) != 1 {
+		t.Fatalf("option_groups = %#v", groups)
+	}
+	group := asMap(t, groups[0])
+	values := asSlice(t, group["values"])
+	if group["group_id"] != "group-1" || len(values) != 2 {
+		t.Fatalf("normalized option group = %#v", group)
+	}
+	if group["group_id"] == "upsell-only" {
+		t.Fatalf("upsell option group leaked into requested item: %#v", groups)
+	}
+	first := asMap(t, values[0])
+	second := asMap(t, values[1])
+	if first["value_id"] != "juice" || first["price"] != 150 ||
+		second["value_id"] != "water" || second["price"] != 0 {
+		t.Fatalf("normalized option values = %#v", values)
+	}
+}
+
+func TestBuildVenueMenuOptionGroupIDsRequireOptInAndUnionAliases(t *testing.T) {
+	payload := map[string]any{
+		"items": []any{
+			map[string]any{
+				"id":               "item-1",
+				"name":             "Configurable item",
+				"price":            500,
+				"option_group_ids": []any{" ", "size"},
+				"option_groups": []any{
+					map[string]any{"id": "SIZE"},
+					map[string]any{"group_id": "addon"},
+				},
+				"options": []any{
+					map[string]any{"option_id": "addon"},
+					map[string]any{"id": "temperature"},
+				},
+			},
+		},
+	}
+
+	withoutOptions, _ := observability.BuildVenueMenu(
+		"venue-1",
+		[]map[string]any{payload},
+		"",
+		false,
+		nil,
+	)
+	withoutRow := asMap(t, asSlice(t, withoutOptions["items"])[0])
+	if _, exists := withoutRow["option_group_ids"]; exists {
+		t.Fatalf("option_group_ids leaked without opt-in: %#v", withoutRow)
+	}
+
+	withOptions, _ := observability.BuildVenueMenu(
+		"venue-1",
+		[]map[string]any{payload},
+		"",
+		true,
+		nil,
+	)
+	withRow := asMap(t, asSlice(t, withOptions["items"])[0])
+	got := asSlice(t, withRow["option_group_ids"])
+	want := []any{"size", "addon", "temperature"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("option_group_ids = %#v, want %#v", got, want)
 	}
 }
 
@@ -213,7 +449,9 @@ func TestBuildItemDetailNormalizesPricesWithFallbackCurrency(t *testing.T) {
 		},
 	}
 
-	data, warnings := observability.BuildItemDetail("item-1", "venue-1", payload, true)
+	data, warnings := observability.BuildItemDetail(
+		"item-1", "venue-1", payload, true, observability.ItemVenueContext{},
+	)
 	if len(warnings) != 0 {
 		t.Fatalf("expected no warnings, got %v", warnings)
 	}
@@ -293,7 +531,9 @@ func TestBuildVenueMenuIncludesDiscounts(t *testing.T) {
 		},
 	}
 
-	data, warnings := observability.BuildVenueMenu("venue-1", []map[string]any{payload}, "", false, nil)
+	data, warnings := observability.BuildVenueMenu(
+		"venue-1", []map[string]any{payload}, "", false, nil, observability.ItemVenueContext{},
+	)
 	if len(warnings) != 0 {
 		t.Fatalf("expected no warnings, got %v", warnings)
 	}
@@ -341,7 +581,14 @@ func TestBuildVenueMenuMergesDynamicCampaignDiscounts(t *testing.T) {
 		},
 	}
 
-	data, warnings := observability.BuildVenueMenu("venue-1", []map[string]any{assortmentPayload, dynamicPayload}, "", false, nil)
+	data, warnings := observability.BuildVenueMenu(
+		"venue-1",
+		[]map[string]any{assortmentPayload, dynamicPayload},
+		"",
+		false,
+		nil,
+		observability.ItemVenueContext{},
+	)
 	if len(warnings) != 0 {
 		t.Fatalf("expected no warnings, got %v", warnings)
 	}
@@ -361,6 +608,84 @@ func TestBuildVenueMenuMergesDynamicCampaignDiscounts(t *testing.T) {
 	discounts := asSlice(t, first["discounts"])
 	if len(discounts) != 1 || discounts[0] != "40% off selected items" {
 		t.Fatalf("expected discounts [40%% off selected items], got %v", discounts)
+	}
+}
+
+func TestBuildVenueMenuAppliesCampaignFractionOnlyToUndiscountedBase(t *testing.T) {
+	for _, test := range []struct {
+		name          string
+		price         int
+		originalPrice int
+		wantBase      int
+		wantOriginal  int
+	}{
+		{
+			name:          "explicit original proves base is already discounted",
+			price:         900,
+			originalPrice: 1200,
+			wantBase:      900,
+			wantOriginal:  1200,
+		},
+		{
+			name:         "missing original derives campaign price",
+			price:        1200,
+			wantBase:     900,
+			wantOriginal: 1200,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			item := map[string]any{
+				"id":    "item-1",
+				"name":  "Campaign item",
+				"price": test.price,
+			}
+			if test.originalPrice > 0 {
+				item["original_price"] = test.originalPrice
+			}
+			data, warnings := observability.BuildVenueMenu(
+				"venue-1",
+				[]map[string]any{
+					{"items": []any{item}},
+					{
+						"venue_raw": map[string]any{
+							"discounts": []any{
+								map[string]any{
+									"effects": map[string]any{
+										"item_discount": map[string]any{
+											"fraction": 0.25,
+											"include": map[string]any{
+												"items": []any{"item-1"},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+				"",
+				false,
+				nil,
+				observability.ItemVenueContext{},
+			)
+			if len(warnings) != 0 {
+				t.Fatalf("warnings = %v", warnings)
+			}
+			items := asSlice(t, data["items"])
+			first := asMap(t, items[0])
+			basePrice := asMap(t, first["base_price"])
+			originalPrice := asMap(t, first["original_price"])
+			if intValue(basePrice["amount"]) != test.wantBase ||
+				intValue(originalPrice["amount"]) != test.wantOriginal {
+				t.Fatalf(
+					"prices = base %v, original %v; want %d/%d",
+					basePrice["amount"],
+					originalPrice["amount"],
+					test.wantBase,
+					test.wantOriginal,
+				)
+			}
+		})
 	}
 }
 
@@ -580,7 +905,9 @@ func TestBuildVenueMenuDetectsWoltPlusFromBadges(t *testing.T) {
 			},
 		},
 	}
-	data, _ := observability.BuildVenueMenu("venue-1", []map[string]any{payload}, "", false, nil)
+	data, _ := observability.BuildVenueMenu(
+		"venue-1", []map[string]any{payload}, "", false, nil, observability.ItemVenueContext{},
+	)
 	if data["wolt_plus"] != true {
 		t.Fatalf("expected wolt_plus true from badges fallback, got %v", data["wolt_plus"])
 	}
@@ -632,14 +959,18 @@ func intPtr(v int) *int {
 	return &v
 }
 
-func TestParseVenueSortAcceptsHyphenatedAliases(t *testing.T) {
+func TestParseVenueSortAcceptsCanonicalAndCompatibilityAliases(t *testing.T) {
 	cases := []struct {
 		in   string
 		want observability.VenueSort
 	}{
 		{"recommended", observability.VenueSortRecommended},
+		{"distance", observability.VenueSortDistance},
+		{"rating", observability.VenueSortRating},
 		{"delivery_time", observability.VenueSortDeliveryTime},
 		{"delivery-time", observability.VenueSortDeliveryTime},
+		{"delivery", observability.VenueSortDeliveryTime},
+		{"fee", observability.VenueSortDeliveryPrice},
 		{"DELIVERY-PRICE", observability.VenueSortDeliveryPrice},
 		{"  delivery-time  ", observability.VenueSortDeliveryTime},
 	}
@@ -654,6 +985,13 @@ func TestParseVenueSortAcceptsHyphenatedAliases(t *testing.T) {
 	}
 	if _, err := observability.ParseVenueSort("nonsense"); err == nil {
 		t.Fatal("expected ParseVenueSort to reject unknown sort key")
+	} else {
+		message := err.Error()
+		for _, allowed := range observability.VenueSortInputValues() {
+			if !strings.Contains(message, allowed) {
+				t.Errorf("error %q does not list allowed value %q", message, allowed)
+			}
+		}
 	}
 }
 

@@ -5,9 +5,11 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/url"
 	"strings"
 
+	configstore "github.com/mekedron/wolt-cli/internal/config"
 	"github.com/mekedron/wolt-cli/internal/domain"
 	woltgateway "github.com/mekedron/wolt-cli/internal/gateway/wolt"
 	"github.com/mekedron/wolt-cli/internal/service/output"
@@ -27,8 +29,8 @@ func newProfileShowCommand(deps Dependencies) *cobra.Command {
 				return err
 			}
 			profileName := defaultProfileName(flags.Profile)
-			auth := buildAuthContextWithProfile(cmd.Context(), deps, flags)
-			if err := requireAuth(cmd, format, profileName, flags.Locale, flags.Output, auth); err != nil {
+			auth, err := loadRequiredAuth(cmd.Context(), deps, flags, format, cmd)
+			if err != nil {
 				return err
 			}
 
@@ -73,8 +75,8 @@ func newProfilePaymentsCommand(deps Dependencies) *cobra.Command {
 				return err
 			}
 			profileName := defaultProfileName(flags.Profile)
-			auth := buildAuthContextWithProfile(cmd.Context(), deps, flags)
-			if err := requireAuth(cmd, format, profileName, flags.Locale, flags.Output, auth); err != nil {
+			auth, err := loadRequiredAuth(cmd.Context(), deps, flags, format, cmd)
+			if err != nil {
 				return err
 			}
 
@@ -122,8 +124,8 @@ func newProfileAddressesCommand(deps Dependencies) *cobra.Command {
 				return err
 			}
 			profileName := defaultProfileName(flags.Profile)
-			auth := buildAuthContextWithProfile(cmd.Context(), deps, flags)
-			if err := requireAuth(cmd, format, profileName, flags.Locale, flags.Output, auth); err != nil {
+			auth, err := loadRequiredAuth(cmd.Context(), deps, flags, format, cmd)
+			if err != nil {
 				return err
 			}
 			profile, _ := deps.Profiles.Find(cmd.Context(), flags.Profile)
@@ -190,8 +192,8 @@ func newProfileAddressesLinksCommand(deps Dependencies) *cobra.Command {
 				return err
 			}
 			profileName := defaultProfileName(flags.Profile)
-			auth := buildAuthContextWithProfile(cmd.Context(), deps, flags)
-			if err := requireAuth(cmd, format, profileName, flags.Locale, flags.Output, auth); err != nil {
+			auth, err := loadRequiredAuth(cmd.Context(), deps, flags, format, cmd)
+			if err != nil {
 				return err
 			}
 			profile, _ := deps.Profiles.Find(cmd.Context(), flags.Profile)
@@ -261,8 +263,8 @@ func newProfileAddressesAddCommand(deps Dependencies) *cobra.Command {
 				return err
 			}
 			profileName := defaultProfileName(flags.Profile)
-			auth := buildAuthContextWithProfile(cmd.Context(), deps, flags)
-			if err := requireAuth(cmd, format, profileName, flags.Locale, flags.Output, auth); err != nil {
+			auth, err := loadRequiredAuth(cmd.Context(), deps, flags, format, cmd)
+			if err != nil {
 				return err
 			}
 			payload, err := buildDeliveryInfoPayload(address, lat, lon, locationType, details, label, alias, "")
@@ -330,8 +332,8 @@ func newProfileAddressesRemoveCommand(deps Dependencies) *cobra.Command {
 				return err
 			}
 			profileName := defaultProfileName(flags.Profile)
-			auth := buildAuthContextWithProfile(cmd.Context(), deps, flags)
-			if err := requireAuth(cmd, format, profileName, flags.Locale, flags.Output, auth); err != nil {
+			auth, err := loadRequiredAuth(cmd.Context(), deps, flags, format, cmd)
+			if err != nil {
 				return err
 			}
 
@@ -416,8 +418,8 @@ func newProfileAddressesUpdateCommand(deps Dependencies) *cobra.Command {
 				return err
 			}
 			profileName := defaultProfileName(flags.Profile)
-			auth := buildAuthContextWithProfile(cmd.Context(), deps, flags)
-			if err := requireAuth(cmd, format, profileName, flags.Locale, flags.Output, auth); err != nil {
+			auth, err := loadRequiredAuth(cmd.Context(), deps, flags, format, cmd)
+			if err != nil {
 				return err
 			}
 			oldID := strings.TrimSpace(args[0])
@@ -529,7 +531,7 @@ func fetchProfilePaymentsPayload(ctx context.Context, deps Dependencies, auth wo
 	if country == "" {
 		userPayload, userErr := deps.Wolt.UserMe(ctx, auth)
 		if userErr != nil {
-			if isUnauthorizedUpstream(userErr) {
+			if woltgateway.HasStatus(userErr, http.StatusUnauthorized) {
 				return result, userErr
 			}
 			result.Warnings = append(result.Warnings, "payment profile lookup skipped: unable to resolve user country")
@@ -551,7 +553,7 @@ func fetchProfilePaymentsPayload(ctx context.Context, deps Dependencies, auth wo
 		},
 	)
 	if profileErr != nil {
-		if isUnauthorizedUpstream(profileErr) {
+		if woltgateway.HasStatus(profileErr, http.StatusUnauthorized) {
 			return result, profileErr
 		}
 		result.Warnings = append(result.Warnings, "payment profile lookup failed; showing saved methods only")
@@ -1151,36 +1153,40 @@ func setProfileWoltAddressID(ctx context.Context, deps Dependencies, selectedPro
 	if deps.Config == nil {
 		return fmt.Errorf("config store is not available")
 	}
-	cfg, err := deps.Config.Load(ctx)
-	if err != nil {
-		return err
-	}
-	target := strings.TrimSpace(selectedProfile)
-	idx := -1
-	if target != "" {
-		for i, profile := range cfg.Profiles {
-			if strings.EqualFold(strings.TrimSpace(profile.Name), target) {
-				idx = i
-				break
+	return configstore.ApplyUpdate(ctx, deps.Config, func(cfg *domain.Config) (bool, error) {
+		target := strings.TrimSpace(selectedProfile)
+		idx := -1
+		if target != "" {
+			for i, profile := range cfg.Profiles {
+				if strings.EqualFold(strings.TrimSpace(profile.Name), target) {
+					idx = i
+					break
+				}
 			}
 		}
-	}
-	if idx < 0 {
-		for i, profile := range cfg.Profiles {
-			if profile.IsDefault {
-				idx = i
-				break
+		if idx < 0 {
+			for i, profile := range cfg.Profiles {
+				if profile.IsDefault {
+					idx = i
+					break
+				}
 			}
 		}
-	}
-	if idx < 0 && len(cfg.Profiles) == 1 {
-		idx = 0
-	}
-	if idx < 0 {
-		return fmt.Errorf("profile %q not found", defaultProfileName(selectedProfile))
-	}
-	cfg.Profiles[idx].WoltAddressID = strings.TrimSpace(addressID)
-	return deps.Config.Save(ctx, cfg)
+		if idx < 0 && len(cfg.Profiles) == 1 {
+			idx = 0
+		}
+		if idx < 0 {
+			return false, fmt.Errorf("profile %q not found", defaultProfileName(selectedProfile))
+		}
+		normalized := strings.TrimSpace(addressID)
+		if cfg.Profiles[idx].WoltAddressID == normalized &&
+			cfg.Account.WoltAddressID == normalized {
+			return false, nil
+		}
+		cfg.Profiles[idx].WoltAddressID = normalized
+		cfg.Account.WoltAddressID = normalized
+		return true, nil
+	})
 }
 
 func maskEmail(email string) string {

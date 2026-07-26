@@ -1,7 +1,6 @@
 package observability
 
 import (
-	"fmt"
 	"sort"
 	"strings"
 
@@ -86,8 +85,8 @@ func BuildDiscoveryFeed(sections []domain.Section, city string, limit *int, wolt
 			if item.Venue.PriceRange > 0 {
 				priceRangeValue = item.Venue.PriceRange
 			}
-			rows = append(rows, map[string]any{
-				"venue_id":          domain.NormalizeID(coalesce(item.Venue.ID, item.Link.Target)),
+			row := map[string]any{
+				"venue_id":          discoveryVenueID(item),
 				"slug":              item.Venue.Slug,
 				"name":              item.Title,
 				"tagline":           item.Venue.Tagline(),
@@ -101,7 +100,9 @@ func BuildDiscoveryFeed(sections []domain.Section, city string, limit *int, wolt
 				"badges":            venueBadgeGlyphs(item.Venue),
 				"menu_highlights":   venueMenuHighlights(item.Venue),
 				"wolt_plus":         isWoltPlus,
-			})
+			}
+			addDiscoveryAvailability(row, item)
+			rows = append(rows, row)
 		}
 		if woltPlusOnly && len(rows) == 0 {
 			continue
@@ -305,7 +306,7 @@ func BuildVenueSearchResult(
 	case VenueSortDistance:
 		warnings = append(warnings, "distance sort is approximated with delivery estimate in basic mode")
 		sort.SliceStable(filtered, func(i, j int) bool {
-			return filtered[i].Venue.Estimate < filtered[j].Venue.Estimate
+			return optionalEstimateLess(filtered[i].Venue.Estimate, filtered[j].Venue.Estimate)
 		})
 	case VenueSortRating:
 		sort.SliceStable(filtered, func(i, j int) bool {
@@ -321,19 +322,14 @@ func BuildVenueSearchResult(
 		})
 	case VenueSortDeliveryPrice:
 		sort.SliceStable(filtered, func(i, j int) bool {
-			left := 0
-			right := 0
-			if filtered[i].Venue.DeliveryPriceInt != nil {
-				left = *filtered[i].Venue.DeliveryPriceInt
-			}
-			if filtered[j].Venue.DeliveryPriceInt != nil {
-				right = *filtered[j].Venue.DeliveryPriceInt
-			}
-			return left < right
+			return optionalIntLess(
+				filtered[i].Venue.DeliveryPriceInt,
+				filtered[j].Venue.DeliveryPriceInt,
+			)
 		})
 	case VenueSortDeliveryTime:
 		sort.SliceStable(filtered, func(i, j int) bool {
-			return filtered[i].Venue.Estimate < filtered[j].Venue.Estimate
+			return optionalEstimateLess(filtered[i].Venue.Estimate, filtered[j].Venue.Estimate)
 		})
 	}
 
@@ -357,8 +353,8 @@ func BuildVenueSearchResult(
 		if item.Venue.PriceRange > 0 {
 			priceRangeValue = item.Venue.PriceRange
 		}
-		rows = append(rows, map[string]any{
-			"venue_id":          domain.NormalizeID(coalesce(item.Venue.ID, item.Link.Target)),
+		row := map[string]any{
+			"venue_id":          discoveryVenueID(item),
 			"slug":              item.Venue.Slug,
 			"name":              item.Title,
 			"tagline":           item.Venue.Tagline(),
@@ -373,7 +369,9 @@ func BuildVenueSearchResult(
 			"badges":            venueBadgeGlyphs(item.Venue),
 			"menu_highlights":   venueMenuHighlights(item.Venue),
 			"wolt_plus":         venueWoltPlus(item.Venue),
-		})
+		}
+		addDiscoveryAvailability(row, item)
+		rows = append(rows, row)
 	}
 
 	return map[string]any{
@@ -381,6 +379,96 @@ func BuildVenueSearchResult(
 		"total": total,
 		"items": rows,
 	}, warnings
+}
+
+func discoveryVenueID(item domain.Item) string {
+	if item.Venue != nil {
+		if venueID := strings.TrimSpace(domain.NormalizeID(item.Venue.ID)); venueID != "" {
+			return venueID
+		}
+	}
+	return domain.NormalizeObjectID(item.Link.Target)
+}
+
+// addDiscoveryAvailability preserves location-aware ordering signals that
+// Wolt embeds in front-page venue rows. Discovery is still non-exhaustive, but
+// callers can distinguish immediate and scheduled ordering for rows the feed
+// does return. Unknown scheduled state remains null rather than false.
+func addDiscoveryAvailability(row map[string]any, item domain.Item) {
+	if row == nil || item.Venue == nil {
+		return
+	}
+
+	var orderNow any
+	if item.Venue.Online != nil {
+		orderNow = *item.Venue.Online
+	}
+	telemetryStatus := firstNonEmptyValue(
+		stringFromAny(item.Venue.Status["telemetry_status"]),
+		stringFromAny(item.OverlayV2["telemetry_status"]),
+	)
+	scheduledOrder, scheduledPickup := scheduledAvailabilityFromTelemetryStatus(telemetryStatus)
+	var scheduledOnly any
+	if scheduled, known := scheduledOrder.(bool); known && item.Venue.Online != nil {
+		scheduledOnly = scheduled && !*item.Venue.Online
+	}
+
+	row["order_now_available"] = orderNow
+	// `online` means order-now availability, not necessarily that the
+	// physical store is open. Exact venue detail uses the separate upstream
+	// open_status signal for store_open_now.
+	row["store_open_now"] = nil
+	row["scheduled_order_available"] = scheduledOrder
+	row["scheduled_pickup_available"] = scheduledPickup
+	row["scheduled_only"] = scheduledOnly
+	var deliversToLocation any
+	if scheduled, known := scheduledOrder.(bool); known && scheduled {
+		// Location-aware scheduled-order telemetry is more specific than the
+		// generic discovery delivers flag, which can be false while a venue is
+		// closed but still accepts scheduled home-delivery orders.
+		deliversToLocation = true
+	} else if item.Venue.Delivers != nil {
+		deliversToLocation = *item.Venue.Delivers
+	}
+	row["delivers_to_location"] = deliversToLocation
+	row["next_opening_at"] = emptyToNil(firstNonEmptyValue(
+		stringFromAny(item.Venue.Status["next_open"]),
+		stringFromAny(item.OverlayV2["next_open"]),
+	))
+	row["status_text"] = emptyToNil(firstNonEmptyValue(
+		stringFromAny(item.Venue.Status["primary_text"]),
+		stringFromAny(item.Venue.Status["value"]),
+		stringFromAny(item.OverlayV2["primary_text"]),
+	))
+	row["telemetry_status"] = emptyToNil(telemetryStatus)
+}
+
+func scheduledAvailabilityFromTelemetryStatus(status string) (any, any) {
+	normalized := strings.ToLower(strings.TrimSpace(status))
+	switch {
+	case strings.HasPrefix(normalized, "scheduled_order"):
+		return true, nil
+	case strings.HasPrefix(normalized, "scheduled_pickup"):
+		return nil, true
+	default:
+		return nil, nil
+	}
+}
+
+func optionalEstimateLess(left float64, right float64) bool {
+	leftKnown := left > 0
+	rightKnown := right > 0
+	if leftKnown != rightKnown {
+		return leftKnown
+	}
+	return leftKnown && left < right
+}
+
+func optionalIntLess(left *int, right *int) bool {
+	if (left != nil) != (right != nil) {
+		return left != nil
+	}
+	return left != nil && *left < *right
 }
 
 func priceRangeScale(level int) string {
@@ -606,58 +694,6 @@ func firstNonEmptyStringFromStringMap(payload map[string]string, keys ...string)
 	return ""
 }
 
-// BuildVenueDetail normalizes venue detail payload.
-func BuildVenueDetail(item *domain.Item, restaurant *domain.Restaurant, include map[string]struct{}) (map[string]any, []string, error) {
-	if item == nil || item.Venue == nil {
-		return nil, nil, fmt.Errorf("item does not include venue details")
-	}
-	if restaurant == nil {
-		return nil, nil, fmt.Errorf("restaurant cannot be nil")
-	}
-
-	warnings := []string{"order minimum is unavailable in basic mode and returned as null"}
-
-	var ratingValue any
-	if restaurant.Rating != nil {
-		ratingValue = restaurant.Rating.Score
-	} else if item.Venue.Rating != nil {
-		ratingValue = item.Venue.Rating.Score
-	}
-
-	data := map[string]any{
-		"venue_id":         domain.NormalizeID(coalesce(restaurant.ID, item.Venue.ID, item.Link.Target)),
-		"slug":             stringValue(coalesce(restaurant.Slug, item.Venue.Slug)),
-		"name":             item.Title,
-		"address":          restaurant.Address,
-		"currency":         restaurant.Currency,
-		"rating":           ratingValue,
-		"delivery_methods": restaurant.DeliveryMethods,
-		"order_minimum": map[string]any{
-			"amount":           nil,
-			"formatted_amount": nil,
-		},
-	}
-
-	if _, ok := include["hours"]; ok {
-		data["opening_windows"] = openingWindows(restaurant)
-	}
-	if _, ok := include["tags"]; ok {
-		data["tags"] = restaurant.FoodTags
-	}
-	if _, ok := include["rating"]; ok && restaurant.Rating != nil {
-		data["rating_details"] = map[string]any{
-			"score":  restaurant.Rating.Score,
-			"text":   restaurant.Rating.Text,
-			"volume": restaurant.Rating.Volume,
-		}
-	}
-	if _, ok := include["fees"]; ok {
-		data["delivery_fee"] = deliveryFeeMap(item.Venue.DeliveryPriceInt, item.Venue.Currency)
-	}
-
-	return data, warnings, nil
-}
-
 func stringValue(v any) string {
 	if v == nil {
 		return ""
@@ -666,21 +702,4 @@ func stringValue(v any) string {
 		return s
 	}
 	return ""
-}
-
-// BuildVenueHours renders venue opening windows.
-func BuildVenueHours(restaurant *domain.Restaurant, timezone string) map[string]any {
-	resolvedTimezone := strings.TrimSpace(timezone)
-	if resolvedTimezone == "" {
-		resolvedTimezone = strings.TrimSpace(restaurant.TimezoneName)
-	}
-	if resolvedTimezone == "" {
-		resolvedTimezone = "UTC"
-	}
-	return map[string]any{
-		"venue_id":         domain.NormalizeID(restaurant.ID),
-		"timezone":         resolvedTimezone,
-		"opening_windows":  openingWindows(restaurant),
-		"delivery_windows": []any{},
-	}
 }
