@@ -101,6 +101,33 @@ func TestCartShowSupportsCompactAndCompatibilityContentModes(t *testing.T) {
 	}
 }
 
+func TestStructuredResultUsesSummaryWhenSDKContentDiffers(t *testing.T) {
+	const summary = "resolved venue"
+	next := func(context.Context, string, mcp.Request) (mcp.Result, error) {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{
+				Text: `{"venue":{"name":"example"},"summary":"resolved venue"}`,
+			}},
+			StructuredContent: map[string]any{
+				"summary": summary,
+				"venue":   map[string]any{"name": "example"},
+			},
+		}, nil
+	}
+
+	result, err := toolResultMiddleware(next)(context.Background(), callToolMethod, nil)
+	if err != nil {
+		t.Fatalf("middleware: %v", err)
+	}
+	toolResult, ok := result.(*mcp.CallToolResult)
+	if !ok {
+		t.Fatalf("result type = %T, want *mcp.CallToolResult", result)
+	}
+	if got := textContent(toolResult); got != summary {
+		t.Fatalf("Content = %q, want summary %q", got, summary)
+	}
+}
+
 func TestClassifiedToolErrorUsesMetadataWithoutViolatingOutputSchema(t *testing.T) {
 	_, client := connectInMemory(t, Deps{
 		Wolt:     &stubWolt{},

@@ -46,9 +46,7 @@ func toolResultMiddleware(next mcp.MethodHandler) mcp.MethodHandler {
 		if summary == "" {
 			summary = "request completed"
 		}
-		if contentDuplicatesStructured(toolResult.Content, structuredJSON) {
-			toolResult.Content = []mcp.Content{&mcp.TextContent{Text: compactText(summary)}}
-		}
+		toolResult.Content = []mcp.Content{&mcp.TextContent{Text: compactText(summary)}}
 		return result, nil
 	}
 }
@@ -117,17 +115,6 @@ func summaryFromStructuredJSON(encoded []byte) string {
 		return ""
 	}
 	return strings.TrimSpace(envelope.Summary)
-}
-
-func contentDuplicatesStructured(content []mcp.Content, structuredJSON []byte) bool {
-	if len(content) != 1 {
-		return false
-	}
-	text, ok := content[0].(*mcp.TextContent)
-	if !ok {
-		return false
-	}
-	return strings.TrimSpace(text.Text) == strings.TrimSpace(string(structuredJSON))
 }
 
 func errorContentMessage(content []mcp.Content) string {
