@@ -3,7 +3,9 @@ package mcpserver
 import (
 	"context"
 	"log/slog"
+	"sync"
 
+	configstore "github.com/mekedron/wolt-cli/internal/config"
 	"github.com/mekedron/wolt-cli/internal/domain"
 	woltgateway "github.com/mekedron/wolt-cli/internal/gateway/wolt"
 )
@@ -18,12 +20,9 @@ type LocationResolver interface {
 	Get(ctx context.Context, address string) (domain.Location, error)
 }
 
-// ConfigStore reads/writes the on-disk wolt config so the MCP server can
-// persist rotated tokens after an auto-refresh.
+// ConfigStore reads and updates the shared on-disk account configuration.
 type ConfigStore interface {
-	Path() string
-	Load(ctx context.Context) (domain.Config, error)
-	Save(ctx context.Context, cfg domain.Config) error
+	configstore.Manager
 }
 
 // Deps wires runtime dependencies into NewServer.
@@ -48,6 +47,17 @@ type ToolCtx struct {
 	version  string
 	locale   string
 	logger   *slog.Logger
+
+	// tokenRefreshMu serializes access-token rotation. MCP clients can issue
+	// several authenticated tools concurrently; without coordination each
+	// request can observe the same stale token and rotate it independently.
+	tokenRefreshMu        sync.Mutex
+	currentAccessToken    string
+	currentRefreshToken   string
+	supersededTokenHashes map[[32]byte]struct{}
+	supersededTokenOrder  [][32]byte
+	profileAuthHash       [32]byte
+	hasProfileAuthHash    bool
 }
 
 func newToolCtx(deps Deps) *ToolCtx {

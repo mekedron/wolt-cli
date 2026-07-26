@@ -9,11 +9,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
+	configstore "github.com/mekedron/wolt-cli/internal/config"
 	"github.com/mekedron/wolt-cli/internal/domain"
 	woltgateway "github.com/mekedron/wolt-cli/internal/gateway/wolt"
 	"github.com/mekedron/wolt-cli/internal/service/output"
@@ -21,8 +23,12 @@ import (
 )
 
 const (
-	defaultLoginURL        = "https://wolt.com/login"
-	defaultChromeDebugPort = 9222
+	defaultLoginURL             = "https://wolt.com/login"
+	defaultChromeDebugPort      = 9222
+	managedChromeStartupTimeout = 10 * time.Second
+	managedChromePollInterval   = 250 * time.Millisecond
+	loginChromePollInterval     = 1500 * time.Millisecond
+	loginChromeReadTimeout      = 3 * time.Second
 )
 
 func newLoginCommand(deps Dependencies) *cobra.Command {
@@ -47,7 +53,7 @@ func newLoginCommand(deps Dependencies) *cobra.Command {
 			}
 
 			auth := buildAuthContext(globalFlags{WToken: wtoken, WRefreshToken: wrtoken, Cookies: cookies})
-			if !auth.HasCredentials() {
+			if !auth.CanAuthenticate() {
 				auth, err = loginViaManagedChrome(cmd.Context(), browserURL, loginURL, timeout)
 				if err != nil {
 					return err
@@ -58,12 +64,12 @@ func newLoginCommand(deps Dependencies) *cobra.Command {
 			}
 
 			data := map[string]any{
-				"logged_in":          auth.HasCredentials(),
+				"logged_in":          auth.CanAuthenticate(),
 				"saved":              true,
 				"session_expires_at": emptyToNil(tokenExpiryRFC3339(auth.WToken)),
 			}
 			warnings := []string{}
-			if deps.Wolt != nil && auth.HasCredentials() {
+			if deps.Wolt != nil && auth.CanAuthenticate() {
 				payload, authWarnings, userErr := invokeWithAuthAutoRefresh(
 					cmd.Context(),
 					deps,
@@ -112,21 +118,22 @@ func newLogoutCommand(deps Dependencies) *cobra.Command {
 				return err
 			}
 			if deps.Config != nil {
-				cfg, loadErr := deps.Config.Load(cmd.Context())
-				if loadErr == nil {
-					cfg.Account.WToken = ""
-					cfg.Account.WRefreshToken = ""
-					cfg.Account.Cookies = nil
-					cfg.Account.WoltAddressID = ""
+				if err := configstore.ApplyUpdate(cmd.Context(), deps.Config, func(cfg *domain.Config) (bool, error) {
+					hasAddress := strings.TrimSpace(cfg.Account.WoltAddressID) != ""
 					if len(cfg.Profiles) > 0 {
-						cfg.Profiles[0].WToken = ""
-						cfg.Profiles[0].WRefreshToken = ""
-						cfg.Profiles[0].Cookies = nil
-						cfg.Profiles[0].WoltAddressID = ""
+						hasAddress = hasAddress ||
+							strings.TrimSpace(cfg.Profiles[0].WoltAddressID) != ""
 					}
-					if err := deps.Config.Save(cmd.Context(), cfg); err != nil {
-						return err
+					hasCredentials := !configstore.CredentialsFromConfig(*cfg).Equal(configstore.Credentials{})
+					if !hasCredentials && !hasAddress {
+						return false, nil
 					}
+					configstore.SetCredentials(cfg, configstore.Credentials{})
+					cfg.Account.WoltAddressID = ""
+					cfg.Profiles[0].WoltAddressID = ""
+					return true, nil
+				}); err != nil {
+					return fmt.Errorf("update config during logout: %w", err)
 				}
 			}
 			// Drop the slug→venue-id cache too: a different account may have
@@ -149,10 +156,6 @@ func saveAccountCredentials(ctx context.Context, deps Dependencies, auth woltgat
 	if deps.Config == nil {
 		return nil
 	}
-	cfg, err := deps.Config.Load(ctx)
-	if err != nil || len(cfg.Profiles) == 0 {
-		cfg = domain.Config{Profiles: []domain.Profile{{Name: "default", IsDefault: true}}}
-	}
 	wToken := normalizeWToken(auth.WToken)
 	wRefresh := normalizeRefreshToken(auth.RefreshToken)
 	cookies := normalizeCookieInputs(auth.Cookies)
@@ -162,15 +165,14 @@ func saveAccountCredentials(ctx context.Context, deps Dependencies, auth woltgat
 	if wRefresh == "" {
 		wRefresh = extractRefreshTokenFromCookieInputs(cookies)
 	}
-	cfg.Profiles[0].Name = "default"
-	cfg.Profiles[0].IsDefault = true
-	cfg.Profiles[0].WToken = wToken
-	cfg.Profiles[0].WRefreshToken = wRefresh
-	cfg.Profiles[0].Cookies = cookies
-	cfg.Account.WToken = wToken
-	cfg.Account.WRefreshToken = wRefresh
-	cfg.Account.Cookies = cookies
-	return deps.Config.Save(ctx, cfg)
+	return configstore.ApplyUpdate(ctx, deps.Config, func(cfg *domain.Config) (bool, error) {
+		configstore.SetCredentials(cfg, configstore.Credentials{
+			AccessToken:  wToken,
+			RefreshToken: wRefresh,
+			Cookies:      cookies,
+		})
+		return true, nil
+	})
 }
 
 func buildLoginTable(data map[string]any) string {
@@ -184,30 +186,44 @@ func buildLoginTable(data map[string]any) string {
 }
 
 func loginViaManagedChrome(ctx context.Context, browserURL string, loginURL string, timeout time.Duration) (woltgateway.AuthContext, error) {
+	if timeout <= 0 {
+		return woltgateway.AuthContext{}, fmt.Errorf("browser login timeout must be greater than zero")
+	}
+	loginCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
 	browserURL = strings.TrimRight(strings.TrimSpace(browserURL), "/")
 	if browserURL == "" {
 		browserURL = fmt.Sprintf("http://127.0.0.1:%d", defaultChromeDebugPort)
 	}
-	if err := ensureManagedChrome(ctx, browserURL); err != nil {
-		return woltgateway.AuthContext{}, err
+	if err := ensureManagedChrome(loginCtx, browserURL); err != nil {
+		return woltgateway.AuthContext{}, managedChromeLoginError(ctx, loginCtx, err)
 	}
-	if err := openChromeTarget(ctx, browserURL, loginURL); err != nil {
-		return woltgateway.AuthContext{}, err
+	if err := openChromeTarget(loginCtx, browserURL, loginURL); err != nil {
+		return woltgateway.AuthContext{}, managedChromeLoginError(ctx, loginCtx, err)
 	}
 
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		auth, err := readAuthFromChrome(ctx, browserURL)
+	for {
+		readCtx, readCancel := context.WithTimeout(loginCtx, loginChromeReadTimeout)
+		auth, err := readAuthFromChrome(readCtx, browserURL)
+		readCancel()
 		if err == nil && chromeAuthHasRealSession(auth) {
 			return auth, nil
 		}
-		select {
-		case <-ctx.Done():
-			return woltgateway.AuthContext{}, ctx.Err()
-		case <-time.After(1500 * time.Millisecond):
+		if err := waitForContext(loginCtx, loginChromePollInterval); err != nil {
+			return woltgateway.AuthContext{}, managedChromeLoginError(ctx, loginCtx, err)
 		}
 	}
-	return woltgateway.AuthContext{}, fmt.Errorf("timed out waiting for Wolt login in Chrome")
+}
+
+func managedChromeLoginError(parent context.Context, loginCtx context.Context, err error) error {
+	if parentErr := parent.Err(); parentErr != nil {
+		return parentErr
+	}
+	if loginCtx.Err() == context.DeadlineExceeded {
+		return fmt.Errorf("timed out waiting for Wolt login in Chrome")
+	}
+	return err
 }
 
 // chromeAuthHasRealSession reports whether the CDP cookie scrape produced a
@@ -222,16 +238,16 @@ func ensureManagedChrome(ctx context.Context, browserURL string) error {
 	if chromeDevToolsReady(ctx, browserURL) {
 		return nil
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	profileDir := filepath.Join(defaultConfigDir(), "chrome-profile")
 	if err := os.MkdirAll(profileDir, 0o700); err != nil {
 		return err
 	}
-	chromeBin := os.Getenv("CHROME_BIN")
-	if chromeBin == "" {
-		chromeBin = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-	}
-	if _, err := os.Stat(chromeBin); err != nil {
-		return fmt.Errorf("chrome not found at %s; set CHROME_BIN or start Chrome with remote debugging", chromeBin)
+	chromeBin, err := managedChromeBinary()
+	if err != nil {
+		return err
 	}
 	port := defaultChromeDebugPort
 	if parsed, err := url.Parse(browserURL); err == nil && parsed.Port() != "" {
@@ -249,13 +265,148 @@ func ensureManagedChrome(ctx context.Context, browserURL string) error {
 	if err := cmd.Start(); err != nil {
 		return err
 	}
-	for i := 0; i < 40; i++ {
-		if chromeDevToolsReady(ctx, browserURL) {
-			return nil
-		}
-		time.Sleep(250 * time.Millisecond)
+	startupCtx, startupCancel := context.WithTimeout(ctx, managedChromeStartupTimeout)
+	defer startupCancel()
+	if waitForChromeDevTools(startupCtx, browserURL) {
+		return nil
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	return fmt.Errorf("chrome started but DevTools did not become available at %s", browserURL)
+}
+
+func managedChromeBinary() (string, error) {
+	return discoverChromeBinary(
+		runtime.GOOS,
+		os.Getenv,
+		exec.LookPath,
+		func(path string) bool {
+			info, err := os.Stat(path)
+			return err == nil && !info.IsDir()
+		},
+	)
+}
+
+func discoverChromeBinary(
+	goos string,
+	getenv func(string) string,
+	lookPath func(string) (string, error),
+	fileExists func(string) bool,
+) (string, error) {
+	if getenv == nil || lookPath == nil || fileExists == nil {
+		return "", fmt.Errorf("chrome discovery is unavailable")
+	}
+	if configured := trimExecutablePath(getenv("CHROME_BIN")); configured != "" {
+		if resolved, ok := resolveChromeCandidate(configured, lookPath, fileExists); ok {
+			return resolved, nil
+		}
+		return "", fmt.Errorf(
+			"chrome executable from CHROME_BIN was not found: %s",
+			configured,
+		)
+	}
+	for _, command := range chromeCommandCandidates(goos) {
+		if resolved, err := lookPath(command); err == nil && strings.TrimSpace(resolved) != "" {
+			return resolved, nil
+		}
+	}
+	for _, path := range chromeInstallCandidates(goos, getenv) {
+		if fileExists(path) {
+			return path, nil
+		}
+	}
+	return "", fmt.Errorf(
+		"chrome or Chromium was not found; set CHROME_BIN or start a browser with remote debugging",
+	)
+}
+
+func resolveChromeCandidate(
+	candidate string,
+	lookPath func(string) (string, error),
+	fileExists func(string) bool,
+) (string, bool) {
+	if resolved, err := lookPath(candidate); err == nil && strings.TrimSpace(resolved) != "" {
+		return resolved, true
+	}
+	if fileExists(candidate) {
+		return filepath.Clean(candidate), true
+	}
+	return "", false
+}
+
+func trimExecutablePath(value string) string {
+	return strings.Trim(strings.TrimSpace(value), `"'`)
+}
+
+func chromeCommandCandidates(goos string) []string {
+	switch goos {
+	case "windows":
+		return []string{"chrome.exe", "msedge.exe", "chromium.exe"}
+	case "darwin":
+		return []string{"google-chrome", "chromium", "chrome"}
+	default:
+		return []string{
+			"google-chrome",
+			"google-chrome-stable",
+			"chromium",
+			"chromium-browser",
+			"microsoft-edge",
+		}
+	}
+}
+
+func chromeInstallCandidates(goos string, getenv func(string) string) []string {
+	var candidates []string
+	appendUnder := func(root string, suffixes ...string) {
+		root = strings.TrimSpace(root)
+		if root == "" {
+			return
+		}
+		for _, suffix := range suffixes {
+			candidates = append(candidates, filepath.Join(root, filepath.FromSlash(suffix)))
+		}
+	}
+
+	switch goos {
+	case "windows":
+		appendUnder(
+			getenv("LOCALAPPDATA"),
+			"Google/Chrome/Application/chrome.exe",
+			"Chromium/Application/chrome.exe",
+			"Microsoft/Edge/Application/msedge.exe",
+		)
+		for _, variable := range []string{"PROGRAMFILES", "PROGRAMFILES(X86)"} {
+			appendUnder(
+				getenv(variable),
+				"Google/Chrome/Application/chrome.exe",
+				"Chromium/Application/chrome.exe",
+				"Microsoft/Edge/Application/msedge.exe",
+			)
+		}
+	case "darwin":
+		candidates = append(candidates,
+			"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+			"/Applications/Chromium.app/Contents/MacOS/Chromium",
+			"/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+		)
+		appendUnder(
+			getenv("HOME"),
+			"Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+			"Applications/Chromium.app/Contents/MacOS/Chromium",
+			"Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+		)
+	default:
+		candidates = append(candidates,
+			"/usr/bin/google-chrome",
+			"/usr/bin/google-chrome-stable",
+			"/usr/bin/chromium",
+			"/usr/bin/chromium-browser",
+			"/usr/bin/microsoft-edge",
+			"/opt/google/chrome/google-chrome",
+		)
+	}
+	return candidates
 }
 
 func defaultConfigDir() string {
@@ -267,7 +418,9 @@ func defaultConfigDir() string {
 }
 
 func chromeDevToolsReady(ctx context.Context, browserURL string) bool {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, browserURL+"/json/version", nil)
+	probeCtx, cancel := context.WithTimeout(ctx, chromeProbeTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(probeCtx, http.MethodGet, browserURL+"/json/version", nil)
 	if err != nil {
 		return false
 	}
@@ -277,6 +430,28 @@ func chromeDevToolsReady(ctx context.Context, browserURL string) bool {
 	}
 	_ = resp.Body.Close()
 	return resp.StatusCode >= 200 && resp.StatusCode < 300
+}
+
+func waitForChromeDevTools(ctx context.Context, browserURL string) bool {
+	for {
+		if chromeDevToolsReady(ctx, browserURL) {
+			return true
+		}
+		if waitForContext(ctx, managedChromePollInterval) != nil {
+			return false
+		}
+	}
+}
+
+func waitForContext(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func openChromeTarget(ctx context.Context, browserURL string, loginURL string) error {
@@ -320,7 +495,7 @@ func readAuthFromChrome(ctx context.Context, browserURL string) (woltgateway.Aut
 		}
 		auth, err := client.readWoltAuth(ctx)
 		_ = client.close()
-		if err != nil || !auth.HasCredentials() {
+		if err != nil || !chromeAuthHasRealSession(auth) {
 			return woltgateway.AuthContext{}, false
 		}
 		return auth, true
@@ -418,20 +593,48 @@ func (c *cdpClient) close() error {
 	return c.conn.Close()
 }
 
-func (c *cdpClient) call(method string, params map[string]any) (map[string]any, error) {
+func (c *cdpClient) call(
+	ctx context.Context,
+	method string,
+	params map[string]any,
+) (map[string]any, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if deadline, ok := ctx.Deadline(); ok {
+		if err := c.conn.SetWriteDeadline(deadline); err != nil {
+			return nil, err
+		}
+		if err := c.conn.SetReadDeadline(deadline); err != nil {
+			return nil, err
+		}
+	}
+	stopCancel := context.AfterFunc(ctx, func() {
+		deadline := time.Now()
+		_ = c.conn.SetWriteDeadline(deadline)
+		_ = c.conn.SetReadDeadline(deadline)
+	})
+	defer stopCancel()
+
 	c.next++
 	id := c.next
 	if params == nil {
 		params = map[string]any{}
 	}
 	if err := c.conn.WriteJSON(map[string]any{"id": id, "method": method, "params": params}); err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		return nil, err
 	}
 	for {
 		var msg map[string]any
 		if err := c.conn.ReadJSON(&msg); err != nil {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
 			return nil, err
 		}
 		if asInt(msg["id"]) != id {
@@ -445,8 +648,7 @@ func (c *cdpClient) call(method string, params map[string]any) (map[string]any, 
 }
 
 func (c *cdpClient) readWoltAuth(ctx context.Context) (woltgateway.AuthContext, error) {
-	_ = ctx
-	result, err := c.call("Network.getAllCookies", nil)
+	result, err := c.call(ctx, "Network.getAllCookies", nil)
 	if err != nil {
 		return woltgateway.AuthContext{}, err
 	}
@@ -456,7 +658,7 @@ func (c *cdpClient) readWoltAuth(ctx context.Context) (woltgateway.AuthContext, 
 		domainValue := strings.ToLower(asString(cookie["domain"]))
 		name := strings.TrimSpace(asString(cookie["name"]))
 		value := strings.TrimSpace(asString(cookie["value"]))
-		if name == "" || value == "" || !strings.Contains(domainValue, "wolt") {
+		if name == "" || value == "" || !isWoltCookieDomain(domainValue) {
 			continue
 		}
 		cookies = append(cookies, name+"="+value)
@@ -465,4 +667,9 @@ func (c *cdpClient) readWoltAuth(ctx context.Context) (woltgateway.AuthContext, 
 	auth.WToken = extractWTokenFromCookieInputs(cookies)
 	auth.RefreshToken = extractRefreshTokenFromCookieInputs(cookies)
 	return auth, nil
+}
+
+func isWoltCookieDomain(value string) bool {
+	domain := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(value)), ".")
+	return domain == "wolt.com" || strings.HasSuffix(domain, ".wolt.com")
 }

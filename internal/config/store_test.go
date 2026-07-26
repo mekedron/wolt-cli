@@ -6,6 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/mekedron/wolt-cli/internal/domain"
@@ -191,8 +194,7 @@ func TestStoreSavePersistsProfileMutationAfterLoad(t *testing.T) {
 		t.Fatalf("expected loaded account+profile mirror, got %+v / %+v", cfg.Account, cfg.Profiles[0])
 	}
 
-	// Simulate the auto-refresh path: mutate Profiles[0] only, mirroring how
-	// upsertProfileTokens applies the rotated tokens.
+	// Simulate an explicit profile credential update after Load.
 	cfg.Profiles[0].WToken = "new-access"
 	cfg.Profiles[0].WRefreshToken = "new-refresh"
 
@@ -226,7 +228,66 @@ func TestStoreSaveUsesOwnerOnlyPermissions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat saved config: %v", err)
 	}
-	if mode := info.Mode().Perm(); mode != 0o600 {
+	if mode := info.Mode().Perm(); runtime.GOOS != "windows" && mode != 0o600 {
 		t.Fatalf("expected owner-only permissions 0600, got %#o", mode)
+	}
+}
+
+func TestStoreLoadNeverObservesPartialConcurrentSave(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	writer := &Store{path: path}
+	reader := &Store{path: path}
+	configFor := func(token string) domain.Config {
+		return domain.Config{Profiles: []domain.Profile{{
+			Name:          "default",
+			IsDefault:     true,
+			WToken:        token,
+			WRefreshToken: "refresh-token",
+			Cookies:       []string{strings.Repeat(token, 4096)},
+			Location:      domain.Location{Lat: 10, Lon: 20},
+		}}}
+	}
+	if err := writer.Save(context.Background(), configFor("initial-token")); err != nil {
+		t.Fatalf("seed config: %v", err)
+	}
+
+	start := make(chan struct{})
+	errs := make(chan error, 4)
+	var wg sync.WaitGroup
+	wg.Add(4)
+	go func() {
+		defer wg.Done()
+		<-start
+		for index := 0; index < 50; index++ {
+			if err := writer.Save(context.Background(), configFor("rotated-token")); err != nil {
+				errs <- err
+				return
+			}
+		}
+	}()
+	for range 3 {
+		go func() {
+			defer wg.Done()
+			<-start
+			for index := 0; index < 500; index++ {
+				cfg, err := reader.Load(context.Background())
+				if err != nil {
+					errs <- err
+					return
+				}
+				if len(cfg.Profiles) != 1 ||
+					(cfg.Profiles[0].WToken != "initial-token" &&
+						cfg.Profiles[0].WToken != "rotated-token") {
+					errs <- errors.New("reader observed an incomplete config")
+					return
+				}
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Errorf("concurrent load/save: %v", err)
 	}
 }

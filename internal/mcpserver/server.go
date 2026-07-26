@@ -26,6 +26,7 @@ func NewServer(deps Deps) *mcp.Server {
 		Version: version,
 		Title:   "Wolt food delivery",
 	}, nil)
+	srv.AddReceivingMiddleware(toolResultMiddleware)
 
 	tc := newToolCtx(deps)
 

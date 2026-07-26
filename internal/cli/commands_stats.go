@@ -140,11 +140,17 @@ func runStats(cmd *cobra.Command, deps Dependencies, flags globalFlags, opts sta
 	}
 	if !opts.NoSync {
 		writeStep(progress, 2, totalSteps, "Syncing your Wolt order history")
-		auth := buildAuthContextWithProfile(ctx, deps, flags)
-		if err := requireAuth(cmd, format, profileName, flags.Locale, flags.Output, auth); err != nil {
+		auth, err := loadRequiredAuth(ctx, deps, flags, format, cmd)
+		if err != nil {
 			return err
 		}
-		userPayload, authWarnings, userErr := invokeWithAuthAutoRefresh(
+		tokenPersistence := newCredentialPersistence(
+			ctx,
+			deps,
+			auth,
+			allowAutomaticCredentialPersistence(flags),
+		)
+		userPayload, authWarnings, userErr := invokeWithAuthAutoRefreshUsingPersistence(
 			ctx,
 			deps,
 			flags,
@@ -152,6 +158,7 @@ func runStats(cmd *cobra.Command, deps Dependencies, flags globalFlags, opts sta
 			func(authCtx woltgateway.AuthContext) (map[string]any, error) {
 				return deps.Wolt.UserMe(ctx, authCtx)
 			},
+			tokenPersistence,
 		)
 		warnings = append(warnings, authWarnings...)
 		if userErr != nil {
@@ -172,8 +179,18 @@ func runStats(cmd *cobra.Command, deps Dependencies, flags globalFlags, opts sta
 			Progress:    progress,
 			Verbose:     flags.Verbose,
 			Refresher:   deps.Wolt.RefreshAccessToken,
-			OnAuthRotated: func(updated woltgateway.AuthContext) error {
-				return upsertProfileTokens(ctx, deps, profileName, updated.WToken, updated.RefreshToken, false)
+			OnAccessTokenRefreshed: func(updated woltgateway.AuthContext) error {
+				attempted, persisted, persistErr := tokenPersistence.persistAccess(
+					ctx,
+					updated.WToken,
+				)
+				if persistErr != nil {
+					return persistErr
+				}
+				if attempted && !persisted {
+					return fmt.Errorf("saved credentials changed concurrently")
+				}
+				return nil
 			},
 		})
 		if syncErr != nil {

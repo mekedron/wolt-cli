@@ -1,6 +1,7 @@
 package wolt
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -42,8 +43,17 @@ func (e *UpstreamRequestError) Error() string {
 	return strings.Join(parts, "; ")
 }
 
-func (e *UpstreamRequestError) Unwrap() error {
-	return ErrUpstream
+func (e *UpstreamRequestError) Unwrap() []error {
+	if e.Cause == nil {
+		return []error{ErrUpstream}
+	}
+	return []error{ErrUpstream, e.Cause}
+}
+
+// HasStatus reports whether err wraps an upstream response with statusCode.
+func HasStatus(err error, statusCode int) bool {
+	var upstream *UpstreamRequestError
+	return errors.As(err, &upstream) && upstream.StatusCode == statusCode
 }
 
 // parseRetryAfter reads the Retry-After header per RFC 7231 §7.1.3.
@@ -81,4 +91,24 @@ func compactBodyPreview(body string) string {
 		return body[:maxErrorBodyPreview] + "..."
 	}
 	return body
+}
+
+// LooksLikeOutdatedClient reports whether a Wolt error body explicitly asks
+// the caller to update its client/application version.
+func LooksLikeOutdatedClient(body string) bool {
+	body = strings.ToLower(body)
+	for _, marker := range []string{
+		"client version",
+		"client-version",
+		"outdated client",
+		"update your app",
+		"update the app",
+		"app version",
+		"version of the app",
+	} {
+		if strings.Contains(body, marker) {
+			return true
+		}
+	}
+	return false
 }

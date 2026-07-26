@@ -100,9 +100,8 @@ func runProfileFavoritesList(
 	if err != nil {
 		return err
 	}
-	profileName := defaultProfileName(flags.Profile)
-	auth := buildAuthContextWithProfile(cmd.Context(), deps, flags)
-	if err := requireAuth(cmd, format, profileName, flags.Locale, flags.Output, auth); err != nil {
+	auth, err := loadRequiredAuth(cmd.Context(), deps, flags, format, cmd)
+	if err != nil {
 		return err
 	}
 
@@ -209,8 +208,8 @@ func runFavoriteVenueMutation(
 		return err
 	}
 	profileName := defaultProfileName(flags.Profile)
-	auth := buildAuthContextWithProfile(cmd.Context(), deps, flags)
-	if err := requireAuth(cmd, format, profileName, flags.Locale, flags.Output, auth); err != nil {
+	auth, err := loadRequiredAuth(cmd.Context(), deps, flags, format, cmd)
+	if err != nil {
 		return err
 	}
 
@@ -297,12 +296,12 @@ func resolveFavoriteVenueReference(
 
 	if payload, err := cachedVenuePageStatic(ctx, deps, candidate); err == nil {
 		reference := favoriteVenueReference{
-			VenueID: strings.TrimSpace(asString(coalesceAny(
+			VenueID: domain.NormalizeObjectID(coalesceAny(
 				asMap(payload["venue"])["id"],
 				asMap(payload["venue_raw"])["id"],
 				payload["venue_id"],
 				payload["id"],
-			))),
+			)),
 			Slug: strings.TrimSpace(asString(coalesceAny(
 				asMap(payload["venue"])["slug"],
 				asMap(payload["venue_raw"])["slug"],
@@ -333,13 +332,13 @@ func resolveFavoriteVenueReference(
 	}
 
 	reference := favoriteVenueReference{
-		VenueID: strings.TrimSpace(asString(item.Link.Target)),
+		VenueID: domain.NormalizeObjectID(item.Link.Target),
 		Slug:    candidate,
 		Name:    strings.TrimSpace(item.Title),
 	}
 	if item.Venue != nil {
-		if strings.TrimSpace(asString(item.Venue.ID)) != "" {
-			reference.VenueID = strings.TrimSpace(asString(item.Venue.ID))
+		if venueID := domain.NormalizeObjectID(item.Venue.ID); venueID != "" {
+			reference.VenueID = venueID
 		}
 		if strings.TrimSpace(item.Venue.Slug) != "" {
 			reference.Slug = strings.TrimSpace(item.Venue.Slug)

@@ -48,8 +48,8 @@ func runProfileOrdersList(
 		return err
 	}
 	profileName := defaultProfileName(flags.Profile)
-	auth := buildAuthContextWithProfile(cmd.Context(), deps, flags)
-	if err := requireAuth(cmd, format, profileName, flags.Locale, flags.Output, auth); err != nil {
+	auth, err := loadRequiredAuth(cmd.Context(), deps, flags, format, cmd)
+	if err != nil {
 		return err
 	}
 
@@ -114,8 +114,8 @@ func newProfileOrdersShowCommand(deps Dependencies) *cobra.Command {
 				return err
 			}
 			profileName := defaultProfileName(flags.Profile)
-			auth := buildAuthContextWithProfile(cmd.Context(), deps, flags)
-			if err := requireAuth(cmd, format, profileName, flags.Locale, flags.Output, auth); err != nil {
+			auth, err := loadRequiredAuth(cmd.Context(), deps, flags, format, cmd)
+			if err != nil {
 				return err
 			}
 			purchaseID := strings.TrimSpace(args[0])

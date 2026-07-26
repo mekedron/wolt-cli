@@ -3,14 +3,17 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/gorilla/websocket"
+	configstore "github.com/mekedron/wolt-cli/internal/config"
 	"github.com/mekedron/wolt-cli/internal/domain"
 	woltgateway "github.com/mekedron/wolt-cli/internal/gateway/wolt"
 )
@@ -23,6 +26,7 @@ type fakeChromeDevTools struct {
 	cookies   []map[string]any
 	pageURL   string
 	versionOK bool
+	stallCDP  bool
 }
 
 func newFakeChromeDevTools(t *testing.T, cookies []map[string]any, pageURL string) *fakeChromeDevTools {
@@ -72,6 +76,9 @@ func newFakeChromeDevTools(t *testing.T, cookies []map[string]any, pageURL strin
 			method, _ := msg["method"].(string)
 			response := map[string]any{"id": id}
 			if method == "Network.getAllCookies" {
+				if fake.stallCDP {
+					continue
+				}
 				response["result"] = map[string]any{"cookies": fake.cookies}
 			} else {
 				response["result"] = map[string]any{}
@@ -100,6 +107,98 @@ func TestChromeDevToolsReady(t *testing.T) {
 	fake.versionOK = false
 	if chromeDevToolsReady(context.Background(), fake.BrowserURL()) {
 		t.Fatal("expected ready check to fail when /json/version returns 5xx")
+	}
+}
+
+func TestChromeDevToolsReadyBoundsStalledHTTP(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {
+		<-request.Context().Done()
+	}))
+	defer server.Close()
+
+	start := time.Now()
+	if chromeDevToolsReady(context.Background(), server.URL) {
+		t.Fatal("stalled DevTools probe reported ready")
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("stalled DevTools probe exceeded its bound: %s", elapsed)
+	}
+}
+
+func TestDiscoverChromeBinaryHonorsConfiguredPath(t *testing.T) {
+	configured := filepath.Join(t.TempDir(), "custom-browser")
+	got, err := discoverChromeBinary(
+		"linux",
+		func(key string) string {
+			if key == "CHROME_BIN" {
+				return `"` + configured + `"`
+			}
+			return ""
+		},
+		func(string) (string, error) { return "", errors.New("not on PATH") },
+		func(path string) bool { return path == configured },
+	)
+	if err != nil {
+		t.Fatalf("discover configured Chrome: %v", err)
+	}
+	if got != configured {
+		t.Fatalf("configured Chrome = %q, want %q", got, configured)
+	}
+}
+
+func TestDiscoverChromeBinaryUsesPlatformPathCandidates(t *testing.T) {
+	tests := []struct {
+		name     string
+		goos     string
+		command  string
+		resolved string
+	}{
+		{name: "Windows", goos: "windows", command: "msedge.exe", resolved: `C:\Browser\msedge.exe`},
+		{name: "macOS", goos: "darwin", command: "chromium", resolved: "/usr/local/bin/chromium"},
+		{name: "Linux", goos: "linux", command: "google-chrome-stable", resolved: "/usr/bin/google-chrome-stable"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := discoverChromeBinary(
+				test.goos,
+				func(string) string { return "" },
+				func(command string) (string, error) {
+					if command == test.command {
+						return test.resolved, nil
+					}
+					return "", errors.New("not on PATH")
+				},
+				func(string) bool { return false },
+			)
+			if err != nil {
+				t.Fatalf("discover Chrome on %s: %v", test.goos, err)
+			}
+			if got != test.resolved {
+				t.Fatalf("resolved Chrome = %q, want %q", got, test.resolved)
+			}
+		})
+	}
+}
+
+func TestDiscoverChromeBinaryUsesWindowsInstallLocation(t *testing.T) {
+	localAppData := t.TempDir()
+	expected := filepath.Join(localAppData, "Google", "Chrome", "Application", "chrome.exe")
+	got, err := discoverChromeBinary(
+		"windows",
+		func(key string) string {
+			if key == "LOCALAPPDATA" {
+				return localAppData
+			}
+			return ""
+		},
+		func(string) (string, error) { return "", errors.New("not on PATH") },
+		func(path string) bool { return path == expected },
+	)
+	if err != nil {
+		t.Fatalf("discover installed Chrome: %v", err)
+	}
+	if got != expected {
+		t.Fatalf("installed Chrome = %q, want %q", got, expected)
 	}
 }
 
@@ -232,6 +331,38 @@ func TestLogoutClearsSavedAccountState(t *testing.T) {
 	}
 }
 
+func TestLoginAcceptsRefreshOnlyCredentialsWithoutOpeningChrome(t *testing.T) {
+	t.Setenv("WOLT_CONFIG_PATH", filepath.Join(t.TempDir(), "config.json"))
+	store, err := configstore.NewStore()
+	if err != nil {
+		t.Fatalf("create config store: %v", err)
+	}
+	cmd := newLoginCommand(Dependencies{Config: store})
+	output := &strings.Builder{}
+	cmd.SetOut(output)
+	cmd.SetErr(output)
+	cmd.SetArgs([]string{
+		"--wrtoken", "synthetic-refresh",
+		"--browser-url", "http://127.0.0.1:1",
+		"--format", "json",
+	})
+
+	if err := cmd.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("refresh-only login: %v\n%s", err, output.String())
+	}
+	saved, err := store.Load(context.Background())
+	if err != nil {
+		t.Fatalf("load saved config: %v", err)
+	}
+	if saved.Account.WRefreshToken != "synthetic-refresh" ||
+		saved.Account.WToken != "" || len(saved.Account.Cookies) != 0 {
+		t.Fatalf("saved refresh-only account = %#v", saved.Account)
+	}
+	if !strings.Contains(output.String(), `"logged_in": true`) {
+		t.Fatalf("refresh-only login output = %s", output.String())
+	}
+}
+
 func parseURLForTest(t *testing.T, raw string) *url.URL {
 	t.Helper()
 	parsed, err := url.Parse(raw)
@@ -255,6 +386,22 @@ func TestEnsureManagedChromeAcceptsRunningServer(t *testing.T) {
 	parsed := parseURLForTest(t, fake.BrowserURL())
 	if parsed.Host == "" {
 		t.Fatalf("fake browser URL has no host: %q", fake.BrowserURL())
+	}
+}
+
+func TestWaitForChromeDevToolsRespectsContext(t *testing.T) {
+	fake := newFakeChromeDevTools(t, nil, "https://wolt.com/")
+	fake.versionOK = false
+	defer fake.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 80*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	if waitForChromeDevTools(ctx, fake.BrowserURL()) {
+		t.Fatal("unready DevTools server became ready")
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("startup polling ignored context deadline: %s", elapsed)
 	}
 }
 
@@ -285,6 +432,36 @@ func TestLoginViaManagedChromeWaitsForRealSession(t *testing.T) {
 	}
 	if elapsed < 500*time.Millisecond {
 		t.Fatalf("expected polling to wait until timeout (~750ms), got %s — suggests the loop exited early on noise cookies", elapsed)
+	}
+	if elapsed > 2*time.Second {
+		t.Fatalf("browser login exceeded its overall timeout: %s", elapsed)
+	}
+}
+
+func TestLoginViaManagedChromeBoundsStalledCDP(t *testing.T) {
+	fake := newFakeChromeDevTools(t, nil, "https://wolt.com/en/login")
+	fake.stallCDP = true
+	defer fake.Close()
+
+	start := time.Now()
+	_, err := loginViaManagedChrome(
+		context.Background(),
+		fake.BrowserURL(),
+		"https://wolt.com/en/login",
+		150*time.Millisecond,
+	)
+	if err == nil || !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("stalled CDP error = %v, want browser login timeout", err)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("stalled CDP exceeded browser login timeout: %s", elapsed)
+	}
+}
+
+func TestLoginViaManagedChromeRejectsNonPositiveTimeout(t *testing.T) {
+	_, err := loginViaManagedChrome(context.Background(), "", "", 0)
+	if err == nil || !strings.Contains(err.Error(), "greater than zero") {
+		t.Fatalf("zero browser timeout error = %v", err)
 	}
 }
 

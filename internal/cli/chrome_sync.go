@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mekedron/wolt-cli/internal/domain"
 	woltgateway "github.com/mekedron/wolt-cli/internal/gateway/wolt"
 )
 
@@ -22,6 +21,8 @@ const (
 	// hardened setups can set it too.
 	envDisableChromeSync = "WOLT_DISABLE_CHROME_SYNC"
 )
+
+var pullOpportunisticChromeAuth = pullAuthFromRunningChrome
 
 // pullAuthFromRunningChrome reads Wolt auth cookies from a Chrome that is
 // already running with --remote-debugging-port. Unlike loginViaManagedChrome it
@@ -41,19 +42,19 @@ func pullAuthFromRunningChrome(ctx context.Context, browserURL string) (woltgate
 		browserURL = fmt.Sprintf("http://127.0.0.1:%d", defaultChromeDebugPort)
 	}
 
-	probeCtx, cancel := context.WithTimeout(ctx, chromeProbeTimeout)
+	scrapeCtx, cancel := context.WithTimeout(ctx, chromeProbeTimeout)
 	defer cancel()
-	if !chromeDevToolsReady(probeCtx, browserURL) {
+	if !chromeDevToolsReady(scrapeCtx, browserURL) {
 		return woltgateway.AuthContext{}, false, nil
 	}
 
-	auth, err := readAuthFromChrome(ctx, browserURL)
+	auth, err := readAuthFromChrome(scrapeCtx, browserURL)
 	if err != nil {
 		// Chrome is up but has no wolt.com session, or CDP refused — treat as
 		// "no fresh auth available", not as a hard failure.
 		return woltgateway.AuthContext{}, false, nil
 	}
-	if !auth.HasCredentials() {
+	if !chromeAuthHasRealSession(auth) {
 		return woltgateway.AuthContext{}, false, nil
 	}
 	return auth, true, nil
@@ -77,40 +78,21 @@ func chromeAuthIsFresherThan(chromeAuth woltgateway.AuthContext, currentToken st
 	return chromeExp.After(currentExp)
 }
 
-// adoptChromeAuth replaces the in-memory auth context with Chrome's snapshot
-// and persists the cookies+bootstrap refresh token so the next CLI run starts
-// off the freshest chain. This is the "re-bootstrap" path — we deliberately
-// write the refresh token, unlike a normal mid-process rotation.
+// adoptChromeAuth replaces only the current process's auth context with
+// Chrome's snapshot. Opportunistic sync must never rewrite shared config:
+// explicit `wolt login` and `wolt logout` are the only credential writers.
 func adoptChromeAuth(
-	ctx context.Context,
-	deps Dependencies,
 	auth *woltgateway.AuthContext,
 	chromeAuth woltgateway.AuthContext,
 ) error {
 	if auth == nil {
 		return fmt.Errorf("auth context is nil")
 	}
-	auth.WToken = chromeAuth.WToken
-	if strings.TrimSpace(chromeAuth.RefreshToken) != "" {
-		auth.RefreshToken = chromeAuth.RefreshToken
+	adopted := chromeAuth
+	if strings.TrimSpace(adopted.RefreshToken) == "" {
+		adopted.RefreshToken = auth.RefreshToken
 	}
-	auth.Cookies = append([]string(nil), chromeAuth.Cookies...)
-	if deps.Config == nil {
-		return nil
-	}
-	cfg, err := deps.Config.Load(ctx)
-	if err != nil {
-		cfg = domain.Config{Profiles: []domain.Profile{{Name: "default", IsDefault: true}}}
-	}
-	if len(cfg.Profiles) == 0 {
-		cfg.Profiles = []domain.Profile{{Name: "default", IsDefault: true}}
-	}
-	cfg.Profiles[0].Name = "default"
-	cfg.Profiles[0].IsDefault = true
-	cfg.Profiles[0].WToken = normalizeWToken(auth.WToken)
-	if strings.TrimSpace(auth.RefreshToken) != "" {
-		cfg.Profiles[0].WRefreshToken = normalizeRefreshToken(auth.RefreshToken)
-	}
-	cfg.Profiles[0].Cookies = append([]string(nil), auth.Cookies...)
-	return deps.Config.Save(ctx, cfg)
+	adopted.Cookies = append([]string(nil), chromeAuth.Cookies...)
+	*auth = adopted
+	return nil
 }

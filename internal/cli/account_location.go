@@ -19,10 +19,10 @@ func resolveAccountLocation(
 		return domain.Location{}, fmt.Errorf("wolt api client is not available")
 	}
 	auth := authContextFromProfile(profile)
-	if authOverride != nil && authOverride.HasCredentials() {
+	if authOverride != nil && authOverride.CanAuthenticate() {
 		auth = *authOverride
 	}
-	if !auth.HasCredentials() {
+	if !auth.CanAuthenticate() {
 		return domain.Location{}, fmt.Errorf("no auth credentials available for Wolt account address lookup")
 	}
 

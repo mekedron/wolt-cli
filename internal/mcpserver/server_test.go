@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"context"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/mekedron/wolt-cli/internal/domain"
 	woltgateway "github.com/mekedron/wolt-cli/internal/gateway/wolt"
+	profileservice "github.com/mekedron/wolt-cli/internal/service/profile"
 )
 
 func parseTime(value string) time.Time {
@@ -29,6 +31,7 @@ var expectedToolNames = []string{
 	"wolt_search_venues",
 	"wolt_venue_categories",
 	"wolt_resolve_address",
+	"wolt_resolve_venue",
 	"wolt_venue_detail",
 	"wolt_venue_menu",
 	"wolt_venue_hours",
@@ -56,7 +59,6 @@ func TestServerRegistersAllExpectedTools(t *testing.T) {
 		Wolt:     &stubWolt{},
 		Profiles: &stubProfiles{},
 		Location: &stubLocation{},
-		Config:   &stubConfig{},
 		Version:  "v0.0.0-test",
 	})
 
@@ -88,6 +90,50 @@ func TestServerRegistersAllExpectedTools(t *testing.T) {
 	}
 }
 
+func TestCartMutationToolAnnotations(t *testing.T) {
+	ctx := context.Background()
+	_, cs := connectInMemory(t, Deps{
+		Wolt:     &stubWolt{},
+		Profiles: &stubProfiles{},
+		Location: &stubLocation{},
+	})
+	defer func() { _ = cs.Close() }()
+
+	wantIdempotent := map[string]bool{
+		"wolt_cart_remove": false,
+		"wolt_cart_clear":  true,
+	}
+	seen := make(map[string]bool, len(wantIdempotent))
+	for tool, err := range cs.Tools(ctx, nil) {
+		if err != nil {
+			t.Fatalf("list tools: %v", err)
+		}
+		want, ok := wantIdempotent[tool.Name]
+		if !ok {
+			continue
+		}
+		seen[tool.Name] = true
+		if tool.Annotations == nil {
+			t.Errorf("%s annotations are nil", tool.Name)
+			continue
+		}
+		if tool.Annotations.ReadOnlyHint {
+			t.Errorf("%s ReadOnlyHint = true, want false", tool.Name)
+		}
+		if tool.Annotations.DestructiveHint == nil || !*tool.Annotations.DestructiveHint {
+			t.Errorf("%s DestructiveHint = %v, want true", tool.Name, tool.Annotations.DestructiveHint)
+		}
+		if tool.Annotations.IdempotentHint != want {
+			t.Errorf("%s IdempotentHint = %t, want %t", tool.Name, tool.Annotations.IdempotentHint, want)
+		}
+	}
+	for name := range wantIdempotent {
+		if !seen[name] {
+			t.Errorf("missing tool: %s", name)
+		}
+	}
+}
+
 func TestFeedToolReturnsStructuredOutput(t *testing.T) {
 	ctx := context.Background()
 	sectionsCalled := false
@@ -97,7 +143,7 @@ func TestFeedToolReturnsStructuredOutput(t *testing.T) {
 			return []domain.Section{{Name: "popular", Title: "Popular", Items: []domain.Item{}}}, nil
 		},
 	}
-	srv, cs := connectInMemory(t, Deps{Wolt: wolt, Profiles: &stubProfiles{}, Location: &stubLocation{}, Config: &stubConfig{}})
+	srv, cs := connectInMemory(t, Deps{Wolt: wolt, Profiles: &stubProfiles{}, Location: &stubLocation{}})
 	defer func() { _ = cs.Close() }()
 	_ = srv
 
@@ -123,9 +169,8 @@ func TestAccountStatusRejectsUnauthenticated(t *testing.T) {
 	ctx := context.Background()
 	srv, cs := connectInMemory(t, Deps{
 		Wolt:     &stubWolt{},
-		Profiles: &stubProfiles{findErr: errors.New("no profile")},
+		Profiles: &stubProfiles{findErr: profileservice.ErrDefaultProfileNotFound},
 		Location: &stubLocation{},
-		Config:   &stubConfig{},
 	})
 	defer func() { _ = cs.Close() }()
 	_ = srv
@@ -151,7 +196,6 @@ func TestResolveLocationPrefersExplicitLatLon(t *testing.T) {
 			geocodeCalled = true
 			return domain.Location{Lat: 1, Lon: 1}, nil
 		}},
-		Config: &stubConfig{},
 	})
 	loc, src, err := tc.resolveLocation(context.Background(), LocationInput{Lat: 60.5, Lon: 24.5})
 	if err != nil {
@@ -169,7 +213,7 @@ func TestResolveLocationPrefersExplicitLatLon(t *testing.T) {
 }
 
 func TestResolveLocationRejectsHalfPair(t *testing.T) {
-	tc := newToolCtx(Deps{Wolt: &stubWolt{}, Profiles: &stubProfiles{}, Location: &stubLocation{}, Config: &stubConfig{}})
+	tc := newToolCtx(Deps{Wolt: &stubWolt{}, Profiles: &stubProfiles{}, Location: &stubLocation{}})
 	_, _, err := tc.resolveLocation(context.Background(), LocationInput{Lat: 60.5})
 	if err == nil {
 		t.Fatalf("expected error for half lat/lon pair")
@@ -177,10 +221,31 @@ func TestResolveLocationRejectsHalfPair(t *testing.T) {
 }
 
 func TestResolveLocationRejectsAddressWithLatLon(t *testing.T) {
-	tc := newToolCtx(Deps{Wolt: &stubWolt{}, Profiles: &stubProfiles{}, Location: &stubLocation{}, Config: &stubConfig{}})
+	tc := newToolCtx(Deps{Wolt: &stubWolt{}, Profiles: &stubProfiles{}, Location: &stubLocation{}})
 	_, _, err := tc.resolveLocation(context.Background(), LocationInput{Lat: 60.5, Lon: 24.5, Address: "Foo"})
 	if err == nil {
 		t.Fatalf("expected error for address combined with lat/lon")
+	}
+}
+
+func TestResolveLocationPreservesProfileConfigFailures(t *testing.T) {
+	tc := newToolCtx(Deps{
+		Wolt: &stubWolt{},
+		Profiles: &stubProfiles{findErr: &os.PathError{
+			Op:   "open",
+			Path: `C:\private\.wolt-config.json`,
+			Err:  errors.New("sharing violation"),
+		}},
+		Location: &stubLocation{},
+	})
+	_, _, err := tc.resolveLocation(context.Background(), LocationInput{})
+	var configErr *profileConfigError
+	if !errors.As(err, &configErr) {
+		t.Fatalf("resolveLocation error = %v, want profileConfigError", err)
+	}
+	if strings.Contains(err.Error(), "wolt login") ||
+		strings.Contains(err.Error(), ".wolt-config.json") {
+		t.Fatalf("profile config failure was misclassified or leaked a path: %q", err)
 	}
 }
 
@@ -201,7 +266,6 @@ func TestNewToolCtxPropagatesLocaleFromDeps(t *testing.T) {
 				Wolt:     &stubWolt{},
 				Profiles: &stubProfiles{},
 				Location: &stubLocation{},
-				Config:   &stubConfig{},
 				Locale:   tc.locale,
 			})
 			if ctx.locale != tc.want {
@@ -239,7 +303,6 @@ func TestVenueSearchItemsUsesConfiguredLocale(t *testing.T) {
 				Wolt:     wolt,
 				Profiles: &stubProfiles{},
 				Location: &stubLocation{},
-				Config:   &stubConfig{},
 				Locale:   tc.locale,
 			})
 			defer func() { _ = cs.Close() }()
@@ -291,7 +354,7 @@ func TestResolveVenueRefFallsBackToDynamic(t *testing.T) {
 	wolt := &stubWolt{
 		venueStaticFn: func(_ context.Context, _ string) (map[string]any, error) {
 			staticCalls++
-			// Wolt now 404s the static page for most venues.
+			// Keep compatibility if a particular static venue page is missing.
 			return nil, errors.New("status 404")
 		},
 		venueDynamicFn: func(_ context.Context, slug string, _ woltgateway.VenuePageDynamicOptions) (map[string]any, error) {
@@ -302,7 +365,7 @@ func TestResolveVenueRefFallsBackToDynamic(t *testing.T) {
 			return map[string]any{"venue": map[string]any{"id": "637e383476c00f021e6bf084"}}, nil
 		},
 	}
-	tc := newToolCtx(Deps{Wolt: wolt, Profiles: &stubProfiles{}, Location: &stubLocation{}, Config: &stubConfig{}})
+	tc := newToolCtx(Deps{Wolt: wolt, Profiles: &stubProfiles{}, Location: &stubLocation{}})
 
 	ref, err := tc.resolveVenueRef(context.Background(), "eat-poke-iso-omena")
 	if err != nil {
@@ -351,18 +414,83 @@ func TestResolveVenueRefResolvesSlugFromObjectID(t *testing.T) {
 	}
 }
 
+func TestResolveVenueRefDoesNotReportUnresolvedSlugAsVenueID(t *testing.T) {
+	tc := newToolCtx(Deps{
+		Wolt: &stubWolt{
+			venueStaticFn: func(context.Context, string) (map[string]any, error) {
+				return nil, errors.New("static unavailable")
+			},
+			venueDynamicFn: func(context.Context, string, woltgateway.VenuePageDynamicOptions) (map[string]any, error) {
+				return nil, errors.New("dynamic unavailable")
+			},
+		},
+	})
+
+	ref, err := tc.resolveVenueRef(context.Background(), "example-market")
+	if err != nil {
+		t.Fatalf("resolveVenueRef: %v", err)
+	}
+	if ref.ID != "" || ref.Slug != "example-market" {
+		t.Fatalf("unresolved reference = %#v, want empty canonical ID and preserved slug", ref)
+	}
+}
+
+func TestNormalizeVenueInputUsesVenueSegmentForNestedURL(t *testing.T) {
+	got := normalizeVenueInput(
+		"https://wolt.com/en/test/venue/synthetic-market/items/000000000000000000000101",
+	)
+	if got != "synthetic-market" {
+		t.Fatalf("normalizeVenueInput = %q, want synthetic-market", got)
+	}
+}
+
+func TestResolveVenueObjectIDUsesDynamicFallbackForSlug(t *testing.T) {
+	const (
+		venueID   = "000000000000000000000061"
+		venueSlug = "example-market"
+	)
+	tc := newToolCtx(Deps{
+		Wolt: &stubWolt{
+			venueStaticFn: func(context.Context, string) (map[string]any, error) {
+				return nil, errors.New("static unavailable")
+			},
+			venueDynamicFn: func(_ context.Context, reference string, _ woltgateway.VenuePageDynamicOptions) (map[string]any, error) {
+				if reference != venueID {
+					t.Fatalf("dynamic reference = %q, want %q", reference, venueID)
+				}
+				return map[string]any{
+					"venue": map[string]any{"id": venueID, "slug": venueSlug},
+				}, nil
+			},
+		},
+	})
+
+	ref, err := tc.resolveVenueRef(context.Background(), venueID)
+	if err != nil {
+		t.Fatalf("resolveVenueRef: %v", err)
+	}
+	if ref.ID != venueID || ref.Slug != venueSlug {
+		t.Fatalf("resolved ref = %#v", ref)
+	}
+}
+
 // TestHandleCartAddRejectsUnresolvedVenue locks in the issue #19 fix for the
 // MCP path: when a slug cannot be resolved to a real venue id, wolt_cart_add
 // must error rather than POST the slug as venue_id (which the Wolt backend
 // turns into a non-persisting phantom basket while reporting success).
 func TestHandleCartAddRejectsUnresolvedVenue(t *testing.T) {
 	addCalled := false
+	itemPageCalled := false
 	wolt := &stubWolt{
 		venueStaticFn: func(context.Context, string) (map[string]any, error) {
 			return nil, errors.New("status 404")
 		},
 		venueDynamicFn: func(context.Context, string, woltgateway.VenuePageDynamicOptions) (map[string]any, error) {
 			return nil, errors.New("status 404")
+		},
+		venueItemPageFn: func(context.Context, string, string) (map[string]any, error) {
+			itemPageCalled = true
+			return nil, errors.New("item page requires a canonical venue id")
 		},
 		addToBasketFn: func(context.Context, map[string]any, woltgateway.AuthContext) (map[string]any, error) {
 			addCalled = true
@@ -373,13 +501,13 @@ func TestHandleCartAddRejectsUnresolvedVenue(t *testing.T) {
 		Wolt:     wolt,
 		Profiles: &stubProfiles{profile: domain.Profile{Name: "default", WToken: "token"}},
 		Location: &stubLocation{},
-		Config:   &stubConfig{},
 	})
 
 	_, _, err := tc.handleCartAdd(context.Background(), nil, CartAddInput{
-		Venue:  "unresolved-slug",
-		ItemID: "637f5bdbe4e55632767da017",
-		Price:  500,
+		LocationInput: LocationInput{Lat: 10.25, Lon: 20.5},
+		Venue:         "unresolved-slug",
+		ItemID:        "637f5bdbe4e55632767da017",
+		Price:         500,
 	})
 	if err == nil {
 		t.Fatalf("expected an error for an unresolved venue, got nil")
@@ -389,6 +517,9 @@ func TestHandleCartAddRejectsUnresolvedVenue(t *testing.T) {
 	}
 	if addCalled {
 		t.Fatalf("AddToBasket must NOT be called when the venue is unresolved (would create a phantom basket)")
+	}
+	if itemPageCalled {
+		t.Fatal("VenueItemPage must not be called without a canonical venue id")
 	}
 }
 
@@ -402,7 +533,10 @@ func TestHandleCartAddBlocksUnavailableItemEvenWithOverrides(t *testing.T) {
 		},
 		assortmentItemsFn: func(_ context.Context, _ string, _ []string, auth woltgateway.AuthContext) (map[string]any, error) {
 			if auth.HasCredentials() {
-				return nil, errors.New("authenticated public catalog read rejected")
+				return nil, &woltgateway.UpstreamRequestError{
+					Method:     "POST",
+					StatusCode: 401,
+				}
 			}
 			return map[string]any{"items": []any{
 				map[string]any{
@@ -422,7 +556,6 @@ func TestHandleCartAddBlocksUnavailableItemEvenWithOverrides(t *testing.T) {
 		Wolt:     wolt,
 		Profiles: &stubProfiles{profile: domain.Profile{Name: "default", WToken: "token"}},
 		Location: &stubLocation{},
-		Config:   &stubConfig{},
 	})
 
 	_, _, err := tc.handleCartAdd(context.Background(), nil, CartAddInput{
@@ -468,7 +601,6 @@ func TestHandleCartAddUsesVenueGELCurrency(t *testing.T) {
 		Wolt:     wolt,
 		Profiles: &stubProfiles{profile: domain.Profile{Name: "default", WToken: "token"}},
 		Location: &stubLocation{},
-		Config:   &stubConfig{},
 	})
 
 	_, _, err := tc.handleCartAdd(context.Background(), nil, CartAddInput{
@@ -503,7 +635,7 @@ func TestHandleVenueItemReturnsCurrentImageAndAvailability(t *testing.T) {
 			}}, nil
 		},
 	}
-	tc := newToolCtx(Deps{Wolt: wolt, Profiles: &stubProfiles{}, Location: &stubLocation{}, Config: &stubConfig{}})
+	tc := newToolCtx(Deps{Wolt: wolt, Profiles: &stubProfiles{}, Location: &stubLocation{}})
 
 	_, out, err := tc.handleVenueItem(context.Background(), nil, VenueItemInput{
 		Venue:  "test-venue",
@@ -553,17 +685,21 @@ func textContent(res *mcp.CallToolResult) string {
 // ---------------- stubs ----------------
 
 type stubWolt struct {
-	sectionsFn         func(context.Context, domain.Location) ([]domain.Section, error)
-	itemsFn            func(context.Context, domain.Location) ([]domain.Item, error)
-	userMeFn           func(context.Context, woltgateway.AuthContext) (map[string]any, error)
-	restaurantFn       func(context.Context, string) (*domain.Restaurant, error)
-	assortmentSearchFn func(context.Context, string, string, string, woltgateway.AuthContext) (map[string]any, error)
-	assortmentItemsFn  func(context.Context, string, []string, woltgateway.AuthContext) (map[string]any, error)
-	venueStaticFn      func(context.Context, string) (map[string]any, error)
-	venueDynamicFn     func(context.Context, string, woltgateway.VenuePageDynamicOptions) (map[string]any, error)
-	addToBasketFn      func(context.Context, map[string]any, woltgateway.AuthContext) (map[string]any, error)
-	basketsPageFn      func(context.Context, domain.Location, woltgateway.AuthContext) (map[string]any, error)
-	checkoutPreviewFn  func(context.Context, map[string]any, woltgateway.AuthContext) (map[string]any, error)
+	sectionsFn           func(context.Context, domain.Location) ([]domain.Section, error)
+	itemsFn              func(context.Context, domain.Location) ([]domain.Item, error)
+	userMeFn             func(context.Context, woltgateway.AuthContext) (map[string]any, error)
+	searchFn             func(context.Context, domain.Location, string) (map[string]any, error)
+	assortmentFn         func(context.Context, string) (map[string]any, error)
+	assortmentCategoryFn func(context.Context, string, string, string, woltgateway.AuthContext) (map[string]any, error)
+	assortmentSearchFn   func(context.Context, string, string, string, woltgateway.AuthContext) (map[string]any, error)
+	assortmentItemsFn    func(context.Context, string, []string, woltgateway.AuthContext) (map[string]any, error)
+	venueStaticFn        func(context.Context, string) (map[string]any, error)
+	venueDynamicFn       func(context.Context, string, woltgateway.VenuePageDynamicOptions) (map[string]any, error)
+	venueItemPageFn      func(context.Context, string, string) (map[string]any, error)
+	addToBasketFn        func(context.Context, map[string]any, woltgateway.AuthContext) (map[string]any, error)
+	basketsPageFn        func(context.Context, domain.Location, woltgateway.AuthContext) (map[string]any, error)
+	deleteBasketsFn      func(context.Context, []string, woltgateway.AuthContext) (map[string]any, error)
+	checkoutPreviewFn    func(context.Context, map[string]any, woltgateway.AuthContext) (map[string]any, error)
 }
 
 func (s *stubWolt) FrontPage(context.Context, domain.Location) (map[string]any, error) {
@@ -581,13 +717,10 @@ func (s *stubWolt) Items(ctx context.Context, loc domain.Location) ([]domain.Ite
 	}
 	return nil, nil
 }
-func (s *stubWolt) RestaurantByID(ctx context.Context, id string) (*domain.Restaurant, error) {
-	if s.restaurantFn != nil {
-		return s.restaurantFn(ctx, id)
+func (s *stubWolt) Search(ctx context.Context, location domain.Location, query string) (map[string]any, error) {
+	if s.searchFn != nil {
+		return s.searchFn(ctx, location, query)
 	}
-	return nil, nil
-}
-func (s *stubWolt) Search(context.Context, domain.Location, string) (map[string]any, error) {
 	return map[string]any{}, nil
 }
 func (s *stubWolt) VenuePageStatic(ctx context.Context, slug string) (map[string]any, error) {
@@ -602,10 +735,22 @@ func (s *stubWolt) VenuePageDynamic(ctx context.Context, slug string, opts woltg
 	}
 	return map[string]any{}, nil
 }
-func (s *stubWolt) AssortmentByVenueSlug(context.Context, string) (map[string]any, error) {
+func (s *stubWolt) AssortmentByVenueSlug(ctx context.Context, slug string) (map[string]any, error) {
+	if s.assortmentFn != nil {
+		return s.assortmentFn(ctx, slug)
+	}
 	return map[string]any{}, nil
 }
-func (s *stubWolt) AssortmentCategoryByVenueSlug(context.Context, string, string, string, woltgateway.AuthContext) (map[string]any, error) {
+func (s *stubWolt) AssortmentCategoryByVenueSlug(
+	ctx context.Context,
+	slug string,
+	category string,
+	language string,
+	auth woltgateway.AuthContext,
+) (map[string]any, error) {
+	if s.assortmentCategoryFn != nil {
+		return s.assortmentCategoryFn(ctx, slug, category, language, auth)
+	}
 	return map[string]any{}, nil
 }
 func (s *stubWolt) AssortmentItemsByVenueSlug(ctx context.Context, slug string, itemIDs []string, auth woltgateway.AuthContext) (map[string]any, error) {
@@ -623,7 +768,10 @@ func (s *stubWolt) AssortmentItemsSearchByVenueSlug(ctx context.Context, slug st
 func (s *stubWolt) VenueContentByVenueSlug(context.Context, string, string, woltgateway.AuthContext) (map[string]any, error) {
 	return map[string]any{}, nil
 }
-func (s *stubWolt) VenueItemPage(context.Context, string, string) (map[string]any, error) {
+func (s *stubWolt) VenueItemPage(ctx context.Context, venueID string, itemID string) (map[string]any, error) {
+	if s.venueItemPageFn != nil {
+		return s.venueItemPageFn(ctx, venueID, itemID)
+	}
 	return map[string]any{}, nil
 }
 func (s *stubWolt) ItemBySlug(context.Context, domain.Location, string) (*domain.Item, error) {
@@ -686,7 +834,10 @@ func (s *stubWolt) AddToBasket(ctx context.Context, payload map[string]any, auth
 	}
 	return map[string]any{}, nil
 }
-func (s *stubWolt) DeleteBaskets(context.Context, []string, woltgateway.AuthContext) (map[string]any, error) {
+func (s *stubWolt) DeleteBaskets(ctx context.Context, ids []string, auth woltgateway.AuthContext) (map[string]any, error) {
+	if s.deleteBasketsFn != nil {
+		return s.deleteBasketsFn(ctx, ids, auth)
+	}
 	return map[string]any{}, nil
 }
 func (s *stubWolt) CheckoutPreview(ctx context.Context, payload map[string]any, auth woltgateway.AuthContext) (map[string]any, error) {
@@ -732,17 +883,4 @@ func (s *stubLocation) Get(ctx context.Context, address string) (domain.Location
 		return s.getFn(ctx, address)
 	}
 	return domain.Location{}, nil
-}
-
-type stubConfig struct {
-	cfg domain.Config
-}
-
-func (s *stubConfig) Path() string { return "/tmp/test-config.json" }
-func (s *stubConfig) Load(context.Context) (domain.Config, error) {
-	return s.cfg, nil
-}
-func (s *stubConfig) Save(_ context.Context, cfg domain.Config) error {
-	s.cfg = cfg
-	return nil
 }

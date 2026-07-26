@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -54,14 +55,17 @@ func (tc *ToolCtx) resolveLocation(ctx context.Context, in LocationInput) (domai
 	// No explicit args — fall back to the profile.
 	profile, err := tc.loadProfile(ctx)
 	if err != nil {
-		return domain.Location{}, "", fmt.Errorf("no location provided and no saved profile: pass lat/lon or address, or run 'wolt login'")
+		if errors.Is(err, ErrNotLoggedIn) {
+			return domain.Location{}, "", fmt.Errorf("no location provided and no saved profile: pass lat/lon or address, or run 'wolt login'")
+		}
+		return domain.Location{}, "", err
 	}
 	if profile.Location.Lat != 0 || profile.Location.Lon != 0 {
 		return profile.Location, "profile", nil
 	}
 
 	auth := buildAuthContext(profile)
-	if !auth.HasCredentials() {
+	if !auth.CanAuthenticate() {
 		return domain.Location{}, "", fmt.Errorf("no saved location and no Wolt session; pass lat/lon or address, or run 'wolt login'")
 	}
 	payload, err := invokeWithRefresh(ctx, tc, &auth, func(authCtx woltgateway.AuthContext) (map[string]any, error) {
