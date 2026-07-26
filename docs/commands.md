@@ -4,12 +4,12 @@
 the same machine output (`--format table|json|yaml`) and the same global
 flags listed at the bottom of this page.
 
-> **Driving from an AI client?** The same business logic is also exposed via
-> the bundled `wolt-mcp` server, which speaks the Model Context Protocol
+> **Driving from an AI client?** A typed tool surface is also exposed via the
+> bundled `wolt-mcp` server, which speaks the Model Context Protocol
 > (Claude Desktop, Claude Code, Cursor, …). See [`mcp.md`](mcp.md) for the
 > tool catalog and wiring snippets. The CLI commands below stay the
-> authoritative reference for flag shape, output envelope, and behavior; the
-> MCP tools wrap the same code paths.
+> authoritative reference for CLI flags and envelopes. MCP handlers share the
+> same Wolt gateway and service packages but have their own typed contracts.
 
 | Command | Purpose |
 |---|---|
@@ -38,15 +38,23 @@ wolt login --cookie "__wtoken=<token>"      # cookie-style auth (repeatable)
 Without token flags, a managed Chrome window is opened against
 `http://127.0.0.1:9222` (see `scripts/start-chrome.sh`). After a successful
 sign-in on `https://wolt.com/login`, Wolt cookies are extracted via the
-Chrome DevTools Protocol, normalized into `wtoken` / `wrefresh_token`,
-and saved with `0600` permissions to:
+Chrome DevTools Protocol and normalized into `wtoken` / `wrefresh_token`.
+The launcher checks `CHROME_BIN`, browsers on `PATH`, and standard Chrome,
+Chromium, and Edge install locations on Windows, macOS, and Linux. `--timeout`
+bounds browser discovery, DevTools requests, and the complete login wait.
+The config is saved with `0600` permissions on Unix; on Windows it relies on
+the inherited ACL of the user's profile directory. It is written to:
 
 - `$WOLT_CONFIG_PATH` if set, else `~/.wolt/.wolt-config.json`
 
 `--wtoken` accepts raw JWT, `Bearer <jwt>`, JSON `accessToken` payloads,
 URL-encoded payloads, and cookie blobs (`__wtoken=<jwt>`). When upstream
 returns `401` later, the CLI auto-rotates the access token with the saved
-refresh token and persists the new pair.
+refresh token. A refresh token can also bootstrap a profile whose access token
+is missing. A refreshed access token is persisted only if the complete saved
+credential snapshot is unchanged, so a concurrent explicit login or logout
+wins. Any refresh token returned by the rotation endpoint remains
+process-local; the saved bootstrap refresh token and cookies stay pinned.
 
 ## `wolt logout`
 
@@ -87,11 +95,12 @@ wolt account favorites add <venue|slug|url>
 wolt account favorites remove <venue|slug|url>
 ```
 
-All `account *` subcommands require a logged-in session. When the saved
-token expires, every auth-gated command exits with a friendly hint —
-`WOLT_AUTH_REQUIRED: "Your Wolt session expired or is missing. Run
-\"wolt login\" to refresh."` — instead of a raw status code. Address
-mutation endpoints write to `https://restaurant-api.wolt.com/v2/delivery/info`.
+All `account *` subcommands require a logged-in session. An expired access
+token is refreshed automatically when a saved refresh credential is available.
+If refresh is unavailable or the refreshed session is still rejected,
+auth-gated commands return a friendly `WOLT_AUTH_REQUIRED` or refresh-specific
+error instead of a raw status code. Address mutation endpoints write to
+`https://restaurant-api.wolt.com/v2/delivery/info`.
 
 ## `wolt feed`
 
@@ -169,7 +178,7 @@ auto-mode Highlights column apply.
 wolt venues [--query <text>]
             [--type restaurant|grocery|pharmacy|retail]
             [--category <slug>]
-            [--sort recommended|distance|rating|delivery_price|delivery_time]
+            [--sort recommended|distance|rating|delivery_price|delivery_time|delivery|fee]
             [--open-now] [--wolt-plus] [--promotions-only]
             [--min-rating <float>] [--max-delivery-fee <minor>]
             [--limit <n>] [--offset <n> | --page <n>]
@@ -185,11 +194,14 @@ Top offer, Rating, Delivery, Fee, Wolt+ — the tagline (Wolt
 no extra HTTP. The venue cell is prefixed with badge glyphs (see
 `wolt feed` for the icon → glyph map). JSON keeps the full payload
 including `address`, `promotions`, `badges`, `menu_highlights`,
-`price_range_scale`.
+`price_range_scale`, and nullable immediate/scheduled availability signals.
+The discovery feed is non-exhaustive; use an exact venue slug, ID, or URL when
+the user already knows the venue.
 
-`--sort` accepts both `delivery_time`/`delivery_price` and the
-hyphenated `delivery-time`/`delivery-price` forms — typing either is
-fine.
+`--sort` accepts the canonical `delivery_time`/`delivery_price` forms,
+the short aliases `delivery`/`fee`, and the hyphenated
+`delivery-time`/`delivery-price` forms. `delivery` means delivery time;
+`fee` means delivery price.
 
 `--show-highlights` defaults to **auto** — the column appears only
 when at least one row carries `menu_highlights[]` data. Force-show
@@ -217,19 +229,32 @@ wolt venue item <venue> <item-id|url>
 wolt venue item <wolt-item-url>              # one-arg: venue read from URL
 ```
 
-`venue hours` derives opening windows from the static venue payload
-when Wolt's structured restaurant endpoint is unavailable (the legacy
-`/v3/venues` endpoint now returns 410 for non-app clients). Output is
-the same `[{day, open, close}]` shape per weekday.
+`venue hours` reads the supported static venue-page payload directly and does
+not call the legacy `/v3/venues` restaurant endpoint. Output uses the same
+`[{day, open, close}]` shape for each upstream-known opening interval. A day
+without a returned row has no opening window in the upstream payload; split
+shifts produce multiple rows for the same day. `--timezone` is an expected
+timezone or fallback label when upstream omits one; it does not convert these
+undated venue-local windows.
 
 `<venue>` accepts a slug, a 24-char Mongo ObjectID, or a Wolt URL
 (e.g. `https://wolt.com/en/fin/helsinki/venue/<slug>`). The CLI extracts
-the slug, looks up the venue id when needed, and surfaces both
-`venue_id` and `venue_slug` in JSON output.
+the slug and looks up the venue id when needed. Detail, menu, item, and search
+JSON surface canonical identity fields when the corresponding Wolt payload
+provides them; category-list output retains its documented `venue_id` shape.
+When choosing between branches, match Wolt's `venue_id` and address rather than
+relying on a display slug alone.
 
 `venue menu` without `--query` returns the full menu (`VenueMenu`). With
 `--query`, it returns a venue-scoped item search (`VenueItemSearchResult`)
 — preferred for large marketplace catalogs.
+
+Some large grocery venues expose a partial root assortment: category metadata
+is available, but items must be loaded through category or search endpoints.
+Use `venue categories` to inspect leaf slugs, then
+`venue menu <venue> --category <slug>`, or use `--query`. A partial or
+unavailable backend is reported explicitly rather than represented as a
+successful complete menu with zero categories and zero items.
 
 `venue item <venue> <item-id>` shows item detail; `--include-options`
 on `venue menu` exposes option-group IDs you can pass to `cart add --option`.
@@ -273,13 +298,20 @@ takes the cheapest in-stock item, skipping sold-out and unpriced rows
 rather than erroring on ambiguity. Narrow it with `--query` (cheapest
 item whose name contains the text) or use it alone to add the venue's
 cheapest in-stock item. Handy for scripting where any orderable item
-will do — it's what the live smoke uses so a transient sold-out item
-(e.g. McDonald's lunch menu during breakfast hours) can't break the
-cart round-trip.
+will do without pinning a volatile item ID.
 
 The basket lives in your Wolt account (same draft you see in the Wolt
 sidebar). Mutations call `POST /order-xp/v1/baskets` and the bulk-delete
 endpoint; no payment or delivery is dispatched from this CLI.
+
+Wolt's basket mutation replaces the complete item array. The CLI therefore
+validates every existing basket line, option, count, and price before posting
+and fails without changing the basket when the snapshot is incomplete. Avoid
+running cart mutations concurrently from separate CLI processes or the
+official Wolt clients: the upstream endpoint exposes no basket revision or
+conditional-write token, so independent writers cannot prevent a last-write
+win. One MCP server serializes its own cart mutations, but it cannot coordinate
+with other processes or apps.
 
 `cart add` first resolves whatever venue you pass (slug, id, or URL) to
 its real 24-character venue id before posting — the basket POST only
@@ -289,10 +321,13 @@ fails with `WOLT_VENUE_UNRESOLVED` instead of reporting a success that
 never reaches your cart.
 
 It then refreshes the exact current item. A non-null `disabled_info`,
-zero `purchasable_balance`, or a missing current item blocks the mutation
-even when `--price`, `--currency`, and `--name` are supplied. Currency is
-resolved from current item, basket, or venue metadata; the command fails
-instead of silently defaulting to EUR.
+non-positive numeric `purchasable_balance`, or a missing current item blocks
+the mutation even when `--price`, `--currency`, and `--name` are supplied.
+A null balance means Wolt supplied no numeric balance constraint, not unlimited
+stock. Currency is resolved from current item, basket, or venue metadata; the
+command fails instead of silently defaulting to EUR. See
+[`output-contract.md`](./output-contract.md) for unit, weight-step, and balance
+semantics.
 
 `--option` accepts both IDs and case-insensitive names:
 
@@ -301,13 +336,19 @@ wolt cart add huuva-food-court-niittykumpu 689efcc0dbe125482d2fecb2 \
   --option "Drink=Cola" --option "Side=Fries" --count 1
 ```
 
+When complete option metadata is available, unknown or ambiguous names fail
+closed; use the displayed group/value ID to disambiguate. Required and
+minimum/maximum selection counts are validated before the mutation, and
+explicitly free option values remain distinct from values whose price metadata
+is missing.
+
 If `--count` is omitted, the API treats the call as "add one of this
 line." `--all` on remove/clear targets every basket the user holds.
 
 ## `wolt checkout`
 
 ```console
-wolt checkout [--delivery-mode standard|priority|schedule]
+wolt checkout [--delivery-mode standard|priority]
               [--tip <minor>] [--promo-code <id>]
               [--venue-id <id>]
               [--address "<text>" | --lat <f> --lon <f>]
@@ -317,6 +358,13 @@ Preview-only. Calls `POST /order-xp/web/v2/pages/checkout` and returns
 the projected payable amount, checkout rows, delivery configs, and tip
 config. Location overrides affect the preview only — real orders use
 the Wolt-saved default delivery address.
+
+Priority sets Wolt's `is_priority_delivery` purchase-plan flag. The CLI reports
+the requested, applied, and available modes plus the selected config. Both CLI
+and MCP require Wolt to confirm priority; otherwise the CLI returns
+`WOLT_DELIVERY_MODE_UNAVAILABLE` and MCP returns its structured
+`DELIVERY_MODE_UNAVAILABLE` result. Scheduled ordering is venue availability,
+not a checkout delivery mode supported by this endpoint.
 
 There is no order-placement command. To place an order, finish in the
 Wolt app or web UI.
@@ -399,8 +447,13 @@ Available on every leaf command:
 
 ## On-disk caches
 
-- `~/.wolt/.wolt-config.json` (`0600`) — the saved account.
-- `~/.wolt/.wolt-slug-cache.json` (`0600`) — venue slug → id + static-page payload cache, 24 h TTL. Eliminates the ~200–500 ms static-page lookup on repeated `cart add`, `venue menu`, `venue item`, and `checkout` flows against the same venue. Wiped automatically by `wolt logout`. Override the path with `WOLT_SLUG_CACHE_PATH`.
+- `~/.wolt/.wolt-config.json` — the saved account.
+- `~/.wolt/.wolt-slug-cache.json` — venue slug → id + static-page payload cache, 24 h TTL. Eliminates the ~200–500 ms static-page lookup on repeated `cart add`, `venue menu`, `venue item`, and `checkout` flows against the same venue. Wiped automatically by `wolt logout`. Override the path with `WOLT_SLUG_CACHE_PATH`.
+
+Both files use `0600` permissions on Unix. Windows uses inherited
+user-profile/directory ACLs instead of POSIX mode bits. If
+`WOLT_CONFIG_PATH` or `WOLT_SLUG_CACHE_PATH` is overridden, point it at a
+directory that is private to the current user.
 
 Location-aware commands additionally accept `--lat <float>` and `--lon <float>`
 (must be supplied together). If no override is given, the address attached
