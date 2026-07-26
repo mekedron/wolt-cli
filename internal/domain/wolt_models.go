@@ -29,30 +29,31 @@ type Badge struct {
 
 // Venue stores discovery item venue details.
 type Venue struct {
-	ID                     any          `json:"id"`
-	Slug                   string       `json:"slug"`
-	Name                   string       `json:"name"`
-	Address                string       `json:"address"`
-	Badges                 []Badge      `json:"badges"`
-	BadgesV2               []Badge      `json:"badges_v2"`
-	Promotions             []any        `json:"promotions"`
-	PromotionsForTelemetry []any        `json:"promotions_for_telemetry"`
-	Country                string       `json:"country"`
-	Currency               string       `json:"currency"`
-	Delivers               bool         `json:"delivers"`
-	DeliveryPriceInt       *int         `json:"delivery_price_int"`
-	EstimateRange          string       `json:"estimate_range"`
-	Estimate               float64      `json:"estimate"`
-	Icon                   string       `json:"icon"`
-	Online                 *bool        `json:"online"`
-	ProductLine            string       `json:"product_line"`
-	ShowWoltPlus           bool         `json:"show_wolt_plus"`
-	ShortDescription       string       `json:"short_description"`
-	ShortDescriptionV2     *Translation `json:"short_description_v2"`
-	Tags                   []string     `json:"tags"`
-	Rating                 *Rating      `json:"rating"`
-	PriceRange             int          `json:"price_range"`
-	PreviewItems           []any        `json:"venue_preview_items"`
+	ID                     any            `json:"id"`
+	Slug                   string         `json:"slug"`
+	Name                   string         `json:"name"`
+	Address                string         `json:"address"`
+	Badges                 []Badge        `json:"badges"`
+	BadgesV2               []Badge        `json:"badges_v2"`
+	Promotions             []any          `json:"promotions"`
+	PromotionsForTelemetry []any          `json:"promotions_for_telemetry"`
+	Country                string         `json:"country"`
+	Currency               string         `json:"currency"`
+	Delivers               *bool          `json:"delivers"`
+	DeliveryPriceInt       *int           `json:"delivery_price_int"`
+	EstimateRange          string         `json:"estimate_range"`
+	Estimate               float64        `json:"estimate"`
+	Icon                   string         `json:"icon"`
+	Online                 *bool          `json:"online"`
+	ProductLine            string         `json:"product_line"`
+	ShowWoltPlus           bool           `json:"show_wolt_plus"`
+	ShortDescription       string         `json:"short_description"`
+	ShortDescriptionV2     *Translation   `json:"short_description_v2"`
+	Status                 map[string]any `json:"status"`
+	Tags                   []string       `json:"tags"`
+	Rating                 *Rating        `json:"rating"`
+	PriceRange             int            `json:"price_range"`
+	PreviewItems           []any          `json:"venue_preview_items"`
 }
 
 // Tagline returns the venue's marketing one-liner, preferring the localized
@@ -76,10 +77,11 @@ type Link struct {
 
 // Item stores discovery items and menu placeholders.
 type Item struct {
-	Title   string `json:"title"`
-	TrackID string `json:"track_id"`
-	Link    Link   `json:"link"`
-	Venue   *Venue `json:"venue"`
+	Title     string         `json:"title"`
+	TrackID   string         `json:"track_id"`
+	Link      Link           `json:"link"`
+	OverlayV2 map[string]any `json:"overlay_v2"`
+	Venue     *Venue         `json:"venue"`
 }
 
 // Section stores front-page sections.
@@ -93,49 +95,4 @@ type Section struct {
 type Translation struct {
 	Lang  string `json:"lang"`
 	Value string `json:"value"`
-}
-
-// Times stores opening/closing values.
-type Times struct {
-	Type  string           `json:"type"`
-	Value map[string]int64 `json:"value"`
-}
-
-// Statistics stores min/max/mean details for estimates.
-type Statistics struct {
-	Mean *int `json:"mean"`
-	Max  *int `json:"max"`
-	Min  *int `json:"min"`
-}
-
-// Estimates stores delivery estimate sections.
-type Estimates struct {
-	Delivery    Statistics `json:"delivery"`
-	Pickup      Statistics `json:"pickup"`
-	Preparation Statistics `json:"preparation"`
-	Total       Statistics `json:"total"`
-}
-
-// Restaurant stores the detailed venue payload.
-type Restaurant struct {
-	ID                    any                `json:"id"`
-	Slug                  string             `json:"slug"`
-	Name                  []Translation      `json:"name"`
-	Address               string             `json:"address"`
-	City                  string             `json:"city"`
-	Country               string             `json:"country"`
-	Currency              string             `json:"currency"`
-	FoodTags              []string           `json:"food_tags"`
-	Phone                 string             `json:"phone"`
-	PriceRange            int                `json:"price_range"`
-	PublicURL             string             `json:"public_url"`
-	Rating                *RatingDetail      `json:"rating"`
-	Website               string             `json:"website"`
-	AllowedPaymentMethods []string           `json:"allowed_payment_methods"`
-	Description           []Translation      `json:"description"`
-	ShortDescription      []Translation      `json:"short_description"`
-	Estimates             *Estimates         `json:"estimates"`
-	OpeningTimes          map[string][]Times `json:"opening_times"`
-	DeliveryMethods       []string           `json:"delivery_methods"`
-	TimezoneName          string             `json:"timezone_name"`
 }

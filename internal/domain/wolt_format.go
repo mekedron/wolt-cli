@@ -3,7 +3,6 @@ package domain
 import (
 	"fmt"
 	"strings"
-	"time"
 )
 
 // NormalizeID normalizes mixed payload id values.
@@ -66,7 +65,7 @@ func (v Venue) FormatDeliveryPrice() string {
 	if v.DeliveryPriceInt == nil {
 		return "-"
 	}
-	if !v.Delivers {
+	if v.Delivers != nil && !*v.Delivers {
 		return "(No delivery)"
 	}
 	return fmt.Sprintf("%.2f %s", float64(*v.DeliveryPriceInt)/100, v.Currency)
@@ -94,100 +93,4 @@ func (i Item) FormatTitle() string {
 		return i.Title
 	}
 	return fmt.Sprintf("%s (%s)", i.Title, i.Venue.FormatBadges())
-}
-
-// Format returns a HH:MM rendering for opening time values.
-func (t Times) Format() string {
-	ms, ok := t.Value["$date"]
-	if !ok {
-		return "-"
-	}
-	tm := time.UnixMilli(ms).UTC()
-	return tm.Format("15:04")
-}
-
-// FormatDescription renders short restaurant description.
-func (r Restaurant) FormatDescription() string {
-	if len(r.ShortDescription) == 0 {
-		return "-"
-	}
-	desc := r.ShortDescription[0].Value
-	if len(desc) > 60 {
-		return desc[:60] + "..."
-	}
-	return desc
-}
-
-// FormatOpeningTime renders today's opening window.
-func (r Restaurant) FormatOpeningTime() string {
-	if len(r.OpeningTimes) == 0 {
-		return "-"
-	}
-	weekday := strings.ToLower(time.Now().Weekday().String())
-	values := r.OpeningTimes[weekday]
-	if len(values) == 0 {
-		return "-"
-	}
-	open := "-"
-	close := "-"
-	for _, value := range values {
-		switch strings.ToLower(value.Type) {
-		case "open":
-			open = value.Format()
-		case "close":
-			close = value.Format()
-		}
-	}
-	if open == "-" && close == "-" {
-		return "-"
-	}
-	return fmt.Sprintf("%s - %s", open, close)
-}
-
-// FormatDeliveryTime renders delivery estimate.
-func (r Restaurant) FormatDeliveryTime() string {
-	if r.Estimates == nil || r.Estimates.Total.Mean == nil {
-		return "-"
-	}
-	return fmt.Sprintf("%d minutes", *r.Estimates.Total.Mean)
-}
-
-// FormatPhone renders phone number.
-func (r Restaurant) FormatPhone() string {
-	if r.Phone == "" {
-		return "-"
-	}
-	if len(r.Phone) <= 3 {
-		return r.Phone
-	}
-	return r.Phone[:3] + " " + r.Phone[3:]
-}
-
-// FormatRating renders detailed restaurant rating.
-func (r Restaurant) FormatRating() string {
-	if r.Rating == nil {
-		return "(No rating)"
-	}
-	return fmt.Sprintf("%s (%.1f / %d reviews)", r.Rating.Text, r.Rating.Score, r.Rating.Volume)
-}
-
-// FormatTags renders restaurant tags.
-func (r Restaurant) FormatTags() string {
-	if len(r.FoodTags) == 0 {
-		return "-"
-	}
-	return strings.Join(capitalizeWords(r.FoodTags), ", ")
-}
-
-// FormatPaymentMethods renders payment methods.
-func (r Restaurant) FormatPaymentMethods() string {
-	return strings.Join(capitalizeWords(r.AllowedPaymentMethods), ", ")
-}
-
-// FormatDeliveryMethods renders delivery methods.
-func (r Restaurant) FormatDeliveryMethods() string {
-	if len(r.DeliveryMethods) == 0 {
-		return "(No delivery)"
-	}
-	return strings.Join(capitalizeWords(r.DeliveryMethods), ", ")
 }

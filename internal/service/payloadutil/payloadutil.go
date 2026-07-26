@@ -4,7 +4,10 @@ import (
 	"fmt"
 	"reflect"
 	"regexp"
+	"sort"
 	"strings"
+
+	"github.com/mekedron/wolt-cli/internal/domain"
 )
 
 var currencyCodePattern = regexp.MustCompile(`(?:^|[^A-Z])([A-Z]{3})(?:[^A-Z]|$)`)
@@ -21,9 +24,10 @@ var inferableCurrencies = map[string]struct{}{
 }
 
 type OptionValueSpec struct {
-	ID    string
-	Name  string
-	Price int
+	ID       string
+	Name     string
+	Price    int
+	HasPrice bool
 }
 
 type OptionGroupSpec struct {
@@ -35,46 +39,470 @@ type OptionGroupSpec struct {
 	Values    map[string]OptionValueSpec
 }
 
+// BasketVenueIdentity is the venue identity carried by a basket payload.
+// Wolt has emitted both nested venue fields and top-level compatibility fields.
+type BasketVenueIdentity struct {
+	ID       string
+	Slug     string
+	Conflict bool
+}
+
+// BasketID returns the canonical identifier from supported basket payload
+// shapes.
+func BasketID(basket map[string]any) string {
+	return strings.TrimSpace(String(CoalesceAny(basket["id"], basket["basket_id"])))
+}
+
+// BasketRows returns basket objects from the supported page containers.
+func BasketRows(page map[string]any) []map[string]any {
+	rows := []map[string]any{}
+	seenIDs := map[string]struct{}{}
+	for _, key := range []string{"baskets", "results"} {
+		for _, raw := range Slice(page[key]) {
+			basket := Map(raw)
+			if basket == nil {
+				continue
+			}
+			id := strings.ToLower(BasketID(basket))
+			if id != "" {
+				if _, duplicate := seenIDs[id]; duplicate {
+					continue
+				}
+				seenIDs[id] = struct{}{}
+			}
+			rows = append(rows, basket)
+		}
+	}
+	return rows
+}
+
+// BasketIDs returns unique non-empty basket identifiers from a page.
+func BasketIDs(page map[string]any) []string {
+	rows := BasketRows(page)
+	ids := make([]string, 0, len(rows))
+	seen := make(map[string]struct{}, len(rows))
+	for _, basket := range rows {
+		id := BasketID(basket)
+		if id == "" {
+			continue
+		}
+		if _, exists := seen[id]; exists {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	return ids
+}
+
+// BasketIDsComplete reports whether every enumerated basket has a usable ID.
+func BasketIDsComplete(page map[string]any) bool {
+	for _, basket := range BasketRows(page) {
+		if BasketID(basket) == "" {
+			return false
+		}
+	}
+	return true
+}
+
+// ExtractBasketVenueIdentity accepts every basket identity shape currently
+// emitted by Wolt without making callers depend on one response layout.
+func ExtractBasketVenueIdentity(basket map[string]any) BasketVenueIdentity {
+	venue := Map(basket["venue"])
+	nestedID := strings.TrimSpace(String(venue["id"]))
+	topLevelID := strings.TrimSpace(String(basket["venue_id"]))
+	nestedObjectID := domain.NormalizeObjectID(nestedID)
+	topLevelObjectID := domain.NormalizeObjectID(topLevelID)
+
+	identity := BasketVenueIdentity{
+		Slug: strings.TrimSpace(String(CoalesceAny(
+			venue["slug"],
+			venue["venue_slug"],
+			venue["public_slug"],
+			venue["url_slug"],
+			basket["venue_slug"],
+		))),
+	}
+	switch {
+	case nestedObjectID != "" && topLevelObjectID != "" &&
+		!strings.EqualFold(nestedObjectID, topLevelObjectID):
+		identity.Conflict = true
+	case nestedObjectID != "":
+		identity.ID = nestedObjectID
+	case topLevelObjectID != "":
+		identity.ID = topLevelObjectID
+	default:
+		// Preserve compatibility with older non-canonical response fixtures.
+		// Mutation callers independently require a canonical ObjectID.
+		identity.ID = strings.TrimSpace(String(CoalesceAny(nestedID, topLevelID)))
+	}
+	return identity
+}
+
+// CheckedAddInt returns false when an integer addition would overflow.
+func CheckedAddInt(left, right int) (int, bool) {
+	maxInt := int(^uint(0) >> 1)
+	minInt := -maxInt - 1
+	if (right > 0 && left > maxInt-right) ||
+		(right < 0 && left < minInt-right) {
+		return 0, false
+	}
+	return left + right, true
+}
+
+// CheckedMultiplyInt returns false when an integer multiplication would
+// overflow.
+func CheckedMultiplyInt(left, right int) (int, bool) {
+	if left == 0 || right == 0 {
+		return 0, true
+	}
+	minInt := -int(^uint(0)>>1) - 1
+	if (left == -1 && right == minInt) ||
+		(right == -1 && left == minInt) {
+		return 0, false
+	}
+	product := left * right
+	if product/right != left {
+		return 0, false
+	}
+	return product, true
+}
+
+// BuildBasketUpsertItem converts a basket response line back into the compact
+// item shape accepted by the basket replacement endpoint.
+func BuildBasketUpsertItem(line map[string]any, count int) map[string]any {
+	if count <= 0 {
+		count = 1
+	}
+	options := make([]any, 0, len(Slice(line["options"])))
+	for _, rawOption := range Slice(line["options"]) {
+		option := Map(rawOption)
+		if option == nil {
+			continue
+		}
+		values := make([]any, 0, len(Slice(option["values"])))
+		for _, rawValue := range Slice(option["values"]) {
+			value := Map(rawValue)
+			if value == nil {
+				continue
+			}
+			valueCount := Int(value["count"])
+			if valueCount <= 0 {
+				valueCount = 1
+			}
+			values = append(values, map[string]any{
+				"id":    String(value["id"]),
+				"count": valueCount,
+				"price": MinorAmount(value["price"]),
+			})
+		}
+		options = append(options, map[string]any{
+			"id":     String(option["id"]),
+			"values": values,
+		})
+	}
+	return map[string]any{
+		"id":      String(line["id"]),
+		"count":   count,
+		"name":    String(line["name"]),
+		"price":   MinorAmount(line["price"]),
+		"options": options,
+		"substitution_settings": map[string]any{
+			"is_allowed": Bool(Map(line["substitution_settings"])["is_allowed"]),
+		},
+	}
+}
+
+// MergeBasketItems preserves every existing line while adding or incrementing
+// one item. The upstream mutation replaces the complete items array.
+func MergeBasketItems(basket map[string]any, addedItemID string, addedCount int, newLine map[string]any) ([]any, error) {
+	if addedCount <= 0 {
+		return nil, fmt.Errorf("item count must be greater than zero")
+	}
+	existing := Slice(basket["items"])
+	out := make([]any, 0, len(existing)+1)
+	merged := false
+	for _, raw := range existing {
+		line := Map(raw)
+		if line == nil {
+			continue
+		}
+		lineCount := Int(line["count"])
+		if lineCount <= 0 {
+			lineCount = 1
+		}
+		if !merged &&
+			strings.EqualFold(strings.TrimSpace(String(line["id"])), strings.TrimSpace(addedItemID)) &&
+			basketLineConfigurationEqual(line, newLine) {
+			mergedCount, ok := CheckedAddInt(lineCount, addedCount)
+			if !ok {
+				return nil, fmt.Errorf("item count exceeds the supported integer range")
+			}
+			out = append(out, BuildBasketUpsertItem(newLine, mergedCount))
+			merged = true
+			continue
+		}
+		out = append(out, BuildBasketUpsertItem(line, lineCount))
+	}
+	if !merged {
+		out = append(out, newLine)
+	}
+	return out, nil
+}
+
+// RemoveBasketItems returns the complete replacement array after removing a
+// quantity. A non-positive count removes every matching item quantity. It
+// fails without returning partial state when the aggregate count overflows.
+func RemoveBasketItems(basket map[string]any, itemID string, count int) ([]any, int, error) {
+	remaining := make([]any, 0, len(Slice(basket["items"])))
+	removed := 0
+	target := strings.TrimSpace(itemID)
+	removeAll := count <= 0
+	remainingCount := count
+	for _, raw := range Slice(basket["items"]) {
+		line := Map(raw)
+		if line == nil {
+			continue
+		}
+		lineCount := Int(line["count"])
+		if lineCount <= 0 {
+			lineCount = 1
+		}
+		if !strings.EqualFold(strings.TrimSpace(String(line["id"])), target) {
+			remaining = append(remaining, BuildBasketUpsertItem(line, lineCount))
+			continue
+		}
+		if !removeAll && remainingCount <= 0 {
+			remaining = append(remaining, BuildBasketUpsertItem(line, lineCount))
+			continue
+		}
+		if removeAll || remainingCount >= lineCount {
+			nextRemoved, ok := CheckedAddInt(removed, lineCount)
+			if !ok {
+				return nil, 0, fmt.Errorf("removed item count exceeds the supported integer range")
+			}
+			removed = nextRemoved
+			if !removeAll {
+				remainingCount -= lineCount
+			}
+			continue
+		}
+		nextRemoved, ok := CheckedAddInt(removed, remainingCount)
+		if !ok {
+			return nil, 0, fmt.Errorf("removed item count exceeds the supported integer range")
+		}
+		removed = nextRemoved
+		remaining = append(remaining, BuildBasketUpsertItem(line, lineCount-remainingCount))
+		remainingCount = 0
+	}
+	return remaining, removed, nil
+}
+
+func basketLineConfigurationEqual(left map[string]any, right map[string]any) bool {
+	leftSelections, leftOK := basketOptionSelections(left)
+	rightSelections, rightOK := basketOptionSelections(right)
+	return leftOK && rightOK &&
+		reflect.DeepEqual(leftSelections, rightSelections) &&
+		Bool(Map(left["substitution_settings"])["is_allowed"]) ==
+			Bool(Map(right["substitution_settings"])["is_allowed"])
+}
+
+func basketOptionSelections(line map[string]any) (map[string]map[string]int, bool) {
+	selections := map[string]map[string]int{}
+	for _, rawOption := range Slice(line["options"]) {
+		option := Map(rawOption)
+		if option == nil {
+			continue
+		}
+		groupID := strings.TrimSpace(String(option["id"]))
+		values := selections[groupID]
+		if values == nil {
+			values = map[string]int{}
+			selections[groupID] = values
+		}
+		for _, rawValue := range Slice(option["values"]) {
+			value := Map(rawValue)
+			if value == nil {
+				continue
+			}
+			valueCount := Int(value["count"])
+			if valueCount <= 0 {
+				valueCount = 1
+			}
+			valueID := strings.TrimSpace(String(value["id"]))
+			total, ok := CheckedAddInt(values[valueID], valueCount)
+			if !ok {
+				return nil, false
+			}
+			values[valueID] = total
+		}
+	}
+	return selections, true
+}
+
 func ExtractOptionSpecs(payload map[string]any) map[string]OptionGroupSpec {
 	specs := map[string]OptionGroupSpec{}
 	visitOptionGroupCandidates(payload, func(group map[string]any) {
-		groupID := strings.TrimSpace(String(CoalesceAny(group["id"], group["group_id"])))
+		groupID := strings.TrimSpace(String(CoalesceAny(
+			group["id"],
+			group["group_id"],
+			group["option_id"],
+		)))
 		if groupID == "" {
 			return
 		}
+		canonicalGroupID := equalFoldMapKey(specs, groupID)
+		if canonicalGroupID == "" {
+			canonicalGroupID = groupID
+		}
 
-		spec := specs[groupID]
+		spec := specs[canonicalGroupID]
 		if spec.ID == "" {
-			spec.ID = groupID
-			spec.Name = String(CoalesceAny(group["name"], group["title"]))
-			spec.Required = Bool(group["required"])
-			spec.MinSelect = Int(CoalesceAny(group["min"], group["minimum"], group["min_select"]))
-			spec.MaxSelect = Int(CoalesceAny(group["max"], group["maximum"], group["max_select"]))
+			spec.ID = canonicalGroupID
 			spec.Values = map[string]OptionValueSpec{}
 		}
+		if spec.Name == "" {
+			spec.Name = String(CoalesceAny(group["name"], group["title"]))
+		}
+		spec.Required = spec.Required || Bool(group["required"])
+		if spec.MinSelect == 0 {
+			spec.MinSelect = Int(CoalesceAny(group["min"], group["minimum"], group["min_select"]))
+		}
+		if spec.MaxSelect == 0 {
+			spec.MaxSelect = Int(CoalesceAny(group["max"], group["maximum"], group["max_select"]))
+		}
 
-		for _, value := range Slice(CoalesceAny(group["values"], group["options"], group["items"])) {
-			valueMap := Map(value)
-			if valueMap == nil {
-				continue
-			}
-			valueID := strings.TrimSpace(String(CoalesceAny(valueMap["id"], valueMap["value_id"])))
-			if valueID == "" {
-				continue
-			}
-			price := Int(valueMap["price"])
-			if price == 0 {
-				price = Int(Map(valueMap["price"])["amount"])
-			}
-			spec.Values[valueID] = OptionValueSpec{
-				ID:    valueID,
-				Name:  String(CoalesceAny(valueMap["name"], valueMap["title"])),
-				Price: price,
+		for _, alias := range []string{"values", "options", "items"} {
+			for _, value := range Slice(group[alias]) {
+				valueMap := Map(value)
+				if valueMap == nil {
+					continue
+				}
+				valueID := strings.TrimSpace(String(CoalesceAny(valueMap["id"], valueMap["value_id"])))
+				if valueID == "" {
+					continue
+				}
+				price, hasPrice := optionPrice(valueMap)
+				canonicalValueID := equalFoldMapKey(spec.Values, valueID)
+				if canonicalValueID == "" {
+					canonicalValueID = valueID
+				}
+				valueSpec, exists := spec.Values[canonicalValueID]
+				if !exists {
+					valueSpec = OptionValueSpec{ID: canonicalValueID}
+				}
+				if valueSpec.Name == "" {
+					valueSpec.Name = String(CoalesceAny(valueMap["name"], valueMap["title"]))
+				}
+				if !valueSpec.HasPrice && hasPrice {
+					valueSpec.Price = price
+					valueSpec.HasPrice = true
+				}
+				spec.Values[canonicalValueID] = valueSpec
 			}
 		}
-		specs[groupID] = spec
+		specs[canonicalGroupID] = spec
 	})
 	return specs
+}
+
+func equalFoldMapKey[V any](values map[string]V, target string) string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		if strings.EqualFold(key, target) {
+			return key
+		}
+	}
+	return ""
+}
+
+// MergeOptionGroups preserves first-seen group order while allowing a richer
+// duplicate definition to replace an ID-only or otherwise incomplete one.
+func MergeOptionGroups(existing []any, incoming []any) []any {
+	out := append([]any(nil), existing...)
+	indexByID := make(map[string]int, len(existing)+len(incoming))
+	for index, raw := range existing {
+		if id := optionGroupID(raw); id != "" {
+			indexByID[strings.ToLower(id)] = index
+		}
+	}
+	for _, raw := range incoming {
+		id := optionGroupID(raw)
+		if id == "" {
+			out = append(out, raw)
+			continue
+		}
+		key := strings.ToLower(id)
+		if index, exists := indexByID[key]; exists {
+			if optionGroupScore(raw) > optionGroupScore(out[index]) {
+				out[index] = raw
+			}
+			continue
+		}
+		indexByID[key] = len(out)
+		out = append(out, raw)
+	}
+	return out
+}
+
+func optionGroupID(raw any) string {
+	group := Map(raw)
+	return strings.TrimSpace(String(CoalesceAny(
+		group["id"],
+		group["group_id"],
+		group["option_id"],
+	)))
+}
+
+func optionGroupScore(raw any) int {
+	group := Map(raw)
+	if group == nil {
+		return 0
+	}
+	score := 0
+	if strings.TrimSpace(String(CoalesceAny(group["name"], group["title"]))) != "" {
+		score++
+	}
+	for _, key := range []string{"required", "min", "minimum", "min_select", "max", "maximum", "max_select"} {
+		if _, exists := group[key]; exists {
+			score++
+		}
+	}
+	for _, alias := range []string{"values", "options", "items"} {
+		for _, rawValue := range Slice(group[alias]) {
+			value := Map(rawValue)
+			if value == nil {
+				continue
+			}
+			if strings.TrimSpace(String(CoalesceAny(value["id"], value["value_id"]))) != "" {
+				score += 2
+			}
+			if strings.TrimSpace(String(CoalesceAny(value["name"], value["title"]))) != "" {
+				score++
+			}
+			if _, hasPrice := optionPrice(value); hasPrice {
+				score++
+			}
+		}
+	}
+	return score
+}
+
+func optionPrice(value map[string]any) (int, bool) {
+	raw, exists := value["price"]
+	if !exists || raw == nil {
+		return 0, false
+	}
+	if price := Map(raw); price != nil {
+		if _, exists := price["amount"]; !exists {
+			return 0, false
+		}
+	}
+	return MinorAmount(raw), true
 }
 
 func visitOptionGroupCandidates(payload map[string]any, visit func(map[string]any)) {
@@ -82,19 +510,33 @@ func visitOptionGroupCandidates(payload map[string]any, visit func(map[string]an
 	walk = func(value any) {
 		switch typed := value.(type) {
 		case map[string]any:
-			if groups := Slice(CoalesceAny(typed["option_groups"], typed["options"])); len(groups) > 0 {
+			for _, alias := range []string{"options", "option_groups"} {
+				groups := Slice(typed[alias])
 				for _, groupValue := range groups {
 					group := Map(groupValue)
 					if group == nil {
 						continue
 					}
-					if strings.TrimSpace(String(CoalesceAny(group["id"], group["group_id"]))) != "" {
+					if strings.TrimSpace(String(CoalesceAny(
+						group["id"],
+						group["group_id"],
+						group["option_id"],
+					))) != "" {
 						visit(group)
 					}
 				}
 			}
-			for _, nested := range typed {
-				walk(nested)
+			keys := make([]string, 0, len(typed))
+			for key := range typed {
+				if key != "options" &&
+					key != "option_groups" &&
+					!isRelatedItemContainer(key) {
+					keys = append(keys, key)
+				}
+			}
+			sort.Strings(keys)
+			for _, key := range keys {
+				walk(typed[key])
 			}
 		case []any:
 			for _, nested := range typed {
@@ -103,6 +545,15 @@ func visitOptionGroupCandidates(payload map[string]any, visit func(map[string]an
 		}
 	}
 	walk(payload)
+}
+
+func isRelatedItemContainer(key string) bool {
+	switch strings.ToLower(strings.TrimSpace(key)) {
+	case "upsell_items", "related_items", "recommended_items":
+		return true
+	default:
+		return false
+	}
 }
 
 func InferCurrency(formatted string) string {
@@ -294,6 +745,14 @@ func FormatMinorAmount(amount int, currency string) string {
 	default:
 		return fmt.Sprintf("%s %.2f", currency, float64(amount)/100)
 	}
+}
+
+// MinorAmount accepts the scalar and {"amount": N} price shapes used by Wolt.
+func MinorAmount(value any) int {
+	if price := Map(value); price != nil {
+		return Int(price["amount"])
+	}
+	return Int(value)
 }
 
 func CoalesceAny(values ...any) any {
