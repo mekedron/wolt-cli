@@ -275,24 +275,20 @@ func newCartAddCommand(deps Dependencies) *cobra.Command {
 			}
 			slugCandidates = dedupeStrings(slugCandidates)
 
-			// RestaurantByID is an extra upstream round-trip on the path of
+			// The id→slug lookup is an extra upstream round-trip on the path of
 			// every add, so it is consulted lazily: only when no slug was given
 			// explicitly, or when the explicit ones did not resolve the item.
-			restaurantSlugTried := false
-			appendRestaurantSlug := func() bool {
-				if restaurantSlugTried {
+			venuePageSlugTried := false
+			appendVenuePageSlug := func() bool {
+				if venuePageSlugTried {
 					return false
 				}
-				restaurantSlugTried = true
-				restaurant, restaurantErr := deps.Wolt.RestaurantByID(cmd.Context(), venueID)
-				if restaurantErr != nil || restaurant == nil {
+				venuePageSlugTried = true
+				pageSlug := resolveVenueSlugFromID(cmd.Context(), deps, venueID)
+				if pageSlug == "" {
 					return false
 				}
-				restaurantSlug := strings.TrimSpace(restaurant.Slug)
-				if restaurantSlug == "" {
-					return false
-				}
-				extended := dedupeStrings(append(slugCandidates, restaurantSlug))
+				extended := dedupeStrings(append(slugCandidates, pageSlug))
 				if len(extended) == len(slugCandidates) {
 					return false
 				}
@@ -300,7 +296,7 @@ func newCartAddCommand(deps Dependencies) *cobra.Command {
 				return true
 			}
 			if len(slugCandidates) == 0 {
-				appendRestaurantSlug()
+				appendVenuePageSlug()
 			}
 			if len(slugCandidates) == 0 {
 				return emitError(
@@ -347,7 +343,7 @@ func newCartAddCommand(deps Dependencies) *cobra.Command {
 				// Explicit candidates are exhausted without a hit; fall back to
 				// the slug Wolt reports for this venue id before giving up.
 				if index == len(slugCandidates)-1 {
-					appendRestaurantSlug()
+					appendVenuePageSlug()
 				}
 			}
 			if !availabilityLookupSucceeded {

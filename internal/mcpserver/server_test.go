@@ -316,6 +316,41 @@ func TestResolveVenueRefFallsBackToDynamic(t *testing.T) {
 	}
 }
 
+// TestResolveVenueRefResolvesSlugFromObjectID locks the id→slug direction.
+// Wolt's restaurant-api/v3/venues/<id> document answers HTTP 410 for every
+// client, so the venue page — which serves either identifier from its `slug`
+// path segment — is the only source. Without a slug, wolt_cart_add and
+// wolt_checkout_preview cannot run their slug-keyed availability checks and
+// refuse to proceed.
+func TestResolveVenueRefResolvesSlugFromObjectID(t *testing.T) {
+	const venueID = "637e383476c00f021e6bf084"
+
+	wolt := &stubWolt{
+		restaurantFn: func(_ context.Context, id string) (*domain.Restaurant, error) {
+			t.Errorf("restaurant detail endpoint is retired upstream and must not be consulted, got id %q", id)
+			return nil, errors.New("status 410")
+		},
+		venueStaticFn: func(_ context.Context, slug string) (map[string]any, error) {
+			if slug != venueID {
+				t.Fatalf("expected the object id passed to the venue page, got %q", slug)
+			}
+			return map[string]any{"venue": map[string]any{"id": venueID, "slug": "eat-poke-iso-omena"}}, nil
+		},
+	}
+	tc := newToolCtx(Deps{Wolt: wolt, Profiles: &stubProfiles{}, Location: &stubLocation{}, Config: &stubConfig{}})
+
+	ref, err := tc.resolveVenueRef(context.Background(), venueID)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ref.ID != venueID {
+		t.Fatalf("expected id preserved, got %q", ref.ID)
+	}
+	if ref.Slug != "eat-poke-iso-omena" {
+		t.Fatalf("expected slug resolved from the venue page, got %q", ref.Slug)
+	}
+}
+
 // TestHandleCartAddRejectsUnresolvedVenue locks in the issue #19 fix for the
 // MCP path: when a slug cannot be resolved to a real venue id, wolt_cart_add
 // must error rather than POST the slug as venue_id (which the Wolt backend

@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -20,8 +21,8 @@ func TestHandleCheckoutPreviewSendsPurchasePlan(t *testing.T) {
 	var captured map[string]any
 	checkoutCalled := false
 	wolt := &stubWolt{
-		restaurantFn: func(context.Context, string) (*domain.Restaurant, error) {
-			return &domain.Restaurant{ID: venueID, Slug: "test-venue"}, nil
+		venueStaticFn: func(_ context.Context, slug string) (map[string]any, error) {
+			return map[string]any{"venue": map[string]any{"id": slug, "slug": "test-venue"}}, nil
 		},
 		basketsPageFn: func(context.Context, domain.Location, woltgateway.AuthContext) (map[string]any, error) {
 			return map[string]any{
@@ -82,6 +83,127 @@ func TestHandleCheckoutPreviewSendsPurchasePlan(t *testing.T) {
 		if _, exists := captured[banned]; exists {
 			t.Errorf("upstream payload must not contain top-level %q (old rejected MCP shape)", banned)
 		}
+	}
+}
+
+// TestHandleCheckoutPreviewResolvesSlugWithoutRestaurantEndpoint locks the id→
+// slug path that current item validation depends on. Wolt's
+// restaurant-api/v3/venues/<id> document answers HTTP 410 for every client, so a
+// venue passed as a bare ObjectID must still reach a slug through the venue
+// page — otherwise the preview is refused for want of an availability check.
+func TestHandleCheckoutPreviewResolvesSlugWithoutRestaurantEndpoint(t *testing.T) {
+	const venueID = "5f9a1b2c3d4e5f6071829304"
+
+	assortmentSlug := ""
+	checkoutCalled := false
+	wolt := &stubWolt{
+		restaurantFn: func(context.Context, string) (*domain.Restaurant, error) {
+			return nil, fmt.Errorf("status=410; retired upstream")
+		},
+		// Serves both the id→slug lookup and the currency lookup that
+		// checkoutpayload.Build performs on the resolved slug.
+		venueStaticFn: func(_ context.Context, slug string) (map[string]any, error) {
+			if slug != venueID && slug != "test-venue" {
+				t.Errorf("unexpected venue page lookup for %q", slug)
+			}
+			return map[string]any{"venue": map[string]any{"id": venueID, "slug": "test-venue", "currency": "EUR"}}, nil
+		},
+		basketsPageFn: func(context.Context, domain.Location, woltgateway.AuthContext) (map[string]any, error) {
+			return map[string]any{"baskets": []any{
+				map[string]any{
+					// No slug on the basket venue: the id is the only lead.
+					"venue": map[string]any{"id": venueID, "country": "FIN"},
+					"total": "€5.00",
+					"items": []any{map[string]any{
+						"id": "627cb2c7e2a6f0a1b2c3d4e5", "count": 1, "price": 500,
+					}},
+				},
+			}}, nil
+		},
+		assortmentItemsFn: func(_ context.Context, slug string, itemIDs []string, _ woltgateway.AuthContext) (map[string]any, error) {
+			assortmentSlug = slug
+			return availableStubItems(itemIDs), nil
+		},
+		checkoutPreviewFn: func(context.Context, map[string]any, woltgateway.AuthContext) (map[string]any, error) {
+			checkoutCalled = true
+			return map[string]any{"payable_amount": 500}, nil
+		},
+	}
+
+	tc := newToolCtx(Deps{
+		Wolt:     wolt,
+		Profiles: &stubProfiles{profile: domain.Profile{Name: "default", WToken: "token"}},
+		Location: &stubLocation{},
+		Config:   &stubConfig{},
+	})
+
+	res, _, err := tc.handleCheckoutPreview(context.Background(), nil, CheckoutPreviewInput{
+		LocationInput: LocationInput{Lat: 60.17, Lon: 24.94},
+		Venue:         venueID,
+	})
+	if err != nil {
+		t.Fatalf("handleCheckoutPreview returned error: %v", err)
+	}
+	if res != nil && res.IsError {
+		t.Fatalf("expected success result, got error: %v", textContent(res))
+	}
+	if assortmentSlug != "test-venue" {
+		t.Errorf("availability lookup must use the resolved slug, got %q", assortmentSlug)
+	}
+	if !checkoutCalled {
+		t.Fatal("CheckoutPreview was never called")
+	}
+}
+
+// TestHandleCheckoutPreviewPrefersBasketSlug pins the cheapest slug source: the
+// basket Wolt just returned already names its venue, so no id→slug round-trip
+// is warranted.
+func TestHandleCheckoutPreviewPrefersBasketSlug(t *testing.T) {
+	const venueID = "5f9a1b2c3d4e5f6071829304"
+
+	assortmentSlug := ""
+	wolt := &stubWolt{
+		restaurantFn: func(context.Context, string) (*domain.Restaurant, error) {
+			return nil, fmt.Errorf("status=410; retired upstream")
+		},
+		venueStaticFn: func(_ context.Context, slug string) (map[string]any, error) {
+			return map[string]any{"venue": map[string]any{"id": venueID, "currency": "EUR"}}, nil
+		},
+		basketsPageFn: func(context.Context, domain.Location, woltgateway.AuthContext) (map[string]any, error) {
+			return map[string]any{"baskets": []any{
+				map[string]any{
+					"venue": map[string]any{"id": venueID, "slug": "basket-venue", "country": "FIN"},
+					"total": "€5.00",
+					"items": []any{map[string]any{
+						"id": "627cb2c7e2a6f0a1b2c3d4e5", "count": 1, "price": 500,
+					}},
+				},
+			}}, nil
+		},
+		assortmentItemsFn: func(_ context.Context, slug string, itemIDs []string, _ woltgateway.AuthContext) (map[string]any, error) {
+			assortmentSlug = slug
+			return availableStubItems(itemIDs), nil
+		},
+		checkoutPreviewFn: func(context.Context, map[string]any, woltgateway.AuthContext) (map[string]any, error) {
+			return map[string]any{"payable_amount": 500}, nil
+		},
+	}
+
+	tc := newToolCtx(Deps{
+		Wolt:     wolt,
+		Profiles: &stubProfiles{profile: domain.Profile{Name: "default", WToken: "token"}},
+		Location: &stubLocation{},
+		Config:   &stubConfig{},
+	})
+
+	if _, _, err := tc.handleCheckoutPreview(context.Background(), nil, CheckoutPreviewInput{
+		LocationInput: LocationInput{Lat: 60.17, Lon: 24.94},
+		Venue:         venueID,
+	}); err != nil {
+		t.Fatalf("handleCheckoutPreview returned error: %v", err)
+	}
+	if assortmentSlug != "basket-venue" {
+		t.Errorf("availability lookup must use the basket's own slug, got %q", assortmentSlug)
 	}
 }
 

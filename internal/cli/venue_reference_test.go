@@ -151,14 +151,16 @@ func TestResolveVenueReferenceObjectIDReverseLookup(t *testing.T) {
 	withIsolatedSlugCache(t)
 	wolt := &testWoltAPI{
 		restaurantByIDFn: func(_ context.Context, id string) (*domain.Restaurant, error) {
-			if id != "6123456789abcdef01234567" {
-				t.Fatalf("expected object id to be passed through, got %q", id)
-			}
-			return &domain.Restaurant{ID: id, Slug: "hesburger-kamppi"}, nil
+			t.Fatalf("restaurant detail endpoint is retired upstream and must not be consulted, got id %q", id)
+			return nil, nil
 		},
 		venuePageStaticFn: func(_ context.Context, slug string) (map[string]any, error) {
-			t.Fatalf("static page should not be called when input is an object id, got slug %q", slug)
-			return nil, nil
+			if slug != "6123456789abcdef01234567" {
+				t.Fatalf("expected object id to be passed through, got %q", slug)
+			}
+			return map[string]any{
+				"venue": map[string]any{"id": slug, "slug": "hesburger-kamppi"},
+			}, nil
 		},
 	}
 	deps := Dependencies{Wolt: wolt}
@@ -171,7 +173,7 @@ func TestResolveVenueReferenceObjectIDReverseLookup(t *testing.T) {
 		t.Fatalf("expected id preserved, got %q", ref.VenueID)
 	}
 	if ref.VenueSlug != "hesburger-kamppi" {
-		t.Fatalf("expected slug from restaurant lookup, got %q", ref.VenueSlug)
+		t.Fatalf("expected slug from the venue page, got %q", ref.VenueSlug)
 	}
 }
 

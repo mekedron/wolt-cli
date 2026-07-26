@@ -318,11 +318,7 @@ func resolveVenueReference(ctx context.Context, deps Dependencies, raw string) (
 	}
 	if looksLikeObjectID(input) {
 		ref.VenueID = input
-		if deps.Wolt != nil {
-			if restaurant, err := deps.Wolt.RestaurantByID(ctx, input); err == nil && restaurant != nil {
-				ref.VenueSlug = strings.TrimSpace(restaurant.Slug)
-			}
-		}
+		ref.VenueSlug = resolveVenueSlugFromID(ctx, deps, input)
 		return ref, nil
 	}
 	ref.VenueSlug = input
@@ -340,6 +336,39 @@ func resolveVenueReference(ctx context.Context, deps Dependencies, raw string) (
 		}
 	}
 	return ref, nil
+}
+
+// resolveVenueSlugFromID turns a venue ObjectID into its slug. The static venue
+// page serves either identifier from its `slug` path segment, so it doubles as
+// the id→slug lookup; `restaurant-api/v3/venues/<id>` is retired upstream and
+// answers HTTP 410 for every client, so it is not a source. A slug is mandatory
+// for the assortment reads that gate cart adds and checkout preview on current
+// item availability — those endpoints are slug-keyed only. Returns "" when the
+// page is unavailable or carries no slug.
+func resolveVenueSlugFromID(ctx context.Context, deps Dependencies, venueID string) string {
+	if deps.Wolt == nil {
+		return ""
+	}
+	payload, err := cachedVenuePageStatic(ctx, deps, venueID)
+	if err != nil {
+		return ""
+	}
+	return venueSlugFromPayload(payload)
+}
+
+func venueSlugFromPayload(payload map[string]any) string {
+	venue := asMap(payload["venue"])
+	if venue == nil {
+		venue = asMap(payload["venue_raw"])
+	}
+	return strings.TrimSpace(asString(coalesceAny(
+		venue["slug"],
+		venue["venue_slug"],
+		venue["public_slug"],
+		venue["url_slug"],
+		payload["venue_slug"],
+		payload["slug"],
+	)))
 }
 
 // resolveVenueIDFromSlug turns a venue slug into its Mongo ObjectID. It tries

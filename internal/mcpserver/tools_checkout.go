@@ -65,16 +65,29 @@ func (tc *ToolCtx) handleCheckoutPreview(ctx context.Context, _ *mcp.CallToolReq
 	if basket == nil {
 		return nil, CheckoutPreviewOutput{}, toolErrf("no basket found for venue %s; add items first via wolt_cart_add", ref.ID)
 	}
-	venueSlug := strings.TrimSpace(ref.Slug)
-	if venueSlug == "" {
-		return nil, CheckoutPreviewOutput{}, toolErrf(
-			"checkout preview blocked because the venue slug could not be resolved for current item validation",
-		)
-	}
 	basketVenue := asMap(basket["venue"])
 	if basketVenue == nil {
 		basketVenue = map[string]any{}
 		basket["venue"] = basketVenue
+	}
+	// The basket Wolt just returned already names its own venue, so it is the
+	// cheapest slug source and the only one that needs no extra round-trip.
+	venueSlug := strings.TrimSpace(asString(coalesceAny(
+		basketVenue["slug"],
+		basketVenue["venue_slug"],
+		basketVenue["public_slug"],
+		basketVenue["url_slug"],
+	)))
+	if venueSlug == "" {
+		venueSlug = strings.TrimSpace(ref.Slug)
+	}
+	if venueSlug == "" {
+		venueSlug = tc.resolveVenueSlugFromID(ctx, strings.TrimSpace(asString(basketVenue["id"])))
+	}
+	if venueSlug == "" {
+		return nil, CheckoutPreviewOutput{}, toolErrf(
+			"checkout preview blocked because the venue slug could not be resolved for current item validation",
+		)
 	}
 	basketVenue["slug"] = venueSlug
 	basketItemIDs := catalogitem.BasketItemIDs(basket)

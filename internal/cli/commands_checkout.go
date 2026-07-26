@@ -110,9 +110,10 @@ func newCheckoutPreviewCommand(deps Dependencies) *cobra.Command {
 			}
 			if venueSlug == "" {
 				basketVenueID := strings.TrimSpace(asString(basketVenue["id"]))
-				if restaurant, restaurantErr := deps.Wolt.RestaurantByID(cmd.Context(), basketVenueID); restaurantErr == nil && restaurant != nil {
-					venueSlug = strings.TrimSpace(restaurant.Slug)
+				if basketVenueID == "" {
+					basketVenueID = strings.TrimSpace(venueID)
 				}
+				venueSlug = resolveVenueSlugFromID(cmd.Context(), deps, basketVenueID)
 			}
 			if venueSlug == "" {
 				return emitError(

@@ -47,8 +47,8 @@ func normalizeVenueInput(raw string) string {
 }
 
 // resolveVenueRef turns whatever the LLM passed (slug / object ID / URL) into a
-// {ID, Slug} pair. For raw IDs it calls RestaurantByID to backfill the slug;
-// for slugs it calls VenuePageStatic to backfill the ID.
+// {ID, Slug} pair. Both directions go through the venue page, whose `slug` path
+// segment accepts either identifier.
 func (tc *ToolCtx) resolveVenueRef(ctx context.Context, raw string) (venueRef, error) {
 	input := normalizeVenueInput(raw)
 	if input == "" {
@@ -57,11 +57,7 @@ func (tc *ToolCtx) resolveVenueRef(ctx context.Context, raw string) (venueRef, e
 	ref := venueRef{Input: raw}
 	if looksLikeObjectID(input) {
 		ref.ID = input
-		if tc.wolt != nil {
-			if restaurant, err := tc.wolt.RestaurantByID(ctx, input); err == nil && restaurant != nil {
-				ref.Slug = strings.TrimSpace(restaurant.Slug)
-			}
-		}
+		ref.Slug = tc.resolveVenueSlugFromID(ctx, input)
 		return ref, nil
 	}
 	ref.Slug = input
@@ -98,6 +94,24 @@ func (tc *ToolCtx) resolveVenueIDFromSlug(ctx context.Context, slug string) stri
 	return strings.TrimSpace(venueIDFromPayload(payload))
 }
 
+// resolveVenueSlugFromID turns a venue ObjectID into its slug. The static venue
+// page serves either identifier from its `slug` path segment, so it doubles as
+// the id→slug lookup; `restaurant-api/v3/venues/<id>` is retired upstream and
+// answers HTTP 410 for every client, so it is not a source. A slug is mandatory
+// for the assortment reads that gate cart adds and checkout preview on current
+// item availability — those endpoints are slug-keyed only. Returns "" when the
+// page is unavailable or carries no slug.
+func (tc *ToolCtx) resolveVenueSlugFromID(ctx context.Context, venueID string) string {
+	if tc.wolt == nil {
+		return ""
+	}
+	payload, err := tc.wolt.VenuePageStatic(ctx, venueID)
+	if err != nil {
+		return ""
+	}
+	return venueSlugFromPayload(payload)
+}
+
 func venueIDFromPayload(payload map[string]any) string {
 	venue := asMap(payload["venue"])
 	if venue == nil {
@@ -107,5 +121,20 @@ func venueIDFromPayload(payload map[string]any) string {
 		venue["id"],
 		payload["venue_id"],
 		payload["id"],
+	)))
+}
+
+func venueSlugFromPayload(payload map[string]any) string {
+	venue := asMap(payload["venue"])
+	if venue == nil {
+		venue = asMap(payload["venue_raw"])
+	}
+	return strings.TrimSpace(asString(coalesceAny(
+		venue["slug"],
+		venue["venue_slug"],
+		venue["public_slug"],
+		venue["url_slug"],
+		payload["venue_slug"],
+		payload["slug"],
 	)))
 }
