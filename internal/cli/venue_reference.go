@@ -482,11 +482,3 @@ func resolveVenueReference(ctx context.Context, deps Dependencies, raw string) (
 	}
 	return ref, nil
 }
-
-// resolveVenueSlugFromID preserves the lightweight lookup used by cart and
-// checkout callers while sharing the canonical static/dynamic page resolver.
-// The retired restaurant-detail endpoint is intentionally not consulted.
-func resolveVenueSlugFromID(ctx context.Context, deps Dependencies, venueID string) string {
-	ref, _ := resolveVenueReference(ctx, deps, venueID)
-	return strings.TrimSpace(ref.VenueSlug)
-}

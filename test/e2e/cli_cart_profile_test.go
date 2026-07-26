@@ -1246,7 +1246,7 @@ func TestCheckoutPreviewJSON(t *testing.T) {
 										map[string]any{
 											"id": "group-1",
 											"values": []any{
-												map[string]any{"id": "value-1", "count": 1},
+												map[string]any{"id": "value-1", "count": 1, "price": 100},
 											},
 										},
 									},

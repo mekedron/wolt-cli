@@ -2,6 +2,7 @@ package checkoutpayload
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -83,8 +84,16 @@ func TestBuildProducesPurchasePlanShape(t *testing.T) {
 	basket := basketWithItem("€12.50", map[string]any{
 		"id":          "627cb2c7e2a6f0a1b2c3d4e5",
 		"count":       2,
-		"price":       625,
+		"price":       map[string]any{"amount": 625},
 		"category_id": "cat-burgers",
+		"options": []any{
+			map[string]any{
+				"id": "addon",
+				"values": []any{
+					map[string]any{"id": "extra", "count": 2, "price": map[string]any{"amount": 75}},
+				},
+			},
+		},
 	})
 
 	payload, warnings, err := Build(
@@ -147,6 +156,11 @@ func TestBuildProducesPurchasePlanShape(t *testing.T) {
 	if item["venue_id"] != "5f9a1b2c3d4e5f6071829304" {
 		t.Errorf("menu_item.venue_id = %v", item["venue_id"])
 	}
+	option := item["options"].([]any)[0].(map[string]any)
+	value := option["values"].([]any)[0].(map[string]any)
+	if value["price"] != 75 || value["count"] != 2 {
+		t.Errorf("nested option price/count = %v, want price=75 count=2", value)
+	}
 
 	// Delivery coordinates come straight from the resolved location.
 	delivery, _ := plan["delivery"].(map[string]any)
@@ -156,18 +170,133 @@ func TestBuildProducesPurchasePlanShape(t *testing.T) {
 	}
 }
 
+func TestBuildCheckoutOptionsOnlyOverridesKnownDetailPrices(t *testing.T) {
+	raw := []any{
+		map[string]any{
+			"id": "size",
+			"values": []any{
+				map[string]any{"id": "large", "count": 1, "price": map[string]any{"amount": 125}},
+			},
+		},
+	}
+	tests := []struct {
+		name   string
+		detail map[string]any
+		want   int
+	}{
+		{
+			name: "missing detail price preserves basket price",
+			detail: map[string]any{
+				"option_groups": []any{
+					map[string]any{
+						"id":     "size",
+						"values": []any{map[string]any{"id": "large", "name": "Large"}},
+					},
+				},
+			},
+			want: 125,
+		},
+		{
+			name: "explicit free detail value overrides basket price",
+			detail: map[string]any{
+				"option_groups": []any{
+					map[string]any{
+						"id":     "size",
+						"values": []any{map[string]any{"id": "large", "name": "Large", "price": 0}},
+					},
+				},
+			},
+			want: 0,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			options := buildCheckoutOptions(raw, buildOptionValuePriceIndex(test.detail))
+			option := options[0].(map[string]any)
+			value := option["values"].([]any)[0].(map[string]any)
+			if value["price"] != test.want {
+				t.Fatalf("price = %v, want %d", value["price"], test.want)
+			}
+		})
+	}
+}
+
+func TestResolveCheckoutCategoryIDsNormalizesCanonicalCategory(t *testing.T) {
+	tests := []struct {
+		name       string
+		categoryID string
+		raw        []any
+		want       []any
+	}{
+		{
+			name:       "missing array uses canonical category",
+			categoryID: "cat-current",
+			want:       []any{"cat-current"},
+		},
+		{
+			name:       "stale array is replaced",
+			categoryID: "cat-current",
+			raw:        []any{" cat-stale ", "", "CAT-STALE"},
+			want:       []any{"cat-current"},
+		},
+		{
+			name:       "canonical category leads deduplicated hierarchy",
+			categoryID: "cat-current",
+			raw:        []any{" parent ", "CAT-CURRENT", "", "cat-current", "PARENT"},
+			want:       []any{"cat-current", "parent"},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			item := map[string]any{"category_ids": test.raw}
+			got := resolveCheckoutCategoryIDs(item, test.categoryID)
+			if !reflect.DeepEqual(got, test.want) {
+				t.Fatalf("resolveCheckoutCategoryIDs() = %#v, want %#v", got, test.want)
+			}
+		})
+	}
+}
+
+func TestBuildRejectsMissingOrSlugShapedVenueID(t *testing.T) {
+	for _, venueID := range []string{"", "example-market"} {
+		t.Run(venueID, func(t *testing.T) {
+			basket := basketWithItem("€5.00", map[string]any{
+				"id":          "627cb2c7e2a6f0a1b2c3d4e5",
+				"count":       1,
+				"price":       500,
+				"category_id": "cat",
+			})
+			basket["venue"].(map[string]any)["id"] = venueID
+			if _, _, err := Build(
+				context.Background(),
+				&fakeAPI{},
+				nil,
+				basket,
+				domain.Location{Lat: 10, Lon: 20},
+				"standard",
+				0,
+				"",
+			); err == nil || !strings.Contains(err.Error(), "canonical venue id") {
+				t.Fatalf("Build venue id %q error = %v", venueID, err)
+			}
+		})
+	}
+}
+
 func TestBuildDeliveryModeNormalisation(t *testing.T) {
 	cases := []struct {
 		mode         string
 		wantPriority bool
 		wantErr      bool
 	}{
-		{"", false, false},           // defaults to standard
-		{"standard", false, false},   //
-		{"priority", true, false},    // toggles is_priority_delivery
-		{"PRIORITY", true, false},    // case-insensitive
-		{" schedule ", false, false}, // trimmed + accepted
-		{"takeaway", false, true},    // unsupported -> error
+		{"", false, false},          // defaults to standard
+		{"standard", false, false},  //
+		{"priority", true, false},   // toggles is_priority_delivery
+		{"PRIORITY", true, false},   // case-insensitive
+		{" schedule ", false, true}, // scheduled checkout needs a time-slot contract
+		{"takeaway", false, true},   // unsupported -> error
 	}
 	for _, c := range cases {
 		c := c
@@ -200,8 +329,48 @@ func TestBuildRejectsMissingBasePrice(t *testing.T) {
 	})
 	_, _, err := Build(context.Background(), nil, nil, basket,
 		domain.Location{}, "standard", 0, "")
-	if err == nil || !strings.Contains(err.Error(), "base_price") {
-		t.Fatalf("expected base_price error, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "positive current price") {
+		t.Fatalf("expected current price error, got %v", err)
+	}
+}
+
+func TestBuildRejectsMissingItemID(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		item any
+		want string
+	}{
+		{
+			name: "blank id with otherwise valid checkout metadata",
+			item: map[string]any{
+				"id":          " ",
+				"count":       1,
+				"price":       500,
+				"category_id": "cat",
+			},
+			want: "item id",
+		},
+		{name: "malformed non-object line", item: "not-an-item", want: "must be an object"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			basket := basketWithItem("€5", map[string]any{
+				"id": "placeholder", "count": 1, "price": 500, "category_id": "cat",
+			})
+			basket["items"] = []any{test.item}
+			_, _, err := Build(
+				context.Background(),
+				nil,
+				nil,
+				basket,
+				domain.Location{},
+				"standard",
+				0,
+				"",
+			)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("Build() error = %v, want %q", err, test.want)
+			}
+		})
 	}
 }
 
@@ -213,7 +382,7 @@ func TestBuildCurrencyInferenceFailsClosedWithoutCurrency(t *testing.T) {
 	}{
 		{"$9.99", "USD", false},
 		{"€4.00", "EUR", false},
-		{"GEL0.00", "GEL", false},
+		{"CHF0.00", "CHF", false},
 		{"", "", true},
 		{"12.00", "", true},
 	}
@@ -243,12 +412,12 @@ func TestBuildUsesVenueCurrencyWhenBasketOmitsIt(t *testing.T) {
 	basket := basketWithItem("", map[string]any{
 		"id": "627cb2c7e2a6f0a1b2c3d4e5", "count": 1, "price": 500, "category_id": "cat",
 	})
-	basket["venue"].(map[string]any)["slug"] = "biubiu-moscow-ave"
+	basket["venue"].(map[string]any)["slug"] = "synthetic-market"
 	payload, _, err := Build(
 		context.Background(),
 		nil,
 		func(context.Context, string) (map[string]any, error) {
-			return map[string]any{"venue": map[string]any{"currency": "GEL"}}, nil
+			return map[string]any{"venue": map[string]any{"currency": "CAD"}}, nil
 		},
 		basket,
 		domain.Location{},
@@ -260,8 +429,8 @@ func TestBuildUsesVenueCurrencyWhenBasketOmitsIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	venue := purchasePlan(t, payload)["venue"].(map[string]any)
-	if venue["currency"] != "GEL" {
-		t.Fatalf("currency = %v, want GEL", venue["currency"])
+	if venue["currency"] != "CAD" {
+		t.Fatalf("currency = %v, want CAD", venue["currency"])
 	}
 }
 
@@ -279,7 +448,7 @@ func TestBuildPrefersExplicitBasketCurrency(t *testing.T) {
 		{
 			name: "total_price.currency wins when total symbol is non-inferable",
 			basket: map[string]any{
-				"venue":       map[string]any{"id": "5f9a1b2c3d4e5f6071829304"},
+				"venue":       map[string]any{"id": "000000000000000000000001"},
 				"total":       "120,00 kr", // InferCurrency can't read "kr"
 				"total_price": map[string]any{"currency": "SEK"},
 				"items":       []any{item},
@@ -289,7 +458,7 @@ func TestBuildPrefersExplicitBasketCurrency(t *testing.T) {
 		{
 			name: "explicit basket.currency beats an inferable total",
 			basket: map[string]any{
-				"venue":    map[string]any{"id": "5f9a1b2c3d4e5f6071829304"},
+				"venue":    map[string]any{"id": "000000000000000000000001"},
 				"currency": "DKK",
 				"total":    "€5.00", // would infer EUR, but explicit DKK must win
 				"items":    []any{item},
@@ -330,28 +499,34 @@ func TestBuildAppliesTipAndPromo(t *testing.T) {
 	if len(promo) != 1 || promo[0] != "SAVE10" {
 		t.Errorf("use_promo_discount_ids = %v, want [SAVE10]", promo)
 	}
+
+	_, _, err = Build(
+		context.Background(),
+		nil,
+		func(context.Context, string) (map[string]any, error) {
+			t.Fatal("negative tip reached an upstream dependency")
+			return nil, nil
+		},
+		map[string]any{},
+		domain.Location{},
+		"standard",
+		-1,
+		"",
+	)
+	if err == nil || !strings.Contains(err.Error(), "zero or greater") {
+		t.Fatalf("negative tip error = %v", err)
+	}
 }
 
-// TestBuildFallsBackToItemIDForCategory locks in the documented fallback: when
-// no category can be resolved but the item id looks like a Mongo object id,
-// Build uses the item id as the category and records a warning rather than
-// failing the whole preview.
-func TestBuildFallsBackToItemIDForCategory(t *testing.T) {
+func TestBuildRejectsObjectIDWithoutCategory(t *testing.T) {
 	itemID := "627cb2c7e2a6f0a1b2c3d4e5" // 24 hex chars
 	basket := basketWithItem("€5", map[string]any{
 		"id": itemID, "count": 1, "price": 500,
 	})
-	payload, warnings, err := Build(context.Background(), nil, nil, basket,
+	_, _, err := Build(context.Background(), nil, nil, basket,
 		domain.Location{}, "standard", 0, "")
-	if err != nil {
-		t.Fatalf("expected fallback, got error: %v", err)
-	}
-	item := firstMenuItem(t, purchasePlan(t, payload))
-	if item["category_id"] != itemID {
-		t.Errorf("category_id = %v, want fallback to item id %v", item["category_id"], itemID)
-	}
-	if !containsSubstr(warnings, "falling back to item id") {
-		t.Errorf("expected a fallback warning, got %v", warnings)
+	if err == nil || !strings.Contains(err.Error(), "category_id") {
+		t.Fatalf("expected category_id error, got %v", err)
 	}
 }
 
@@ -408,13 +583,4 @@ func TestBuildEnrichesCategoryFromItemPage(t *testing.T) {
 	if item["category_id"] != "cat-from-page" {
 		t.Errorf("category_id = %v, want cat-from-page (from item page)", item["category_id"])
 	}
-}
-
-func containsSubstr(xs []string, sub string) bool {
-	for _, x := range xs {
-		if strings.Contains(x, sub) {
-			return true
-		}
-	}
-	return false
 }

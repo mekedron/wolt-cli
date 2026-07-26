@@ -2,17 +2,17 @@ package cli
 
 import (
 	"context"
-	"regexp"
 	"strings"
 
+	"github.com/mekedron/wolt-cli/internal/domain"
 	woltgateway "github.com/mekedron/wolt-cli/internal/gateway/wolt"
 	"github.com/mekedron/wolt-cli/internal/service/catalogitem"
 	"github.com/mekedron/wolt-cli/internal/service/checkoutpayload"
+	"github.com/mekedron/wolt-cli/internal/service/deliveryselection"
 	"github.com/mekedron/wolt-cli/internal/service/output"
+	"github.com/mekedron/wolt-cli/internal/service/payloadutil"
 	"github.com/spf13/cobra"
 )
-
-var objectIDPattern = regexp.MustCompile(`^[a-f0-9]{24}$`)
 
 func newCheckoutCommand(deps Dependencies) *cobra.Command {
 	checkout := newCheckoutPreviewCommand(deps)
@@ -43,9 +43,20 @@ func newCheckoutPreviewCommand(deps Dependencies) *cobra.Command {
 				return err
 			}
 			profileName := defaultProfileName(flags.Profile)
+			if tip < 0 {
+				return emitError(
+					cmd,
+					format,
+					profileName,
+					flags.Locale,
+					flags.Output,
+					"WOLT_INVALID_ARGUMENT",
+					"--tip must be zero or greater",
+				)
+			}
 
-			auth := buildAuthContextWithProfile(cmd.Context(), deps, flags)
-			if err := requireAuth(cmd, format, profileName, flags.Locale, flags.Output, auth); err != nil {
+			auth, err := loadRequiredAuth(cmd.Context(), deps, flags, format, cmd)
+			if err != nil {
 				return err
 			}
 
@@ -86,7 +97,18 @@ func newCheckoutPreviewCommand(deps Dependencies) *cobra.Command {
 			if err != nil {
 				return emitUpstreamError(cmd, format, profile, flags.Locale, flags.Output, flags.Verbose, err, authWarnings...)
 			}
-			basket, basketSelection, selectionWarnings := selectBasketWithMeta(page, venueID)
+			basket, basketSelection, selectionWarnings, selectionErr := selectBasketForMutationWithMeta(page, venueID)
+			if selectionErr != nil {
+				return emitError(
+					cmd,
+					format,
+					profile,
+					flags.Locale,
+					flags.Output,
+					"WOLT_CHECKOUT_PAYLOAD_ERROR",
+					"Basket state could not be verified for checkout preview: "+selectionErr.Error(),
+				)
+			}
 			if basket == nil {
 				return emitError(
 					cmd,
@@ -99,23 +121,32 @@ func newCheckoutPreviewCommand(deps Dependencies) *cobra.Command {
 				)
 			}
 			basketVenue := asMap(basket["venue"])
-			venueSlug := strings.TrimSpace(asString(coalesceAny(
-				basketVenue["slug"],
-				basketVenue["venue_slug"],
-				basketVenue["public_slug"],
-				basketVenue["url_slug"],
-			)))
+			basketIdentity := payloadutil.ExtractBasketVenueIdentity(basket)
+			if basketIdentity.Conflict {
+				return emitError(
+					cmd,
+					format,
+					profile,
+					flags.Locale,
+					flags.Output,
+					"WOLT_VENUE_CONFLICT",
+					"Checkout was not previewed because the basket contains conflicting canonical venue ids.",
+				)
+			}
+			identityInput := fallbackString(
+				basketIdentity.ID,
+				fallbackString(basketIdentity.Slug, strings.TrimSpace(venueID)),
+			)
+			resolvedIdentity, resolveErr := resolveVenueReference(cmd.Context(), deps, identityInput)
+			if resolveErr != nil {
+				return resolveErr
+			}
+			resolvedVenueID := fallbackString(basketIdentity.ID, resolvedIdentity.VenueID)
+			venueSlug := fallbackString(basketIdentity.Slug, resolvedIdentity.VenueSlug)
 			if venueSlug == "" && strings.TrimSpace(venueID) != "" && !looksLikeObjectID(venueID) {
 				venueSlug = normalizeVenueInput(venueID)
 			}
-			if venueSlug == "" {
-				basketVenueID := strings.TrimSpace(asString(basketVenue["id"]))
-				if basketVenueID == "" {
-					basketVenueID = strings.TrimSpace(venueID)
-				}
-				venueSlug = resolveVenueSlugFromID(cmd.Context(), deps, basketVenueID)
-			}
-			if venueSlug == "" {
+			if !looksLikeObjectID(resolvedVenueID) || venueSlug == "" {
 				return emitError(
 					cmd,
 					format,
@@ -123,13 +154,14 @@ func newCheckoutPreviewCommand(deps Dependencies) *cobra.Command {
 					flags.Locale,
 					flags.Output,
 					"WOLT_ITEM_AVAILABILITY_UNKNOWN",
-					"Checkout was not previewed because the venue slug could not be resolved for current item validation.",
+					"Checkout was not previewed because the canonical venue id and slug could not both be resolved.",
 				)
 			}
 			if basketVenue == nil {
 				basketVenue = map[string]any{}
 				basket["venue"] = basketVenue
 			}
+			basketVenue["id"] = resolvedVenueID
 			basketVenue["slug"] = venueSlug
 
 			basketItemIDs := catalogitem.BasketItemIDs(basket)
@@ -211,6 +243,33 @@ func newCheckoutPreviewCommand(deps Dependencies) *cobra.Command {
 				combined := append(append([]string{}, authWarnings...), checkoutAuthWarnings...)
 				return emitUpstreamError(cmd, format, profile, flags.Locale, flags.Output, flags.Verbose, err, combined...)
 			}
+			requestedDeliveryMode := strings.ToLower(strings.TrimSpace(deliveryMode))
+			if requestedDeliveryMode == "" {
+				requestedDeliveryMode = "standard"
+			}
+			deliveryState := deliveryselection.Parse(payload)
+			modeUnconfirmed := deliveryState.SelectionAmbiguous ||
+				deliveryState.SelectedMode != requestedDeliveryMode ||
+				deliveryState.SelectedConfig == nil
+			if modeUnconfirmed {
+				checkoutWarnings = append(checkoutWarnings, authWarnings...)
+				checkoutWarnings = append(checkoutWarnings, checkoutAuthWarnings...)
+				checkoutWarnings = append(checkoutWarnings, selectionWarnings...)
+				return emitErrorWithWarnings(
+					cmd,
+					format,
+					profile,
+					flags.Locale,
+					flags.Output,
+					"WOLT_DELIVERY_MODE_UNAVAILABLE",
+					requestedDeliveryMode+" delivery was requested but Wolt did not confirm that it was applied.",
+					checkoutWarnings,
+				)
+			}
+			appliedDeliveryMode := requestedDeliveryMode
+			if deliveryState.SelectedMode != "" {
+				appliedDeliveryMode = deliveryState.SelectedMode
+			}
 
 			payableAmount := asInt(payload["payable_amount"])
 			payableFormatted := asString(asMap(asMap(payload["payment_breakdown"])["total"])["formatted_amount"])
@@ -223,18 +282,15 @@ func newCheckoutPreviewCommand(deps Dependencies) *cobra.Command {
 				payableFormatted = formatMinorAmount(payableAmount, asString(purchaseVenue["currency"]))
 			}
 			data := map[string]any{
-				"basket_id":  asString(basket["id"]),
-				"venue_id":   asString(asMap(basket["venue"])["id"]),
-				"venue_name": asString(asMap(basket["venue"])["name"]),
-				"venue_slug": asString(
-					coalesceAny(
-						asMap(basket["venue"])["slug"],
-						asMap(basket["venue"])["venue_slug"],
-						asMap(basket["venue"])["public_slug"],
-						asMap(basket["venue"])["url_slug"],
-					),
-				),
-				"selection": basketSelection,
+				"basket_id":                payloadutil.BasketID(basket),
+				"venue_id":                 resolvedVenueID,
+				"venue_name":               asString(asMap(basket["venue"])["name"]),
+				"venue_slug":               venueSlug,
+				"selection":                basketSelection,
+				"requested_delivery_mode":  requestedDeliveryMode,
+				"applied_delivery_mode":    appliedDeliveryMode,
+				"available_delivery_modes": deliveryState.AvailableModes,
+				"selected_delivery_config": deliveryState.SelectedConfig,
 				"payable_amount": map[string]any{
 					"amount":           payableAmount,
 					"formatted_amount": emptyToNil(payableFormatted),
@@ -256,7 +312,7 @@ func newCheckoutPreviewCommand(deps Dependencies) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&deliveryMode, "delivery-mode", "standard", "Delivery mode: standard, priority, or schedule.")
+	cmd.Flags().StringVar(&deliveryMode, "delivery-mode", "standard", "Delivery mode: standard or priority.")
 	cmd.Flags().IntVar(&tip, "tip", 0, "Tip amount in minor units.")
 	cmd.Flags().StringVar(&promoCode, "promo-code", "", "Promo code identifier to forward into checkout discount IDs.")
 	cmd.Flags().StringVar(&venueID, "venue-id", "", "Restrict preview to one venue basket.")
@@ -271,7 +327,7 @@ func newCheckoutPreviewCommand(deps Dependencies) *cobra.Command {
 }
 
 func looksLikeObjectID(value string) bool {
-	return objectIDPattern.MatchString(strings.ToLower(strings.TrimSpace(value)))
+	return domain.IsObjectID(value)
 }
 
 func findTotalFormattedAmount(payload map[string]any) string {
@@ -291,6 +347,8 @@ func buildCheckoutPreviewTable(data map[string]any) string {
 		{"Venue ID", fallbackString(asString(data["venue_id"]), "-")},
 		{"Venue name", fallbackString(asString(data["venue_name"]), "-")},
 		{"Venue slug", fallbackString(asString(data["venue_slug"]), "-")},
+		{"Requested delivery", fallbackString(asString(data["requested_delivery_mode"]), "-")},
+		{"Applied delivery", fallbackString(asString(data["applied_delivery_mode"]), "-")},
 		{"Payable total", fallbackString(asString(asMap(data["payable_amount"])["formatted_amount"]), "-")},
 	}
 	if selection := asMap(data["selection"]); selection != nil {

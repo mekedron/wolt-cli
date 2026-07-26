@@ -48,6 +48,10 @@ type ToolCtx struct {
 	locale   string
 	logger   *slog.Logger
 
+	// cartMutationMu protects the read-rebuild-replace basket sequence from
+	// lost updates between concurrent tools served by this MCP process.
+	cartMutationMu sync.Mutex
+
 	// tokenRefreshMu serializes access-token rotation. MCP clients can issue
 	// several authenticated tools concurrently; without coordination each
 	// request can observe the same stale token and rotate it independently.

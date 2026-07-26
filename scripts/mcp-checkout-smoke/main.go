@@ -17,7 +17,7 @@
 //
 //	WOLT_MCP_BIN             path to the wolt-mcp binary (default ./bin/wolt-mcp)
 //	WOLT_SMOKE_LAT/_LON      coordinates to price against (both required together)
-//	WOLT_SMOKE_DELIVERY_MODE standard | priority | schedule (default standard)
+//	WOLT_SMOKE_DELIVERY_MODE standard | priority (default standard)
 //
 // The wolt-mcp server reads the same ~/.wolt/.wolt-config.json the CLI does, so
 // authentication is whatever session that file holds.
@@ -90,24 +90,64 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("call wolt_checkout_preview: %w", err)
 	}
+	if err := validateCheckoutResult(result, deliveryMode); err != nil {
+		return err
+	}
 
+	data := structuredData(result)
+	encoded, err := json.MarshalIndent(data, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode result: %w", err)
+	}
+	fmt.Println(string(encoded))
+	return nil
+}
+
+func validateCheckoutResult(result *mcp.CallToolResult, requestedMode string) error {
+	if result == nil {
+		return fmt.Errorf("wolt_checkout_preview returned no result")
+	}
 	if result.IsError {
 		// The tool surfaced an error (e.g. a Wolt 400). Bubble its text up so the
 		// smoke log shows the actual reason — this is the regression signal.
 		return fmt.Errorf("wolt_checkout_preview returned an error: %s", firstText(result))
 	}
 
-	// Confirm we actually got a structured preview back, not an empty success.
 	data := structuredData(result)
 	if len(data) == 0 {
 		return fmt.Errorf("wolt_checkout_preview returned no structured data: %s", firstText(result))
 	}
-
-	encoded, err := json.MarshalIndent(data, "", "  ")
-	if err != nil {
-		return fmt.Errorf("encode result: %w", err)
+	summary := strings.TrimSpace(stringValue(data["summary"]))
+	if summary == "" {
+		return fmt.Errorf("structured result has no summary")
 	}
-	fmt.Println(string(encoded))
+	if text := firstText(result); text != summary {
+		return fmt.Errorf("content is not the structured summary: content=%q summary=%q", text, summary)
+	}
+	compact, err := json.Marshal(data)
+	if err != nil {
+		return fmt.Errorf("encode structured result: %w", err)
+	}
+	if strings.TrimSpace(firstText(result)) == strings.TrimSpace(string(compact)) {
+		return fmt.Errorf("content duplicates the full structured result")
+	}
+
+	if status := strings.TrimSpace(stringValue(data["status"])); status != "ready" {
+		return fmt.Errorf("unexpected checkout status %q", status)
+	}
+	requestedMode = strings.ToLower(strings.TrimSpace(requestedMode))
+	if got := strings.TrimSpace(stringValue(data["requested_delivery_mode"])); got != requestedMode {
+		return fmt.Errorf("requested_delivery_mode=%q, want %q", got, requestedMode)
+	}
+	if got := strings.TrimSpace(stringValue(data["applied_delivery_mode"])); got != requestedMode {
+		return fmt.Errorf("applied_delivery_mode=%q, want %q", got, requestedMode)
+	}
+	if !stringSliceContains(data["available_delivery_modes"], requestedMode) {
+		return fmt.Errorf("available_delivery_modes does not contain %q", requestedMode)
+	}
+	if preview, ok := data["data"].(map[string]any); !ok || len(preview) == 0 {
+		return fmt.Errorf("structured result has no checkout preview data")
+	}
 	return nil
 }
 
@@ -172,4 +212,27 @@ func firstText(result *mcp.CallToolResult) string {
 		}
 	}
 	return "(no text content)"
+}
+
+func stringValue(value any) string {
+	text, _ := value.(string)
+	return text
+}
+
+func stringSliceContains(value any, want string) bool {
+	switch values := value.(type) {
+	case []any:
+		for _, raw := range values {
+			if strings.EqualFold(strings.TrimSpace(stringValue(raw)), want) {
+				return true
+			}
+		}
+	case []string:
+		for _, raw := range values {
+			if strings.EqualFold(strings.TrimSpace(raw), want) {
+				return true
+			}
+		}
+	}
+	return false
 }

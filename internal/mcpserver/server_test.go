@@ -822,7 +822,7 @@ func (s *stubWolt) BasketsPage(ctx context.Context, loc domain.Location, auth wo
 	if s.basketsPageFn != nil {
 		return s.basketsPageFn(ctx, loc, auth)
 	}
-	return map[string]any{}, nil
+	return map[string]any{"baskets": []any{}}, nil
 }
 func (s *stubWolt) AddToBasket(ctx context.Context, payload map[string]any, auth woltgateway.AuthContext) (map[string]any, error) {
 	if s.addToBasketFn != nil {

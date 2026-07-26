@@ -50,7 +50,10 @@ func parseOptionSelections(raw []string) (map[string][]optionSelection, error) {
 	return result, nil
 }
 
-func buildBasketOptions(itemPayload map[string]any, selections map[string][]optionSelection) []any {
+func buildBasketOptions(
+	itemPayload map[string]any,
+	selections map[string][]optionSelection,
+) ([]any, error) {
 	optionSpecs := extractOptionSpecs(itemPayload)
 	groupIDs := make([]string, 0, len(optionSpecs))
 	for groupID := range optionSpecs {
@@ -60,10 +63,16 @@ func buildBasketOptions(itemPayload map[string]any, selections map[string][]opti
 
 	resolvedSelections := map[string][]optionSelection{}
 	if len(optionSpecs) > 0 {
-		for rawGroupToken, choices := range selections {
-			resolvedGroupID := resolveOptionGroupToken(rawGroupToken, optionSpecs)
-			if resolvedGroupID == "" {
-				resolvedGroupID = strings.TrimSpace(rawGroupToken)
+		selectionGroupTokens := make([]string, 0, len(selections))
+		for rawGroupToken := range selections {
+			selectionGroupTokens = append(selectionGroupTokens, rawGroupToken)
+		}
+		sort.Strings(selectionGroupTokens)
+		for _, rawGroupToken := range selectionGroupTokens {
+			choices := selections[rawGroupToken]
+			resolvedGroupID, err := resolveOptionGroupToken(rawGroupToken, optionSpecs)
+			if err != nil {
+				return nil, err
 			}
 			resolvedSelections[resolvedGroupID] = append(resolvedSelections[resolvedGroupID], choices...)
 		}
@@ -84,19 +93,76 @@ func buildBasketOptions(itemPayload map[string]any, selections map[string][]opti
 	for _, groupID := range groupIDs {
 		groupSpec := optionSpecs[groupID]
 		choices := resolvedSelections[groupID]
-		values := make([]any, 0, len(choices))
+		selectionCount := 0
+		valueCounts := make(map[string]int, len(choices))
 		for _, choice := range choices {
-			valueID := choice.ValueID
-			if resolvedValueID := resolveOptionValueToken(choice.ValueID, groupSpec); resolvedValueID != "" {
-				valueID = resolvedValueID
+			nextCount, ok := payloadutil.CheckedAddInt(selectionCount, choice.Count)
+			if !ok {
+				return nil, fmt.Errorf("option group %q selection count exceeds the supported integer range", groupID)
 			}
+			selectionCount = nextCount
+			valueID := choice.ValueID
+			resolvedValueID, err := resolveOptionValueToken(choice.ValueID, groupSpec)
+			if err == nil {
+				valueID = resolvedValueID
+			} else if len(groupSpec.Values) > 0 {
+				return nil, fmt.Errorf("option group %q: %w", groupID, err)
+			}
+			nextValueCount, ok := payloadutil.CheckedAddInt(valueCounts[valueID], choice.Count)
+			if !ok {
+				return nil, fmt.Errorf("option group %q value %q count exceeds the supported integer range", groupID, valueID)
+			}
+			valueCounts[valueID] = nextValueCount
+		}
+		minSelect := groupSpec.MinSelect
+		if groupSpec.Required && minSelect < 1 {
+			minSelect = 1
+		}
+		maxSelect := groupSpec.MaxSelect
+		if minSelect < 0 || maxSelect < 0 || (maxSelect > 0 && minSelect > maxSelect) {
+			return nil, fmt.Errorf("option group %q has invalid selection limits", groupID)
+		}
+		if selectionCount < minSelect {
+			return nil, fmt.Errorf(
+				"option group %q selection count must be at least %d; got %d",
+				groupID,
+				minSelect,
+				selectionCount,
+			)
+		}
+		if maxSelect > 0 && selectionCount > maxSelect {
+			return nil, fmt.Errorf(
+				"option group %q selection count must be at most %d; got %d",
+				groupID,
+				maxSelect,
+				selectionCount,
+			)
+		}
+		if len(valueCounts) == 0 {
+			continue
+		}
+		valueIDs := make([]string, 0, len(valueCounts))
+		for valueID := range valueCounts {
+			valueIDs = append(valueIDs, valueID)
+		}
+		sort.Strings(valueIDs)
+
+		values := make([]any, 0, len(valueIDs))
+		for _, valueID := range valueIDs {
 			price := 0
 			if valueSpec, ok := groupSpec.Values[valueID]; ok {
+				if !valueSpec.HasPrice {
+					return nil, fmt.Errorf(
+						"option group %q value %q is missing current price metadata; refresh venue item data and try again",
+						groupID,
+						valueID,
+					)
+				}
 				price = valueSpec.Price
 			}
 			values = append(values, map[string]any{
 				"id":    valueID,
-				"count": choice.Count,
+				"count": valueCounts[valueID],
 				"price": price,
 			})
 		}
@@ -105,7 +171,7 @@ func buildBasketOptions(itemPayload map[string]any, selections map[string][]opti
 			"values": values,
 		})
 	}
-	return options
+	return options, nil
 }
 
 func extractOptionSpecs(payload map[string]any) map[string]payloadutil.OptionGroupSpec {
@@ -125,7 +191,7 @@ func buildItemPayloadFromAssortment(assortment map[string]any, itemID string) ma
 			continue
 		}
 		candidateID := strings.TrimSpace(asString(coalesceAny(candidate["item_id"], candidate["id"])))
-		if candidateID != targetItemID {
+		if !strings.EqualFold(candidateID, targetItemID) {
 			continue
 		}
 		item = candidate
@@ -135,12 +201,9 @@ func buildItemPayloadFromAssortment(assortment map[string]any, itemID string) ma
 		return nil
 	}
 
-	priceAmount := asInt(item["price"])
+	priceAmount := payloadutil.MinorAmount(item["price"])
 	if priceAmount <= 0 {
-		priceAmount = asInt(item["base_price"])
-	}
-	if priceAmount <= 0 {
-		priceAmount = asInt(asMap(item["price"])["amount"])
+		priceAmount = payloadutil.MinorAmount(item["base_price"])
 	}
 	currency := strings.TrimSpace(asString(coalesceAny(
 		item["currency"],
@@ -154,20 +217,23 @@ func buildItemPayloadFromAssortment(assortment map[string]any, itemID string) ma
 
 	optionGroupIDs := extractAssortmentOptionGroupIDs(item)
 	optionGroupIndex := map[string]map[string]any{}
-	for _, rawGroup := range asSlice(coalesceAny(assortment["options"], assortment["option_groups"])) {
+	rootOptionGroups := payloadutil.MergeOptionGroups(
+		asSlice(assortment["options"]),
+		asSlice(assortment["option_groups"]),
+	)
+	for _, rawGroup := range rootOptionGroups {
 		group := asMap(rawGroup)
 		if group == nil {
 			continue
 		}
 		groupID := strings.TrimSpace(asString(coalesceAny(group["id"], group["option_id"], group["group_id"])))
-		if groupID == "" {
-			continue
+		if groupID != "" {
+			optionGroupIndex[strings.ToLower(groupID)] = group
 		}
-		optionGroupIndex[groupID] = group
 	}
 	optionGroups := make([]any, 0, len(optionGroupIDs))
 	for _, groupID := range optionGroupIDs {
-		if group, ok := optionGroupIndex[groupID]; ok {
+		if group, ok := optionGroupIndex[strings.ToLower(groupID)]; ok {
 			optionGroups = append(optionGroups, group)
 		}
 	}
@@ -175,30 +241,27 @@ func buildItemPayloadFromAssortment(assortment map[string]any, itemID string) ma
 		optionGroups = asSlice(coalesceAny(item["option_groups"], item["options"]))
 	}
 
-	price := map[string]any{
-		"amount":   priceAmount,
-		"currency": currency,
-	}
-	itemRow := map[string]any{
-		"id":            targetItemID,
-		"item_id":       targetItemID,
-		"name":          item["name"],
-		"description":   coalesceAny(item["description"], ""),
-		"price":         price,
-		"base_price":    price,
-		"option_groups": optionGroups,
-		"options":       optionGroups,
-	}
 	result := map[string]any{
-		"item_id":       targetItemID,
-		"id":            targetItemID,
-		"name":          item["name"],
-		"description":   coalesceAny(item["description"], ""),
-		"price":         price,
-		"base_price":    price,
-		"option_groups": optionGroups,
-		"options":       optionGroups,
-		"items":         []any{itemRow},
+		"item_id": targetItemID,
+		"id":      targetItemID,
+	}
+	if priceAmount > 0 {
+		price := map[string]any{"amount": priceAmount}
+		if currency != "" {
+			price["currency"] = currency
+		}
+		result["price"] = price
+		result["base_price"] = price
+	}
+	if name := strings.TrimSpace(asString(coalesceAny(item["name"], item["title"]))); name != "" {
+		result["name"] = name
+	}
+	if description := strings.TrimSpace(asString(item["description"])); description != "" {
+		result["description"] = description
+	}
+	if len(optionGroups) > 0 {
+		result["option_groups"] = optionGroups
+		result["options"] = optionGroups
 	}
 	for _, key := range []string{
 		"images",
@@ -211,7 +274,6 @@ func buildItemPayloadFromAssortment(assortment map[string]any, itemID string) ma
 	} {
 		if value, exists := item[key]; exists {
 			result[key] = value
-			itemRow[key] = value
 		}
 	}
 	return result
@@ -219,25 +281,32 @@ func buildItemPayloadFromAssortment(assortment map[string]any, itemID string) ma
 
 func extractAssortmentOptionGroupIDs(item map[string]any) []string {
 	groupIDs := []string{}
+	seen := map[string]struct{}{}
+	appendGroupID := func(raw any) {
+		groupID := strings.TrimSpace(asString(raw))
+		key := strings.ToLower(groupID)
+		if groupID == "" {
+			return
+		}
+		if _, exists := seen[key]; exists {
+			return
+		}
+		seen[key] = struct{}{}
+		groupIDs = append(groupIDs, groupID)
+	}
 	for _, value := range asSlice(item["option_group_ids"]) {
-		groupID := strings.TrimSpace(asString(value))
-		if groupID == "" {
-			continue
-		}
-		groupIDs = append(groupIDs, groupID)
+		appendGroupID(value)
 	}
-	for _, optionValue := range asSlice(item["options"]) {
-		option := asMap(optionValue)
-		if option == nil {
-			continue
+	for _, alias := range []string{"options", "option_groups"} {
+		for _, optionValue := range asSlice(item[alias]) {
+			option := asMap(optionValue)
+			if option == nil {
+				continue
+			}
+			appendGroupID(coalesceAny(option["option_id"], option["id"], option["group_id"]))
 		}
-		groupID := strings.TrimSpace(asString(coalesceAny(option["option_id"], option["id"], option["group_id"])))
-		if groupID == "" {
-			continue
-		}
-		groupIDs = append(groupIDs, groupID)
 	}
-	return dedupeStrings(groupIDs)
+	return groupIDs
 }
 
 func inferCurrency(formatted string) string {
@@ -248,36 +317,92 @@ func formatMinorAmount(amount int, currency string) string {
 	return payloadutil.FormatMinorAmount(amount, currency)
 }
 
-func resolveOptionGroupToken(token string, specs map[string]payloadutil.OptionGroupSpec) string {
+func resolveOptionGroupToken(
+	token string,
+	specs map[string]payloadutil.OptionGroupSpec,
+) (string, error) {
 	token = strings.TrimSpace(token)
 	if token == "" {
-		return ""
+		return "", fmt.Errorf("option group is required")
 	}
 	if _, ok := specs[token]; ok {
-		return token
+		return token, nil
 	}
-	for groupID, spec := range specs {
-		if strings.EqualFold(groupID, token) || strings.EqualFold(spec.Name, token) {
-			return groupID
+	groupIDs := make([]string, 0, len(specs))
+	for groupID := range specs {
+		groupIDs = append(groupIDs, groupID)
+	}
+	sort.Strings(groupIDs)
+	if match, ambiguous := uniqueOptionMatch(token, groupIDs, func(groupID string) string {
+		return groupID
+	}); match != "" || ambiguous {
+		if ambiguous {
+			return "", fmt.Errorf("ambiguous option group %q; use its ID", token)
 		}
+		return match, nil
 	}
-	return ""
+	if match, ambiguous := uniqueOptionMatch(token, groupIDs, func(groupID string) string {
+		return specs[groupID].Name
+	}); match != "" || ambiguous {
+		if ambiguous {
+			return "", fmt.Errorf("ambiguous option group %q; use its ID", token)
+		}
+		return match, nil
+	}
+	return "", fmt.Errorf("unknown option group %q", token)
 }
 
-func resolveOptionValueToken(token string, group payloadutil.OptionGroupSpec) string {
+func resolveOptionValueToken(
+	token string,
+	group payloadutil.OptionGroupSpec,
+) (string, error) {
 	token = strings.TrimSpace(token)
 	if token == "" {
-		return ""
+		return "", fmt.Errorf("option value is required")
 	}
 	if _, ok := group.Values[token]; ok {
-		return token
+		return token, nil
 	}
-	for valueID, valueSpec := range group.Values {
-		if strings.EqualFold(valueID, token) || strings.EqualFold(valueSpec.Name, token) {
-			return valueID
+	valueIDs := make([]string, 0, len(group.Values))
+	for valueID := range group.Values {
+		valueIDs = append(valueIDs, valueID)
+	}
+	sort.Strings(valueIDs)
+	if match, ambiguous := uniqueOptionMatch(token, valueIDs, func(valueID string) string {
+		return valueID
+	}); match != "" || ambiguous {
+		if ambiguous {
+			return "", fmt.Errorf("ambiguous option value %q; use its ID", token)
 		}
+		return match, nil
 	}
-	return ""
+	if match, ambiguous := uniqueOptionMatch(token, valueIDs, func(valueID string) string {
+		return group.Values[valueID].Name
+	}); match != "" || ambiguous {
+		if ambiguous {
+			return "", fmt.Errorf("ambiguous option value %q; use its ID", token)
+		}
+		return match, nil
+	}
+	return "", fmt.Errorf("unknown option value %q", token)
+}
+
+func uniqueOptionMatch(
+	token string,
+	ids []string,
+	label func(string) string,
+) (string, bool) {
+	match := ""
+	for _, id := range ids {
+		if !strings.EqualFold(strings.TrimSpace(label(id)), token) {
+			continue
+		}
+		if match != "" && match != id {
+			return "", true
+		}
+		match = id
+	}
+	return match, false
 }
 
 func dedupeStrings(values []string) []string {

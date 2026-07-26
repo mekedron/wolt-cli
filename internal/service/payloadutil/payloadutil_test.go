@@ -208,7 +208,7 @@ func TestBasketReplacementHelpersPreserveUnrelatedLines(t *testing.T) {
 		},
 	}
 
-	replacement := BuildBasketUpsertItem(
+	replacement, err := BuildBasketUpsertItem(
 		map[string]any{
 			"id":    "item-a",
 			"name":  "A refreshed",
@@ -225,6 +225,9 @@ func TestBasketReplacementHelpersPreserveUnrelatedLines(t *testing.T) {
 		},
 		1,
 	)
+	if err != nil {
+		t.Fatalf("BuildBasketUpsertItem() error = %v", err)
+	}
 	merged, err := MergeBasketItems(
 		basket,
 		"item-a",
@@ -278,7 +281,7 @@ func TestMergeBasketItemsKeepsDifferentConfigurationsSeparate(t *testing.T) {
 	}
 	basket := map[string]any{
 		"items": []any{
-			map[string]any{"id": "item-a", "count": 1, "options": option("small")},
+			map[string]any{"id": "item-a", "count": 1, "price": 500, "options": option("small")},
 		},
 	}
 
@@ -286,7 +289,7 @@ func TestMergeBasketItemsKeepsDifferentConfigurationsSeparate(t *testing.T) {
 		basket,
 		"item-a",
 		1,
-		map[string]any{"id": "item-a", "count": 1, "options": option("small")},
+		map[string]any{"id": "item-a", "count": 1, "price": 500, "options": option("small")},
 	)
 	if err != nil {
 		t.Fatalf("MergeBasketItems(same) error = %v", err)
@@ -300,6 +303,7 @@ func TestMergeBasketItemsKeepsDifferentConfigurationsSeparate(t *testing.T) {
 			map[string]any{
 				"id":    "item-a",
 				"count": 1,
+				"price": 500,
 				"options": []any{
 					map[string]any{
 						"id": "size",
@@ -318,6 +322,7 @@ func TestMergeBasketItemsKeepsDifferentConfigurationsSeparate(t *testing.T) {
 		map[string]any{
 			"id":    "item-a",
 			"count": 1,
+			"price": 500,
 			"options": []any{
 				map[string]any{
 					"id": "size",
@@ -344,7 +349,7 @@ func TestMergeBasketItemsKeepsDifferentConfigurationsSeparate(t *testing.T) {
 		basket,
 		"item-a",
 		1,
-		map[string]any{"id": "item-a", "count": 1, "options": option("large")},
+		map[string]any{"id": "item-a", "count": 1, "price": 500, "options": option("large")},
 	)
 	if err != nil {
 		t.Fatalf("MergeBasketItems(different) error = %v", err)
@@ -356,10 +361,10 @@ func TestMergeBasketItemsKeepsDifferentConfigurationsSeparate(t *testing.T) {
 
 	maxInt := int(^uint(0) >> 1)
 	if _, err := MergeBasketItems(
-		map[string]any{"items": []any{map[string]any{"id": "item-a", "count": maxInt}}},
+		map[string]any{"items": []any{map[string]any{"id": "item-a", "count": maxInt, "price": 500}}},
 		"item-a",
 		1,
-		map[string]any{"id": "item-a", "count": 1},
+		map[string]any{"id": "item-a", "count": 1, "price": 500},
 	); err == nil {
 		t.Fatal("MergeBasketItems() accepted an overflowing count")
 	}
@@ -368,8 +373,8 @@ func TestMergeBasketItemsKeepsDifferentConfigurationsSeparate(t *testing.T) {
 func TestRemoveBasketItemsAppliesCountAcrossMatchingConfigurations(t *testing.T) {
 	basket := map[string]any{
 		"items": []any{
-			map[string]any{"id": "item-a", "count": 1, "options": []any{map[string]any{"id": "size", "values": []any{map[string]any{"id": "small"}}}}},
-			map[string]any{"id": "item-a", "count": 1, "options": []any{map[string]any{"id": "size", "values": []any{map[string]any{"id": "large"}}}}},
+			map[string]any{"id": "item-a", "count": 1, "price": 500, "options": []any{map[string]any{"id": "size", "values": []any{map[string]any{"id": "small", "price": 0}}}}},
+			map[string]any{"id": "item-a", "count": 1, "price": 500, "options": []any{map[string]any{"id": "size", "values": []any{map[string]any{"id": "large", "price": 0}}}}},
 		},
 	}
 
@@ -390,8 +395,8 @@ func TestRemoveBasketItemsRejectsOverflow(t *testing.T) {
 	maxInt := int(^uint(0) >> 1)
 	basket := map[string]any{
 		"items": []any{
-			map[string]any{"id": "item-a", "count": maxInt},
-			map[string]any{"id": "item-a", "count": 1},
+			map[string]any{"id": "item-a", "count": maxInt, "price": 500},
+			map[string]any{"id": "item-a", "count": 1, "price": 500},
 		},
 	}
 
@@ -401,6 +406,99 @@ func TestRemoveBasketItemsRejectsOverflow(t *testing.T) {
 	}
 	if remaining != nil || removed != 0 {
 		t.Fatalf("RemoveBasketItems() returned partial state after overflow: (%#v, %d)", remaining, removed)
+	}
+}
+
+func TestBasketRowsForMutationRejectsAmbiguousPageShapes(t *testing.T) {
+	tests := []struct {
+		name string
+		page map[string]any
+	}{
+		{name: "missing container", page: map[string]any{}},
+		{name: "nil container", page: map[string]any{"baskets": nil}},
+		{name: "wrong container", page: map[string]any{"baskets": map[string]any{}}},
+		{name: "non-object basket", page: map[string]any{"baskets": []any{"invalid"}}},
+		{
+			name: "conflicting venue ids",
+			page: map[string]any{"baskets": []any{
+				map[string]any{
+					"venue_id": "000000000000000000000001",
+					"venue":    map[string]any{"id": "000000000000000000000002"},
+				},
+			}},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if rows, err := BasketRowsForMutation(test.page); err == nil || rows != nil {
+				t.Fatalf("BasketRowsForMutation() = (%#v, %v), want fail-closed error", rows, err)
+			}
+			if BasketIDsComplete(test.page) {
+				t.Fatal("BasketIDsComplete() accepted an ambiguous page")
+			}
+		})
+	}
+}
+
+func TestBasketReplacementHelpersRejectIncompleteState(t *testing.T) {
+	validLine := func() map[string]any {
+		return map[string]any{
+			"id":    "item-a",
+			"count": 1,
+			"price": 500,
+			"options": []any{
+				map[string]any{
+					"id": "size",
+					"values": []any{
+						map[string]any{"id": "large", "count": 1, "price": 0},
+					},
+				},
+			},
+			"substitution_settings": map[string]any{"is_allowed": false},
+		}
+	}
+	withLine := func(line any) map[string]any {
+		return map[string]any{"items": []any{line}}
+	}
+	tests := []struct {
+		name   string
+		basket map[string]any
+	}{
+		{name: "missing items", basket: map[string]any{}},
+		{name: "wrong items container", basket: map[string]any{"items": "invalid"}},
+		{name: "non-object line", basket: withLine("invalid")},
+		{name: "blank line id", basket: withLine(map[string]any{"id": " ", "count": 1, "price": 500})},
+		{name: "missing line price", basket: withLine(map[string]any{"id": "item-a", "count": 1})},
+		{name: "nonpositive line count", basket: withLine(map[string]any{"id": "item-a", "count": 0, "price": 500})},
+		{name: "wrong options container", basket: withLine(map[string]any{"id": "item-a", "count": 1, "price": 500, "options": "invalid"})},
+		{name: "non-object option", basket: withLine(map[string]any{"id": "item-a", "count": 1, "price": 500, "options": []any{"invalid"}})},
+		{name: "blank option id", basket: withLine(map[string]any{"id": "item-a", "count": 1, "price": 500, "options": []any{map[string]any{"id": " ", "values": []any{}}}})},
+		{name: "missing values", basket: withLine(map[string]any{"id": "item-a", "count": 1, "price": 500, "options": []any{map[string]any{"id": "size"}}})},
+		{name: "wrong values container", basket: withLine(map[string]any{"id": "item-a", "count": 1, "price": 500, "options": []any{map[string]any{"id": "size", "values": "invalid"}}})},
+		{name: "non-object value", basket: withLine(map[string]any{"id": "item-a", "count": 1, "price": 500, "options": []any{map[string]any{"id": "size", "values": []any{"invalid"}}}})},
+		{name: "blank value id", basket: withLine(map[string]any{"id": "item-a", "count": 1, "price": 500, "options": []any{map[string]any{"id": "size", "values": []any{map[string]any{"id": " ", "price": 0}}}}})},
+		{name: "missing value price", basket: withLine(map[string]any{"id": "item-a", "count": 1, "price": 500, "options": []any{map[string]any{"id": "size", "values": []any{map[string]any{"id": "large"}}}}})},
+		{name: "negative value price", basket: withLine(map[string]any{"id": "item-a", "count": 1, "price": 500, "options": []any{map[string]any{"id": "size", "values": []any{map[string]any{"id": "large", "price": -1}}}}})},
+		{name: "wrong substitution settings", basket: withLine(map[string]any{"id": "item-a", "count": 1, "price": 500, "substitution_settings": "invalid"})},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			merged, mergeErr := MergeBasketItems(test.basket, "item-a", 1, validLine())
+			if mergeErr == nil || merged != nil {
+				t.Fatalf("MergeBasketItems() = (%#v, %v), want no partial replacement", merged, mergeErr)
+			}
+			remaining, removed, removeErr := RemoveBasketItems(test.basket, "item-a", 1)
+			if removeErr == nil || remaining != nil || removed != 0 {
+				t.Fatalf(
+					"RemoveBasketItems() = (%#v, %d, %v), want no partial replacement",
+					remaining,
+					removed,
+					removeErr,
+				)
+			}
+		})
 	}
 }
 

@@ -171,7 +171,7 @@ func (m *testWoltAPI) BasketsPage(ctx context.Context, location domain.Location,
 	if m.basketsPageFn != nil {
 		return m.basketsPageFn(ctx, location, auth)
 	}
-	return map[string]any{}, nil
+	return map[string]any{"baskets": []any{}}, nil
 }
 
 func (m *testWoltAPI) AddToBasket(ctx context.Context, payload map[string]any, auth woltgateway.AuthContext) (map[string]any, error) {

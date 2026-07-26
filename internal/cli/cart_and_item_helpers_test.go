@@ -1,9 +1,15 @@
 package cli
 
 import (
+	"bytes"
+	"context"
+	"errors"
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/mekedron/wolt-cli/internal/domain"
+	woltgateway "github.com/mekedron/wolt-cli/internal/gateway/wolt"
 )
 
 // normalizeTableWhitespace collapses runs of spaces into single spaces
@@ -66,6 +72,27 @@ func TestSelectBasketWithMeta(t *testing.T) {
 	if asString(metaBySlug["selection_mode"]) != "requested-venue-slug" {
 		t.Fatalf("expected requested-venue-slug selection mode, got %v", metaBySlug["selection_mode"])
 	}
+
+	topLevelPage := map[string]any{
+		"results": []any{
+			map[string]any{
+				"basket_id":  "basket-3",
+				"venue_id":   "venue-3",
+				"venue_slug": "venue-c",
+			},
+		},
+	}
+	selectedTopLevel, topLevelMeta, topLevelWarnings := selectBasketWithMeta(topLevelPage, "venue-c")
+	if asString(selectedTopLevel["basket_id"]) != "basket-3" ||
+		asString(topLevelMeta["selection_mode"]) != "requested-venue-slug" ||
+		len(topLevelWarnings) != 0 {
+		t.Fatalf(
+			"top-level results selection = (%#v, %#v, %v)",
+			selectedTopLevel,
+			topLevelMeta,
+			topLevelWarnings,
+		)
+	}
 }
 
 func TestBuildCartStateAndLineDetails(t *testing.T) {
@@ -120,51 +147,351 @@ func TestBuildCartStateAndLineDetails(t *testing.T) {
 	}
 }
 
-func TestBuildBasketMutationItem(t *testing.T) {
-	line := map[string]any{
-		"id":    "item-1",
-		"name":  "Combo",
-		"price": 1700,
-		"total": "€17.00",
-		"options": []any{
-			map[string]any{
-				"id": "drink",
-				"values": []any{
-					map[string]any{"id": "cola", "count": 1, "price": 100},
-				},
-			},
+func runTestCartAdd(t *testing.T, api *testWoltAPI, args ...string) (string, error) {
+	t.Helper()
+	cmd := newCartAddCommand(Dependencies{
+		Wolt: api,
+		Profiles: &testProfiles{profile: domain.Profile{
+			Name:      "default",
+			IsDefault: true,
+			Location:  domain.Location{Lat: 10, Lon: 20},
+			WToken:    "test-token",
+		}},
+	})
+	output := &bytes.Buffer{}
+	cmd.SetOut(output)
+	cmd.SetErr(output)
+	cmd.SetArgs(args)
+	err := cmd.ExecuteContext(context.Background())
+	return output.String(), err
+}
+
+func TestCartAddFailsClosedWhenBasketSnapshotFails(t *testing.T) {
+	const (
+		venueID = "000000000000000000000011"
+		itemID  = "000000000000000000000012"
+	)
+	addCalls := 0
+	basketCalls := 0
+	api := &testWoltAPI{
+		venuePageStaticFn: func(context.Context, string) (map[string]any, error) {
+			return map[string]any{
+				"venue": map[string]any{"id": venueID, "slug": "example-market"},
+			}, nil
+		},
+		basketsPageFn: func(context.Context, domain.Location, woltgateway.AuthContext) (map[string]any, error) {
+			basketCalls++
+			return nil, errors.New("basket snapshot unavailable")
+		},
+		addToBasketFn: func(context.Context, map[string]any, woltgateway.AuthContext) (map[string]any, error) {
+			addCalls++
+			return map[string]any{}, nil
 		},
 	}
-	item := buildBasketMutationItem(line, 2)
-	if asInt(item["price"]) != 3400 {
-		t.Fatalf("expected mutation price 3400, got %v", item["price"])
+	_, err := runTestCartAdd(t, api,
+		venueID,
+		itemID,
+		"--venue-slug", "example-market",
+		"--price", "500",
+		"--currency", "EUR",
+		"--format", "json",
+	)
+	if err == nil {
+		t.Fatal("cart add succeeded without an existing basket snapshot")
 	}
-	opts := asSlice(item["options"])
-	if len(opts) != 1 {
-		t.Fatalf("expected one option group in mutation item, got %d", len(opts))
+	if basketCalls != 1 {
+		t.Fatalf("BasketsPage called %d times, want 1", basketCalls)
+	}
+	if addCalls != 0 {
+		t.Fatalf("AddToBasket called %d times, want 0", addCalls)
 	}
 }
 
-func TestBuildBasketUpsertItemKeepsUnitPrice(t *testing.T) {
-	line := map[string]any{
-		"id":    "item-1",
-		"name":  "Combo",
-		"price": 1700,
-		"options": []any{
+func TestCartAddSelectsMatchingBasketWhenVenueResolutionFails(t *testing.T) {
+	const (
+		requestedVenueID = "000000000000000000000041"
+		otherVenueID     = "000000000000000000000042"
+		itemID           = "000000000000000000000043"
+		requestedLineID  = "000000000000000000000044"
+		otherLineID      = "000000000000000000000045"
+	)
+	page := map[string]any{
+		"baskets": []any{
 			map[string]any{
-				"id": "drink",
-				"values": []any{
-					map[string]any{"id": "cola", "count": 1, "price": 100},
+				"id":         "other-basket",
+				"venue_id":   otherVenueID,
+				"venue_slug": "other-market",
+				"currency":   "EUR",
+				"items": []any{
+					map[string]any{"id": otherLineID, "count": 1, "name": "Other", "price": 700},
+				},
+			},
+			map[string]any{
+				"id":         "requested-basket",
+				"venue_id":   requestedVenueID,
+				"venue_slug": "requested-market",
+				"currency":   "EUR",
+				"items": []any{
+					map[string]any{"id": requestedLineID, "count": 1, "name": "Existing", "price": 600},
 				},
 			},
 		},
 	}
-	item := buildBasketUpsertItem(line, 3)
-	if asInt(item["price"]) != 1700 {
-		t.Fatalf("expected unit price 1700, got %v", item["price"])
+	var mutation map[string]any
+	itemPageCalls := 0
+	api := &testWoltAPI{
+		venuePageStaticFn: func(context.Context, string) (map[string]any, error) {
+			return nil, errors.New("static venue resolution unavailable")
+		},
+		venuePageDynamicFn: func(context.Context, string, woltgateway.VenuePageDynamicOptions) (map[string]any, error) {
+			return nil, errors.New("dynamic venue resolution unavailable")
+		},
+		venueItemPageFn: func(_ context.Context, venueID, requestedItemID string) (map[string]any, error) {
+			itemPageCalls++
+			if venueID != requestedVenueID || requestedItemID != itemID {
+				t.Fatalf("VenueItemPage(%q, %q)", venueID, requestedItemID)
+			}
+			return map[string]any{"id": itemID, "name": "New", "price": 500}, nil
+		},
+		basketsPageFn: func(context.Context, domain.Location, woltgateway.AuthContext) (map[string]any, error) {
+			return page, nil
+		},
+		addToBasketFn: func(_ context.Context, payload map[string]any, _ woltgateway.AuthContext) (map[string]any, error) {
+			mutation = payload
+			return map[string]any{"id": "requested-basket", "venue_id": requestedVenueID}, nil
+		},
 	}
-	if asInt(item["count"]) != 3 {
-		t.Fatalf("expected count 3, got %v", item["count"])
+	output, err := runTestCartAdd(t, api,
+		"requested-market",
+		itemID,
+		"--price", "500",
+		"--currency", "EUR",
+		"--format", "json",
+	)
+	if err != nil {
+		t.Fatalf("cart add: %v\n%s", err, output)
+	}
+	if asString(mutation["venue_id"]) != requestedVenueID {
+		t.Fatalf("venue_id = %v, want %s", mutation["venue_id"], requestedVenueID)
+	}
+	if itemPageCalls != 1 {
+		t.Fatalf("VenueItemPage called %d times, want 1 with the basket venue id", itemPageCalls)
+	}
+	items := asSlice(mutation["items"])
+	if len(items) != 2 ||
+		asString(asMap(items[0])["id"]) != requestedLineID ||
+		asString(asMap(items[1])["id"]) != itemID {
+		t.Fatalf("mutation merged the wrong basket: %#v", mutation)
+	}
+	for _, value := range items {
+		if asString(asMap(value)["id"]) == otherLineID {
+			t.Fatalf("mutation contains a line from another venue: %#v", mutation)
+		}
+	}
+}
+
+func TestCartAddRejectsConflictingOrUnverifiedVenueHints(t *testing.T) {
+	const (
+		requestedVenueID = "000000000000000000000051"
+		otherVenueID     = "000000000000000000000052"
+		itemID           = "000000000000000000000053"
+	)
+	resolveOtherMarket := func(reference string) (map[string]any, error) {
+		if reference == "other-market" {
+			return map[string]any{
+				"venue": map[string]any{"id": otherVenueID, "slug": reference},
+			}, nil
+		}
+		return nil, errors.New("requested venue lookup unavailable")
+	}
+	tests := []struct {
+		name        string
+		venue       string
+		item        string
+		override    string
+		wantMessage string
+		staticVenue func(string) (map[string]any, error)
+	}{
+		{
+			name:        "venue slug flag conflicts with positional slug",
+			venue:       "requested-market",
+			item:        itemID,
+			override:    "other-market",
+			wantMessage: "conflicts with venue",
+		},
+		{
+			name:        "venue slug flag resolves to another id",
+			venue:       requestedVenueID,
+			item:        itemID,
+			override:    "other-market",
+			wantMessage: "different venue",
+			staticVenue: resolveOtherMarket,
+		},
+		{
+			name:        "item URL resolves to another id",
+			venue:       requestedVenueID,
+			item:        "https://wolt.com/en/test/city/venue/other-market/itemid-" + itemID,
+			wantMessage: "different venue",
+			staticVenue: resolveOtherMarket,
+		},
+		{
+			name:        "venue slug association cannot be verified",
+			venue:       requestedVenueID,
+			item:        itemID,
+			override:    "unverified-market",
+			wantMessage: "Could not verify",
+		},
+		{
+			name:        "empty positional venue cannot select the first basket",
+			venue:       " ",
+			item:        itemID,
+			override:    "requested-market",
+			wantMessage: "venue is required",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			addCalls := 0
+			api := &testWoltAPI{
+				venuePageStaticFn: func(_ context.Context, reference string) (map[string]any, error) {
+					if test.staticVenue != nil {
+						return test.staticVenue(reference)
+					}
+					return nil, errors.New("static venue resolution unavailable")
+				},
+				venuePageDynamicFn: func(context.Context, string, woltgateway.VenuePageDynamicOptions) (map[string]any, error) {
+					return nil, errors.New("dynamic venue resolution unavailable")
+				},
+				addToBasketFn: func(context.Context, map[string]any, woltgateway.AuthContext) (map[string]any, error) {
+					addCalls++
+					return map[string]any{}, nil
+				},
+			}
+			args := []string{
+				test.venue,
+				test.item,
+				"--price", "500",
+				"--currency", "EUR",
+				"--format", "json",
+			}
+			if test.override != "" {
+				args = append(args, "--venue-slug", test.override)
+			}
+			output, err := runTestCartAdd(t, api, args...)
+			if err == nil {
+				t.Fatalf("cart add accepted conflicting venue identities\n%s", output)
+			}
+			if !strings.Contains(output, test.wantMessage) {
+				t.Fatalf("unexpected conflict error:\n%s", output)
+			}
+			if addCalls != 0 {
+				t.Fatalf("AddToBasket called %d times, want 0", addCalls)
+			}
+		})
+	}
+}
+
+func TestCartRemovePreservesOtherLinesInReplacementPayload(t *testing.T) {
+	const (
+		venueID = "000000000000000000000021"
+		itemID  = "000000000000000000000022"
+		otherID = "000000000000000000000023"
+	)
+	page := map[string]any{
+		"baskets": []any{
+			map[string]any{
+				"id":         "basket-1",
+				"venue_id":   venueID,
+				"venue_slug": "example-market",
+				"currency":   "EUR",
+				"items": []any{
+					map[string]any{"id": itemID, "count": 2, "name": "A", "price": 500},
+					map[string]any{"id": otherID, "count": 1, "name": "B", "price": 700},
+				},
+			},
+		},
+	}
+	var mutation map[string]any
+	api := &testWoltAPI{
+		basketsPageFn: func(context.Context, domain.Location, woltgateway.AuthContext) (map[string]any, error) {
+			return page, nil
+		},
+		addToBasketFn: func(_ context.Context, payload map[string]any, _ woltgateway.AuthContext) (map[string]any, error) {
+			mutation = payload
+			return map[string]any{}, nil
+		},
+	}
+	cmd := newCartRemoveCommand(Dependencies{
+		Wolt: api,
+		Profiles: &testProfiles{profile: domain.Profile{
+			Name:      "default",
+			IsDefault: true,
+			Location:  domain.Location{Lat: 10, Lon: 20},
+			WToken:    "test-token",
+		}},
+	})
+	output := &bytes.Buffer{}
+	cmd.SetOut(output)
+	cmd.SetErr(output)
+	cmd.SetArgs([]string{itemID, "--format", "json"})
+
+	if err := cmd.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("cart remove: %v\n%s", err, output.String())
+	}
+	items := asSlice(mutation["items"])
+	if len(items) != 2 || asInt(asMap(items[0])["count"]) != 1 ||
+		asString(asMap(items[1])["id"]) != otherID {
+		t.Fatalf("replacement payload lost or miscounted lines: %#v", mutation)
+	}
+	if asString(mutation["venue_id"]) != venueID {
+		t.Fatalf("venue_id = %v, want %s", mutation["venue_id"], venueID)
+	}
+}
+
+func TestCartRemoveClearsSingleLineWithoutVenueIdentityOrCurrency(t *testing.T) {
+	const itemID = "000000000000000000000032"
+	deleteCalls := 0
+	api := &testWoltAPI{
+		basketsPageFn: func(context.Context, domain.Location, woltgateway.AuthContext) (map[string]any, error) {
+			return map[string]any{
+				"baskets": []any{
+					map[string]any{
+						"basket_id": "basket-2",
+						"items": []any{
+							map[string]any{"id": itemID, "count": 1, "name": "A", "price": 500},
+						},
+					},
+				},
+			}, nil
+		},
+		deleteBasketsFn: func(_ context.Context, basketIDs []string, _ woltgateway.AuthContext) (map[string]any, error) {
+			deleteCalls++
+			if len(basketIDs) != 1 || basketIDs[0] != "basket-2" {
+				t.Fatalf("DeleteBaskets ids = %v", basketIDs)
+			}
+			return map[string]any{}, nil
+		},
+	}
+	cmd := newCartRemoveCommand(Dependencies{
+		Wolt: api,
+		Profiles: &testProfiles{profile: domain.Profile{
+			Name:      "default",
+			IsDefault: true,
+			Location:  domain.Location{Lat: 10, Lon: 20},
+			WToken:    "test-token",
+		}},
+	})
+	output := &bytes.Buffer{}
+	cmd.SetOut(output)
+	cmd.SetErr(output)
+	cmd.SetArgs([]string{itemID, "--all", "--format", "json"})
+
+	if err := cmd.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("cart remove --all: %v\n%s", err, output.String())
+	}
+	if deleteCalls != 1 {
+		t.Fatalf("DeleteBaskets called %d times, want 1", deleteCalls)
 	}
 }
 
@@ -184,6 +511,9 @@ func TestBuildItemDetailTableFormatsGroups(t *testing.T) {
 				"required": true,
 				"min":      1,
 				"max":      1,
+				"values": []any{
+					map[string]any{"value_id": "cola", "name": "Cola"},
+				},
 			},
 		},
 		"upsell_items": []any{},
@@ -193,8 +523,8 @@ func TestBuildItemDetailTableFormatsGroups(t *testing.T) {
 	for _, expected := range []string{
 		"Option groups 1",
 		"Upsell items 0",
-		"Option groups\nGroup ID Name Required Min Max",
-		"group-drink Drink yes 1 1",
+		"Option groups\nGroup ID Name Required Min Max Values",
+		"group-drink Drink yes 1 1 cola (Cola)",
 	} {
 		if !strings.Contains(rendered, expected) {
 			t.Fatalf("expected output to contain %q, got:\n%s", expected, rendered)

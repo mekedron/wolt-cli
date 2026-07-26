@@ -76,6 +76,69 @@ func BasketRows(page map[string]any) []map[string]any {
 	return rows
 }
 
+// BasketRowsForMutation validates every supported basket-page container before
+// a caller uses the page to replace or delete basket state. Read-only callers
+// can continue to use the tolerant BasketRows helper.
+func BasketRowsForMutation(page map[string]any) ([]map[string]any, error) {
+	rows, err := strictBasketRows(page)
+	if err != nil {
+		return nil, err
+	}
+	for index, basket := range rows {
+		identity := ExtractBasketVenueIdentity(basket)
+		if identity.Conflict {
+			return nil, fmt.Errorf("basket at index %d has conflicting venue identities", index)
+		}
+	}
+
+	out := make([]map[string]any, 0, len(rows))
+	seenIDs := map[string]map[string]any{}
+	for _, basket := range rows {
+		id := strings.ToLower(BasketID(basket))
+		if id != "" {
+			if existing, duplicate := seenIDs[id]; duplicate {
+				if !reflect.DeepEqual(existing, basket) {
+					return nil, fmt.Errorf("basket %q has conflicting duplicate snapshots", BasketID(basket))
+				}
+				continue
+			}
+			seenIDs[id] = basket
+		}
+		out = append(out, basket)
+	}
+	return out, nil
+}
+
+func strictBasketRows(page map[string]any) ([]map[string]any, error) {
+	if page == nil {
+		return nil, fmt.Errorf("basket page is unavailable")
+	}
+	rows := []map[string]any{}
+	foundContainer := false
+	for _, key := range []string{"baskets", "results"} {
+		raw, exists := page[key]
+		if !exists {
+			continue
+		}
+		foundContainer = true
+		values, ok := strictSlice(raw)
+		if !ok {
+			return nil, fmt.Errorf("basket page field %q must be an array", key)
+		}
+		for index, value := range values {
+			basket := Map(value)
+			if basket == nil {
+				return nil, fmt.Errorf("basket page field %q entry %d must be an object", key, index)
+			}
+			rows = append(rows, basket)
+		}
+	}
+	if !foundContainer {
+		return nil, fmt.Errorf("basket page has no supported basket array")
+	}
+	return rows, nil
+}
+
 // BasketIDs returns unique non-empty basket identifiers from a page.
 func BasketIDs(page map[string]any) []string {
 	rows := BasketRows(page)
@@ -97,7 +160,11 @@ func BasketIDs(page map[string]any) []string {
 
 // BasketIDsComplete reports whether every enumerated basket has a usable ID.
 func BasketIDsComplete(page map[string]any) bool {
-	for _, basket := range BasketRows(page) {
+	rows, err := strictBasketRows(page)
+	if err != nil {
+		return false
+	}
+	for _, basket := range rows {
 		if BasketID(basket) == "" {
 			return false
 		}
@@ -168,49 +235,140 @@ func CheckedMultiplyInt(left, right int) (int, bool) {
 	return product, true
 }
 
-// BuildBasketUpsertItem converts a basket response line back into the compact
-// item shape accepted by the basket replacement endpoint.
-func BuildBasketUpsertItem(line map[string]any, count int) map[string]any {
-	if count <= 0 {
-		count = 1
+// BasketItemRowsForMutation returns every basket item only when the items
+// container and item identities are safe to use for a state replacement.
+func BasketItemRowsForMutation(basket map[string]any) ([]map[string]any, error) {
+	raw, exists := basket["items"]
+	if !exists {
+		return nil, fmt.Errorf("basket items are unavailable")
 	}
-	options := make([]any, 0, len(Slice(line["options"])))
-	for _, rawOption := range Slice(line["options"]) {
+	values, ok := strictSlice(raw)
+	if !ok {
+		return nil, fmt.Errorf("basket items must be an array")
+	}
+	rows := make([]map[string]any, 0, len(values))
+	for index, value := range values {
+		line := Map(value)
+		if line == nil {
+			return nil, fmt.Errorf("basket item at index %d must be an object", index)
+		}
+		if strings.TrimSpace(String(line["id"])) == "" {
+			return nil, fmt.Errorf("basket item at index %d has no item id", index)
+		}
+		rows = append(rows, line)
+	}
+	return rows, nil
+}
+
+// BuildBasketUpsertItem converts one basket response line back into the compact
+// item shape accepted by the basket replacement endpoint. It rejects
+// incomplete state instead of silently dropping fields during reconstruction.
+func BuildBasketUpsertItem(line map[string]any, count int) (map[string]any, error) {
+	if line == nil {
+		return nil, fmt.Errorf("basket item must be an object")
+	}
+	itemID := strings.TrimSpace(String(line["id"]))
+	if itemID == "" {
+		return nil, fmt.Errorf("basket item id is unavailable")
+	}
+	if count <= 0 {
+		return nil, fmt.Errorf("basket item %q count must be greater than zero", itemID)
+	}
+	if _, err := basketMutationCount(line, "basket item"); err != nil {
+		return nil, fmt.Errorf("basket item %q: %w", itemID, err)
+	}
+	price, hasPrice := optionPrice(line)
+	if !hasPrice || price <= 0 {
+		return nil, fmt.Errorf("basket item %q has no positive current price", itemID)
+	}
+
+	rawOptions := []any{}
+	if raw, exists := line["options"]; exists && raw != nil {
+		var ok bool
+		rawOptions, ok = strictSlice(raw)
+		if !ok {
+			return nil, fmt.Errorf("basket item %q options must be an array", itemID)
+		}
+	}
+	options := make([]any, 0, len(rawOptions))
+	for optionIndex, rawOption := range rawOptions {
 		option := Map(rawOption)
 		if option == nil {
-			continue
+			return nil, fmt.Errorf("basket item %q option %d must be an object", itemID, optionIndex)
 		}
-		values := make([]any, 0, len(Slice(option["values"])))
-		for _, rawValue := range Slice(option["values"]) {
+		optionID := strings.TrimSpace(String(option["id"]))
+		if optionID == "" {
+			return nil, fmt.Errorf("basket item %q option %d has no option id", itemID, optionIndex)
+		}
+		rawValues, ok := strictSlice(option["values"])
+		if !ok {
+			return nil, fmt.Errorf("basket item %q option %q values must be an array", itemID, optionID)
+		}
+		values := make([]any, 0, len(rawValues))
+		for valueIndex, rawValue := range rawValues {
 			value := Map(rawValue)
 			if value == nil {
-				continue
+				return nil, fmt.Errorf(
+					"basket item %q option %q value %d must be an object",
+					itemID,
+					optionID,
+					valueIndex,
+				)
 			}
-			valueCount := Int(value["count"])
-			if valueCount <= 0 {
-				valueCount = 1
+			valueID := strings.TrimSpace(String(value["id"]))
+			if valueID == "" {
+				return nil, fmt.Errorf("basket item %q option %q has a value without an id", itemID, optionID)
+			}
+			valueCount, err := basketMutationCount(value, "option value")
+			if err != nil {
+				return nil, fmt.Errorf("basket item %q option %q value %q: %w", itemID, optionID, valueID, err)
+			}
+			valuePrice, valueHasPrice := optionPrice(value)
+			if !valueHasPrice || valuePrice < 0 {
+				return nil, fmt.Errorf(
+					"basket item %q option %q value %q has no current price",
+					itemID,
+					optionID,
+					valueID,
+				)
 			}
 			values = append(values, map[string]any{
-				"id":    String(value["id"]),
+				"id":    valueID,
 				"count": valueCount,
-				"price": MinorAmount(value["price"]),
+				"price": valuePrice,
 			})
 		}
 		options = append(options, map[string]any{
-			"id":     String(option["id"]),
+			"id":     optionID,
 			"values": values,
 		})
 	}
+
+	allowSubstitutions := false
+	if raw, exists := line["substitution_settings"]; exists && raw != nil {
+		settings := Map(raw)
+		if settings == nil {
+			return nil, fmt.Errorf("basket item %q substitution_settings must be an object", itemID)
+		}
+		if rawAllowed, exists := settings["is_allowed"]; exists {
+			allowed, ok := rawAllowed.(bool)
+			if !ok {
+				return nil, fmt.Errorf("basket item %q substitution setting is_allowed must be boolean", itemID)
+			}
+			allowSubstitutions = allowed
+		}
+	}
+
 	return map[string]any{
-		"id":      String(line["id"]),
+		"id":      itemID,
 		"count":   count,
 		"name":    String(line["name"]),
-		"price":   MinorAmount(line["price"]),
+		"price":   price,
 		"options": options,
 		"substitution_settings": map[string]any{
-			"is_allowed": Bool(Map(line["substitution_settings"])["is_allowed"]),
+			"is_allowed": allowSubstitutions,
 		},
-	}
+	}, nil
 }
 
 // MergeBasketItems preserves every existing line while adding or incrementing
@@ -219,33 +377,44 @@ func MergeBasketItems(basket map[string]any, addedItemID string, addedCount int,
 	if addedCount <= 0 {
 		return nil, fmt.Errorf("item count must be greater than zero")
 	}
-	existing := Slice(basket["items"])
+	target := strings.TrimSpace(addedItemID)
+	if target == "" {
+		return nil, fmt.Errorf("item id is required")
+	}
+	existing, err := basketReplacementItems(basket)
+	if err != nil {
+		return nil, err
+	}
+	replacement, err := BuildBasketUpsertItem(newLine, addedCount)
+	if err != nil {
+		return nil, err
+	}
+	if !strings.EqualFold(String(replacement["id"]), target) {
+		return nil, fmt.Errorf("replacement item id does not match the requested item")
+	}
 	out := make([]any, 0, len(existing)+1)
 	merged := false
-	for _, raw := range existing {
-		line := Map(raw)
-		if line == nil {
-			continue
-		}
+	for _, line := range existing {
 		lineCount := Int(line["count"])
-		if lineCount <= 0 {
-			lineCount = 1
-		}
 		if !merged &&
-			strings.EqualFold(strings.TrimSpace(String(line["id"])), strings.TrimSpace(addedItemID)) &&
-			basketLineConfigurationEqual(line, newLine) {
+			strings.EqualFold(strings.TrimSpace(String(line["id"])), target) &&
+			basketLineConfigurationEqual(line, replacement) {
 			mergedCount, ok := CheckedAddInt(lineCount, addedCount)
 			if !ok {
 				return nil, fmt.Errorf("item count exceeds the supported integer range")
 			}
-			out = append(out, BuildBasketUpsertItem(newLine, mergedCount))
+			mergedLine, buildErr := BuildBasketUpsertItem(replacement, mergedCount)
+			if buildErr != nil {
+				return nil, buildErr
+			}
+			out = append(out, mergedLine)
 			merged = true
 			continue
 		}
-		out = append(out, BuildBasketUpsertItem(line, lineCount))
+		out = append(out, line)
 	}
 	if !merged {
-		out = append(out, newLine)
+		out = append(out, replacement)
 	}
 	return out, nil
 }
@@ -254,26 +423,26 @@ func MergeBasketItems(basket map[string]any, addedItemID string, addedCount int,
 // quantity. A non-positive count removes every matching item quantity. It
 // fails without returning partial state when the aggregate count overflows.
 func RemoveBasketItems(basket map[string]any, itemID string, count int) ([]any, int, error) {
-	remaining := make([]any, 0, len(Slice(basket["items"])))
-	removed := 0
 	target := strings.TrimSpace(itemID)
+	if target == "" {
+		return nil, 0, fmt.Errorf("item id is required")
+	}
+	existing, err := basketReplacementItems(basket)
+	if err != nil {
+		return nil, 0, err
+	}
+	remaining := make([]any, 0, len(existing))
+	removed := 0
 	removeAll := count <= 0
 	remainingCount := count
-	for _, raw := range Slice(basket["items"]) {
-		line := Map(raw)
-		if line == nil {
-			continue
-		}
+	for _, line := range existing {
 		lineCount := Int(line["count"])
-		if lineCount <= 0 {
-			lineCount = 1
-		}
 		if !strings.EqualFold(strings.TrimSpace(String(line["id"])), target) {
-			remaining = append(remaining, BuildBasketUpsertItem(line, lineCount))
+			remaining = append(remaining, line)
 			continue
 		}
 		if !removeAll && remainingCount <= 0 {
-			remaining = append(remaining, BuildBasketUpsertItem(line, lineCount))
+			remaining = append(remaining, line)
 			continue
 		}
 		if removeAll || remainingCount >= lineCount {
@@ -292,10 +461,46 @@ func RemoveBasketItems(basket map[string]any, itemID string, count int) ([]any, 
 			return nil, 0, fmt.Errorf("removed item count exceeds the supported integer range")
 		}
 		removed = nextRemoved
-		remaining = append(remaining, BuildBasketUpsertItem(line, lineCount-remainingCount))
+		remainder, buildErr := BuildBasketUpsertItem(line, lineCount-remainingCount)
+		if buildErr != nil {
+			return nil, 0, buildErr
+		}
+		remaining = append(remaining, remainder)
 		remainingCount = 0
 	}
 	return remaining, removed, nil
+}
+
+func basketReplacementItems(basket map[string]any) ([]map[string]any, error) {
+	rows, err := BasketItemRowsForMutation(basket)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]map[string]any, 0, len(rows))
+	for _, line := range rows {
+		count, countErr := basketMutationCount(line, "basket item")
+		if countErr != nil {
+			return nil, countErr
+		}
+		item, buildErr := BuildBasketUpsertItem(line, count)
+		if buildErr != nil {
+			return nil, buildErr
+		}
+		items = append(items, item)
+	}
+	return items, nil
+}
+
+func basketMutationCount(value map[string]any, label string) (int, error) {
+	raw, exists := value["count"]
+	if !exists || raw == nil {
+		return 1, nil
+	}
+	count := Int(raw)
+	if count <= 0 {
+		return 0, fmt.Errorf("%s count must be greater than zero", label)
+	}
+	return count, nil
 }
 
 func basketLineConfigurationEqual(left map[string]any, right map[string]any) bool {
@@ -498,11 +703,17 @@ func optionPrice(value map[string]any) (int, bool) {
 		return 0, false
 	}
 	if price := Map(raw); price != nil {
-		if _, exists := price["amount"]; !exists {
+		raw, exists = price["amount"]
+		if !exists || raw == nil {
 			return 0, false
 		}
 	}
-	return MinorAmount(raw), true
+	switch raw.(type) {
+	case int, int64, float64, float32:
+		return Int(raw), true
+	default:
+		return 0, false
+	}
 }
 
 func visitOptionGroupCandidates(payload map[string]any, visit func(map[string]any)) {
@@ -693,6 +904,27 @@ func Slice(value any) []any {
 		values[idx] = rv.Index(idx).Interface()
 	}
 	return values
+}
+
+func strictSlice(value any) ([]any, bool) {
+	if value == nil {
+		return nil, false
+	}
+	rv := reflect.ValueOf(value)
+	if !rv.IsValid() {
+		return nil, false
+	}
+	kind := rv.Kind()
+	if kind != reflect.Slice && kind != reflect.Array {
+		return nil, false
+	}
+	if kind == reflect.Slice && rv.IsNil() {
+		return nil, false
+	}
+	if rv.Type().Elem().Kind() == reflect.Uint8 {
+		return nil, false
+	}
+	return Slice(value), true
 }
 
 func String(value any) string {
