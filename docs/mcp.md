@@ -180,11 +180,15 @@ before writing. Wolt exposes no basket revision or conditional-write token,
 so mutations from another MCP process, the CLI, or an official Wolt client can
 still race; avoid issuing cart writes concurrently across those clients.
 
-`wolt_checkout_preview.delivery_mode` accepts `standard` and `priority`.
-Priority is reported as applied only when Wolt's checkout response confirms
-the selected priority configuration; otherwise the tool returns a structured
-`DELIVERY_MODE_UNAVAILABLE` result. Scheduled ordering is venue availability,
-not a checkout delivery mode exposed by the current upstream endpoint.
+`wolt_checkout_preview.delivery_mode` accepts `standard` and `priority`. Offered
+modes come from Wolt's `delivery_configs`, keyed on each entry's stable
+`schedule` slug rather than its localized label. Wolt marks no config as
+selected — the mode follows from the posted purchase plan — so the requested mode
+is reported as applied unless the response never advertised it, names a different
+one, or names two at once; those cases return a structured
+`DELIVERY_MODE_UNAVAILABLE` result carrying `available_delivery_modes`.
+Scheduled ordering is venue availability, not a checkout delivery mode exposed by
+the current upstream endpoint.
 
 ## Exact venue resolution and discovery
 
@@ -273,9 +277,18 @@ delivery configurations, offers, and tip configuration.
 
 Successful tool calls keep the complete typed result in
 `structuredContent`; by default, `content` contains only the short summary so
-the full JSON is not duplicated. Content-only clients can opt into the SDK's
-serialized-JSON compatibility fallback by setting request metadata
-`_meta["wolt/duplicate_content"]` to `true`. Ordinary tool errors keep
+the full JSON is not duplicated.
+
+Clients that read only `content` can opt into the SDK's serialized-JSON
+compatibility duplicate two ways:
+
+- **Per server** — start `wolt-mcp` with `WOLT_MCP_DUPLICATE_CONTENT=1`. Use this
+  when the client cannot be configured to send request metadata.
+- **Per request** — set `_meta["wolt/duplicate_content"]`. An explicit `true` or
+  `false` overrides the server default in either direction.
+
+Duplication roughly doubles response size, so leave it off unless a client needs
+it. Ordinary tool errors keep
 `structuredContent` unset so they cannot violate a tool's success schema, retain
 the short message in `content`, and expose the following stable shape in
 `_meta.wolt_error`:

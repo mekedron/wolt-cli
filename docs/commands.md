@@ -360,11 +360,18 @@ config. Location overrides affect the preview only — real orders use
 the Wolt-saved default delivery address.
 
 Priority sets Wolt's `is_priority_delivery` purchase-plan flag. The CLI reports
-the requested, applied, and available modes plus the selected config. Both CLI
-and MCP require Wolt to confirm priority; otherwise the CLI returns
-`WOLT_DELIVERY_MODE_UNAVAILABLE` and MCP returns its structured
-`DELIVERY_MODE_UNAVAILABLE` result. Scheduled ordering is venue availability,
-not a checkout delivery mode supported by this endpoint.
+the requested, applied, and available modes plus the config Wolt advertised for
+the applied mode.
+
+Wolt's checkout response lists one `delivery_configs` entry per offered mode,
+identified by its `schedule` slug, and marks none of them as selected — the mode
+follows from the posted purchase plan. A requested mode is therefore treated as
+applied unless the response contradicts it: the CLI returns
+`WOLT_DELIVERY_MODE_UNAVAILABLE` (MCP: a structured `DELIVERY_MODE_UNAVAILABLE`
+result listing `available_delivery_modes`) only when the response never
+advertised that mode, names a different one, or names two at once. Scheduled
+ordering is venue availability, not a checkout delivery mode supported by this
+endpoint.
 
 There is no order-placement command. To place an order, finish in the
 Wolt app or web UI.

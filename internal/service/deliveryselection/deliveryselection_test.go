@@ -23,8 +23,9 @@ func TestParseDeliverySelection(t *testing.T) {
 					map[string]any{"id": "priority-config", "title": "Priority delivery", "selected": true},
 				},
 			},
-			wantSelected:  "priority",
-			wantAvailable: []string{"standard", "priority"},
+			wantSelected: "priority",
+			// Only priority was advertised, so standard must not be invented.
+			wantAvailable: []string{"priority"},
 			wantConfigID:  "priority-config",
 		},
 		{

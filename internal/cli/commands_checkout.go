@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/mekedron/wolt-cli/internal/domain"
@@ -248,10 +249,8 @@ func newCheckoutPreviewCommand(deps Dependencies) *cobra.Command {
 				requestedDeliveryMode = "standard"
 			}
 			deliveryState := deliveryselection.Parse(payload)
-			modeUnconfirmed := deliveryState.SelectionAmbiguous ||
-				deliveryState.SelectedMode != requestedDeliveryMode ||
-				deliveryState.SelectedConfig == nil
-			if modeUnconfirmed {
+			appliedDeliveryMode, appliedDeliveryConfig, modeConfirmed := deliveryState.Resolve(requestedDeliveryMode)
+			if !modeConfirmed {
 				checkoutWarnings = append(checkoutWarnings, authWarnings...)
 				checkoutWarnings = append(checkoutWarnings, checkoutAuthWarnings...)
 				checkoutWarnings = append(checkoutWarnings, selectionWarnings...)
@@ -262,13 +261,13 @@ func newCheckoutPreviewCommand(deps Dependencies) *cobra.Command {
 					flags.Locale,
 					flags.Output,
 					"WOLT_DELIVERY_MODE_UNAVAILABLE",
-					requestedDeliveryMode+" delivery was requested but Wolt did not confirm that it was applied.",
+					fmt.Sprintf(
+						"Wolt did not offer %s delivery for this order; available: %s.",
+						requestedDeliveryMode,
+						strings.Join(deliveryState.AvailableModes, ", "),
+					),
 					checkoutWarnings,
 				)
-			}
-			appliedDeliveryMode := requestedDeliveryMode
-			if deliveryState.SelectedMode != "" {
-				appliedDeliveryMode = deliveryState.SelectedMode
 			}
 
 			payableAmount := asInt(payload["payable_amount"])
@@ -290,7 +289,7 @@ func newCheckoutPreviewCommand(deps Dependencies) *cobra.Command {
 				"requested_delivery_mode":  requestedDeliveryMode,
 				"applied_delivery_mode":    appliedDeliveryMode,
 				"available_delivery_modes": deliveryState.AvailableModes,
-				"selected_delivery_config": deliveryState.SelectedConfig,
+				"selected_delivery_config": appliedDeliveryConfig,
 				"payable_amount": map[string]any{
 					"amount":           payableAmount,
 					"formatted_amount": emptyToNil(payableFormatted),

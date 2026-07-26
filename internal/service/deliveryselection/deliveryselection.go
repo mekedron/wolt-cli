@@ -10,17 +10,27 @@ import (
 
 // State describes the delivery modes advertised and selected by a checkout
 // preview response.
+//
+// SelectedMode is empty whenever upstream advertises modes without naming an
+// active one. Wolt's checkout preview normally does exactly that: it returns one
+// delivery_configs entry per offered mode and carries no selection flag, because
+// the mode is chosen by the purchase plan that was posted. Treat an empty
+// SelectedMode as "upstream did not contradict the request", not as a failure —
+// Resolve encodes that rule.
 type State struct {
 	AvailableModes     []string
 	SelectedMode       string
 	SelectedConfig     map[string]any
 	SelectionAmbiguous bool
+	// configsByMode holds the advertised config per mode when exactly one was
+	// offered for it, so a requested mode can be reported with its pricing.
+	configsByMode map[string]map[string]any
 }
 
 // Parse accepts the nested checkout shapes currently emitted by Wolt.
 func Parse(payload map[string]any) State {
 	collector := selectionCollector{
-		available:       map[string]bool{"standard": true},
+		available:       map[string]bool{},
 		explicitModes:   map[string]struct{}{},
 		configs:         map[string][]map[string]any{},
 		selectedConfigs: map[string][]map[string]any{},
@@ -28,16 +38,67 @@ func Parse(payload map[string]any) State {
 	collector.collect(payload)
 
 	selectedMode, selectedConfig, ambiguous := collector.selection()
-	modes := []string{"standard"}
-	if collector.available["priority"] {
-		modes = append(modes, "priority")
+	modes := []string{}
+	for _, mode := range []string{"standard", "priority"} {
+		if collector.available[mode] {
+			modes = append(modes, mode)
+		}
+	}
+	// A payload that advertises no delivery metadata still supports the default
+	// mode; anything else would report a venue as undeliverable on a field Wolt
+	// simply omitted.
+	if len(modes) == 0 {
+		modes = []string{"standard"}
+	}
+	configsByMode := map[string]map[string]any{}
+	for mode, configs := range collector.configs {
+		if len(configs) == 1 {
+			configsByMode[mode] = configs[0]
+		}
 	}
 	return State{
 		AvailableModes:     modes,
 		SelectedMode:       selectedMode,
 		SelectedConfig:     selectedConfig,
 		SelectionAmbiguous: ambiguous,
+		configsByMode:      configsByMode,
 	}
+}
+
+// Resolve reports the mode that applies to a requested mode, along with the
+// advertised config for it when upstream priced exactly one.
+//
+// It fails only on evidence that the request was not honored: conflicting
+// explicit selections, an explicit selection naming a different mode, or a mode
+// the response never advertised. Absent any such signal the request stands, so a
+// preview is not discarded over a selection flag Wolt does not send.
+func (s State) Resolve(requested string) (string, map[string]any, bool) {
+	requested = strings.ToLower(strings.TrimSpace(requested))
+	if requested == "" {
+		requested = "standard"
+	}
+	if s.SelectionAmbiguous {
+		return "", nil, false
+	}
+	if s.SelectedMode != "" {
+		if s.SelectedMode != requested {
+			return "", nil, false
+		}
+		return requested, s.configForMode(requested), true
+	}
+	for _, mode := range s.AvailableModes {
+		if mode == requested {
+			return requested, s.configForMode(requested), true
+		}
+	}
+	return "", nil, false
+}
+
+func (s State) configForMode(mode string) map[string]any {
+	if s.SelectedMode == mode && s.SelectedConfig != nil {
+		return s.SelectedConfig
+	}
+	return s.configsByMode[mode]
 }
 
 type selectionCollector struct {
@@ -159,16 +220,24 @@ func appendUniqueConfig(configs []map[string]any, candidate map[string]any) []ma
 	return append(configs, candidate)
 }
 
+// modeFromConfig reads the machine-readable discriminators before any display
+// copy. Wolt localizes label/name/title/description — a Finnish response labels
+// standard delivery "Normaali" — so matching those first makes mode detection
+// depend on the response locale. `schedule` carries the stable mode slug.
 func modeFromConfig(config map[string]any) string {
-	for _, value := range []any{
+	stable := []any{
+		config["schedule"],
 		config["delivery_mode"],
 		config["type"],
 		config["mode"],
 		config["id"],
+	}
+	localized := []any{
 		config["name"],
 		config["title"],
 		config["label"],
-	} {
+	}
+	for _, value := range append(stable, localized...) {
 		if mode := modeFromLabel(payloadutil.String(value)); mode != "" {
 			return mode
 		}

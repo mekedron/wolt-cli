@@ -644,11 +644,6 @@ func TestCheckoutFailsClosedWhenWoltDoesNotConfirmRequestedMode(t *testing.T) {
 		preview   map[string]any
 	}{
 		{
-			name:      "standard is unconfirmed",
-			requested: "standard",
-			preview:   map[string]any{"payable_amount": 500},
-		},
-		{
 			name:      "priority selection is ambiguous",
 			requested: "priority",
 			preview: map[string]any{

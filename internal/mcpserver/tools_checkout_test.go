@@ -330,26 +330,11 @@ func TestHandleCheckoutPreviewRejectsUnconfirmedOrMismatchedDeliveryMode(t *test
 		preview   map[string]any
 	}{
 		{
-			name:      "standard mode is not confirmed",
-			requested: "standard",
-			preview: map[string]any{
-				"payable_amount": 500,
-			},
-		},
-		{
 			name:      "priority request is only echoed",
 			requested: "priority",
 			preview: map[string]any{
 				"payable_amount":       500,
 				"is_priority_delivery": true,
-			},
-		},
-		{
-			name:      "priority mode lacks selected config",
-			requested: "priority",
-			preview: map[string]any{
-				"payable_amount":         500,
-				"selected_delivery_mode": "priority",
 			},
 		},
 		{
@@ -453,6 +438,131 @@ func TestHandleCheckoutPreviewReportsConfirmedPriority(t *testing.T) {
 	}
 }
 
+// woltLiveDeliveryConfigs mirrors the delivery_configs Wolt actually returns:
+// one entry per offered mode, discriminated by the stable `schedule` slug, with
+// localized labels and no selection flag of any kind. The requested mode is
+// carried by the posted purchase plan, so a preview must not be discarded just
+// because no config is marked selected.
+func woltLiveDeliveryConfigs(standardLabel string) []any {
+	return []any{
+		map[string]any{
+			"label":    "Priority",
+			"method":   "homedelivery",
+			"schedule": "priority",
+			"tag":      nil,
+			"price": map[string]any{
+				"price": map[string]any{"amount": 149, "formatted_amount": "+€1.49"},
+			},
+		},
+		map[string]any{
+			"label":    standardLabel,
+			"method":   "homedelivery",
+			"schedule": "standard",
+			"tag":      nil,
+			"price":    nil,
+		},
+	}
+}
+
+func TestHandleCheckoutPreviewAcceptsLiveWoltDeliveryConfigs(t *testing.T) {
+	const venueID = "000000000000000000000001"
+	tests := []struct {
+		name          string
+		requested     string
+		standardLabel string
+		wantApplied   string
+	}{
+		// English and Finnish responses must behave identically: `schedule`
+		// decides the mode, never the display label.
+		{name: "standard en", requested: "standard", standardLabel: "Standard", wantApplied: "standard"},
+		{name: "standard fi", requested: "standard", standardLabel: "Normaali", wantApplied: "standard"},
+		{name: "priority en", requested: "priority", standardLabel: "Standard", wantApplied: "priority"},
+		{name: "priority fi", requested: "priority", standardLabel: "Normaali", wantApplied: "priority"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			preview := map[string]any{
+				"payable_amount":   1234,
+				"delivery_configs": woltLiveDeliveryConfigs(test.standardLabel),
+			}
+			tc := newToolCtx(checkoutTestDeps(checkoutReadyStub(venueID, preview)))
+
+			result, out, err := tc.handleCheckoutPreview(context.Background(), nil, CheckoutPreviewInput{
+				LocationInput: LocationInput{Lat: 10.25, Lon: 20.5},
+				Venue:         venueID,
+				DeliveryMode:  test.requested,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result != nil {
+				t.Fatalf("result = %#v, want success (preview must not be discarded)", result)
+			}
+			if out.Status != "ready" {
+				t.Fatalf("status = %q, want ready", out.Status)
+			}
+			if out.AppliedDeliveryMode != test.wantApplied {
+				t.Fatalf("applied mode = %q, want %q", out.AppliedDeliveryMode, test.wantApplied)
+			}
+			if len(out.AvailableDeliveryModes) != 2 {
+				t.Fatalf("available modes = %#v, want both modes", out.AvailableDeliveryModes)
+			}
+			if out.SelectedDeliveryConfig == nil {
+				t.Fatal("selected delivery config must report the advertised mode pricing")
+			}
+			if got := out.SelectedDeliveryConfig["schedule"]; got != test.wantApplied {
+				t.Fatalf("selected config schedule = %v, want %q", got, test.wantApplied)
+			}
+		})
+	}
+}
+
+// A preview carrying no delivery metadata at all must still return the pricing
+// the caller asked for rather than failing on an absent field.
+func TestHandleCheckoutPreviewAcceptsPreviewWithoutDeliveryMetadata(t *testing.T) {
+	const venueID = "000000000000000000000001"
+	tc := newToolCtx(checkoutTestDeps(checkoutReadyStub(venueID, map[string]any{
+		"payable_amount": 500,
+	})))
+
+	result, out, err := tc.handleCheckoutPreview(context.Background(), nil, CheckoutPreviewInput{
+		LocationInput: LocationInput{Lat: 10.25, Lon: 20.5},
+		Venue:         venueID,
+		DeliveryMode:  "standard",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result != nil || out.Status != "ready" {
+		t.Fatalf("result = %#v, status = %q; want successful ready preview", result, out.Status)
+	}
+	if out.AppliedDeliveryMode != "standard" {
+		t.Fatalf("applied mode = %q, want standard", out.AppliedDeliveryMode)
+	}
+}
+
+// An explicit upstream selection is still authoritative, even without a config.
+func TestHandleCheckoutPreviewAcceptsExplicitUpstreamSelection(t *testing.T) {
+	const venueID = "000000000000000000000001"
+	tc := newToolCtx(checkoutTestDeps(checkoutReadyStub(venueID, map[string]any{
+		"payable_amount":         500,
+		"selected_delivery_mode": "priority",
+	})))
+
+	result, out, err := tc.handleCheckoutPreview(context.Background(), nil, CheckoutPreviewInput{
+		LocationInput: LocationInput{Lat: 10.25, Lon: 20.5},
+		Venue:         venueID,
+		DeliveryMode:  "priority",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result != nil || out.Status != "ready" || out.AppliedDeliveryMode != "priority" {
+		t.Fatalf("result = %#v, out = %#v; want ready priority", result, out)
+	}
+}
+
 func TestCheckoutDeliverySelectionChecksEveryConfigLabel(t *testing.T) {
 	config := map[string]any{
 		"type":     "home_delivery",
@@ -465,7 +575,7 @@ func TestCheckoutDeliverySelectionChecksEveryConfigLabel(t *testing.T) {
 	if state.SelectedMode != "priority" {
 		t.Fatalf("selected mode = %q, want priority", state.SelectedMode)
 	}
-	if len(state.AvailableModes) != 2 || state.AvailableModes[1] != "priority" {
+	if len(state.AvailableModes) != 1 || state.AvailableModes[0] != "priority" {
 		t.Fatalf("available modes = %#v", state.AvailableModes)
 	}
 	if state.SelectedConfig["title"] != "Priority delivery" {

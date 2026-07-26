@@ -64,7 +64,7 @@ Stable error codes:
 | `WOLT_VENUE_UNRESOLVED` | A venue could not be resolved to the canonical ID/slug required by the operation. |
 | `WOLT_VENUE_CONFLICT` | Resolved venue identity conflicts with the existing basket; no mutation was sent. |
 | `WOLT_CHECKOUT_PAYLOAD_ERROR` | The checkout preview payload could not be built safely. |
-| `WOLT_DELIVERY_MODE_UNAVAILABLE` | Wolt did not confirm the requested checkout delivery mode. |
+| `WOLT_DELIVERY_MODE_UNAVAILABLE` | Wolt does not offer the requested checkout delivery mode for this order. |
 | `WOLT_STATS_BUNDLE_UNAVAILABLE` | `wolt stats` could not fetch a usable dashboard bundle (GitHub unreachable, missing release asset, or checksum mismatch) and no cached bundle is on disk. |
 | `WOLT_STATS_ENV_ERROR` | `wolt stats` environment issue: port busy, stats dir not writable, missing user email, sync failure. |
 | `WOLT_STATS_PREREQ_MISSING` | A required local stats prerequisite is missing. |
@@ -482,13 +482,16 @@ before preview. Currency comes from structured item, basket, or venue metadata
 (including GEL); there is no implicit EUR fallback.
 
 `--delivery-mode` accepts `standard` and `priority` and sets the corresponding
-purchase-plan flag. Both CLI and MCP parse Wolt's selected delivery
-configuration. The CLI returns `requested_delivery_mode`,
+purchase-plan flag. Both CLI and MCP derive the offered modes from Wolt's
+`delivery_configs`, keyed on each entry's stable `schedule` slug rather than its
+localized label. The CLI returns `requested_delivery_mode`,
 `applied_delivery_mode`, `available_delivery_modes`, and
-`selected_delivery_config`; it fails with
-`WOLT_DELIVERY_MODE_UNAVAILABLE` when Wolt does not confirm the requested
-priority mode. Scheduled-order availability is reported at venue/cart level
-and is not a checkout delivery mode supported by this endpoint.
+`selected_delivery_config` (the config advertised for the applied mode). It fails
+with `WOLT_DELIVERY_MODE_UNAVAILABLE` only when the response does not advertise
+the requested mode, explicitly names a different one, or names two at once —
+Wolt does not flag a config as selected, so an absent selection is not treated as
+a refusal. Scheduled-order availability is reported at venue/cart level and is
+not a checkout delivery mode supported by this endpoint.
 
 The MCP `wolt_cart_show` result attempts to enrich each `baskets[]` entry with
 the following non-exhaustive object:

@@ -151,13 +151,12 @@ func (tc *ToolCtx) handleCheckoutPreview(ctx context.Context, _ *mcp.CallToolReq
 		return nil, CheckoutPreviewOutput{}, toolErr(err)
 	}
 	deliveryState := deliveryselection.Parse(preview)
-	modeUnconfirmed := deliveryState.SelectionAmbiguous ||
-		deliveryState.SelectedMode != deliveryMode ||
-		deliveryState.SelectedConfig == nil
-	if modeUnconfirmed {
+	appliedMode, selectedConfig, modeConfirmed := deliveryState.Resolve(deliveryMode)
+	if !modeConfirmed {
 		summary := fmt.Sprintf(
-			"%s delivery was requested but Wolt did not confirm that it was applied",
+			"%s delivery is not available for this order; Wolt offers: %s",
 			deliveryMode,
+			strings.Join(deliveryState.AvailableModes, ", "),
 		)
 		return checkoutErrorResult(summary), CheckoutPreviewOutput{
 			Summary:                summary,
@@ -167,16 +166,15 @@ func (tc *ToolCtx) handleCheckoutPreview(ctx context.Context, _ *mcp.CallToolReq
 			SelectedDeliveryConfig: deliveryState.SelectedConfig,
 			Data:                   preview,
 			Error: &CheckoutPreviewError{
-				Code:      "DELIVERY_MODE_UNAVAILABLE",
-				Message:   fmt.Sprintf("The checkout response did not select %s delivery.", deliveryMode),
+				Code: "DELIVERY_MODE_UNAVAILABLE",
+				Message: fmt.Sprintf(
+					"Wolt did not offer %s delivery for this order.",
+					deliveryMode,
+				),
 				Retryable: false,
 			},
 			Warnings: buildWarnings,
 		}, nil
-	}
-	appliedMode := deliveryMode
-	if deliveryState.SelectedMode != "" {
-		appliedMode = deliveryState.SelectedMode
 	}
 	return nil, CheckoutPreviewOutput{
 		Summary:                "checkout preview for venue " + venueID,
@@ -184,7 +182,7 @@ func (tc *ToolCtx) handleCheckoutPreview(ctx context.Context, _ *mcp.CallToolReq
 		RequestedDeliveryMode:  deliveryMode,
 		AppliedDeliveryMode:    appliedMode,
 		AvailableDeliveryModes: deliveryState.AvailableModes,
-		SelectedDeliveryConfig: deliveryState.SelectedConfig,
+		SelectedDeliveryConfig: selectedConfig,
 		Data:                   preview,
 		Warnings:               buildWarnings,
 	}, nil

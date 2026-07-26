@@ -54,7 +54,7 @@ Use `--format json` for automation. Every response follows:
 - `WOLT_VENUE_UNRESOLVED`: canonical venue identity could not be resolved
 - `WOLT_VENUE_CONFLICT`: resolved venue conflicts with the existing basket
 - `WOLT_CHECKOUT_PAYLOAD_ERROR`: failed to build checkout preview payload
-- `WOLT_DELIVERY_MODE_UNAVAILABLE`: Wolt did not confirm the requested delivery mode
+- `WOLT_DELIVERY_MODE_UNAVAILABLE`: Wolt does not offer the requested delivery mode for this order
 - `WOLT_NOT_FOUND`: requested address/entity missing
 
 ## Discovery enrichment fields

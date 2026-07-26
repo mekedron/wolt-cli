@@ -106,11 +106,12 @@ closed or scheduled-order venues.
 - `wolt checkout [--delivery-mode standard|priority] [--tip <minor-units>] [--promo-code <id>] [--venue-id <id>] [--address ... | --lat ... --lon ...]`
 
 Preview only. No final order placement. Priority sets the Wolt purchase-plan
-flag. CLI and MCP both confirm the selected mode; the CLI returns requested,
-applied, and available modes plus the selected config, and reports
-`WOLT_DELIVERY_MODE_UNAVAILABLE` when priority is not confirmed. Scheduled
-ordering is venue availability, not a checkout delivery mode supported by the
-current endpoint.
+flag. Offered modes come from Wolt's `delivery_configs` (keyed on each entry's
+`schedule` slug, not its localized label). The CLI returns requested, applied,
+and available modes plus the config for the applied mode, and reports
+`WOLT_DELIVERY_MODE_UNAVAILABLE` only when the requested mode was not offered,
+a different one was named, or two were named at once. Scheduled ordering is venue
+availability, not a checkout delivery mode supported by the current endpoint.
 
 ## Stats
 
