@@ -2,7 +2,7 @@ package cli
 
 import (
 	"context"
-	"errors"
+	"net/http"
 	"sort"
 	"strings"
 	"time"
@@ -139,7 +139,7 @@ func enrichVenueRowsWithDynamicPromotions(
 					auth,
 					&lastDynamicRequestAt,
 				)
-				if err != nil && isTooManyRequests(err) && rateLimitRetryBudget > 0 {
+				if err != nil && woltgateway.HasStatus(err, http.StatusTooManyRequests) && rateLimitRetryBudget > 0 {
 					rateLimitRetryBudget--
 					payload, err = fetchDynamicVenuePayloadWithRetry(
 						ctx,
@@ -292,13 +292,13 @@ func fetchDynamicVenuePayloadWithRetry(
 			options,
 		)
 		*lastRequestAt = time.Now()
-		if err != nil && isUnauthorized(err) && options.Auth.HasCredentials() {
+		if err != nil && woltgateway.HasStatus(err, http.StatusUnauthorized) && options.Auth.HasCredentials() {
 			// Dynamic venue endpoint rejects some bearer tokens; retry anonymously.
 			options.Auth = woltgateway.AuthContext{}
 			attempt--
 			continue
 		}
-		if err == nil || !isTooManyRequests(err) || attempt == dynamicVenuePromotionMax429Retries {
+		if err == nil || !woltgateway.HasStatus(err, http.StatusTooManyRequests) || attempt == dynamicVenuePromotionMax429Retries {
 			break
 		}
 		select {
@@ -307,27 +307,11 @@ func fetchDynamicVenuePayloadWithRetry(
 		case <-time.After(dynamicVenuePromotionRetryDelay):
 		}
 	}
-	if err != nil && isTooManyRequests(err) {
+	if err != nil && woltgateway.HasStatus(err, http.StatusTooManyRequests) {
 		// Apply cooldown for subsequent venue dynamic calls in this command run.
 		*lastRequestAt = time.Now().Add(dynamicVenuePromotionRetryDelay)
 	}
 	return payload, err
-}
-
-func isTooManyRequests(err error) bool {
-	var upstreamErr *woltgateway.UpstreamRequestError
-	if !errors.As(err, &upstreamErr) {
-		return false
-	}
-	return upstreamErr.StatusCode == 429
-}
-
-func isUnauthorized(err error) bool {
-	var upstreamErr *woltgateway.UpstreamRequestError
-	if !errors.As(err, &upstreamErr) {
-		return false
-	}
-	return upstreamErr.StatusCode == 401
 }
 
 func mergeVenuePromotionLabels(existing []any, extra []string) []any {

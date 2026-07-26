@@ -8,7 +8,9 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/mekedron/wolt-cli/internal/domain"
+	woltgateway "github.com/mekedron/wolt-cli/internal/gateway/wolt"
 	"github.com/mekedron/wolt-cli/internal/service/catalogitem"
+	"github.com/mekedron/wolt-cli/internal/service/catalogload"
 	"github.com/mekedron/wolt-cli/internal/service/observability"
 )
 
@@ -23,6 +25,13 @@ func registerVenueTools(srv *mcp.Server, tc *ToolCtx) {
 	}, tc.handleVenueDetail)
 
 	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "wolt_resolve_venue",
+		Title:       "Resolve an exact venue",
+		Description: "Resolve a venue by exact name, slug, raw venue id, or Wolt URL using supported Wolt search/static data plus an exact-match discovery fallback. It is not limited to the non-exhaustive discovery feed and includes closed and scheduled-order venues.",
+		Annotations: readOnly,
+	}, tc.handleResolveVenue)
+
+	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "wolt_venue_menu",
 		Title:       "Venue menu",
 		Description: "Browse a venue's menu. Returns normalized items with prices, image URLs, discounts, and current availability. Supports query/category filters and pagination.",
@@ -32,7 +41,7 @@ func registerVenueTools(srv *mcp.Server, tc *ToolCtx) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "wolt_venue_hours",
 		Title:       "Venue opening hours",
-		Description: "Return opening windows for a venue, in the venue's timezone (overridable).",
+		Description: "Return venue-local opening windows in the venue's timezone.",
 		Annotations: readOnly,
 	}, tc.handleVenueHours)
 
@@ -56,56 +65,173 @@ func registerVenueTools(srv *mcp.Server, tc *ToolCtx) {
 type VenueDetailInput struct {
 	LocationInput
 	Venue   string `json:"venue"             jsonschema:"venue slug, 24-char id, or wolt.com URL"`
-	Include string `json:"include,omitempty" jsonschema:"comma-separated extras: hours,tags,rating,fees (default: all)"`
+	Include string `json:"include,omitempty" jsonschema:"comma-separated extras: hours,tags,rating,fees,promotions (default: all)"`
 }
 
 type VenueDetailOutput struct {
-	Summary  string         `json:"summary"`
-	Venue    map[string]any `json:"venue"`
-	Warnings []string       `json:"warnings,omitempty"`
+	Summary        string         `json:"summary"`
+	Venue          map[string]any `json:"venue"`
+	Location       *LocationOut   `json:"location,omitempty"`
+	LocationSource string         `json:"location_source,omitempty"`
+	Warnings       []string       `json:"warnings,omitempty"`
 }
 
 func (tc *ToolCtx) handleVenueDetail(ctx context.Context, _ *mcp.CallToolRequest, in VenueDetailInput) (*mcp.CallToolResult, VenueDetailOutput, error) {
-	ref, err := tc.resolveVenueRef(ctx, in.Venue)
+	warnings := []string{}
+	normalized := normalizeVenueInput(in.Venue)
+	if normalized == "" {
+		return nil, VenueDetailOutput{}, toolErr(fmt.Errorf("venue identifier is required (slug, id, or wolt.com URL)"))
+	}
+	directReference := isDirectVenueReference(in.Venue, normalized)
+	explicitLocation := in.Lat != 0 || in.Lon != 0 || strings.TrimSpace(in.Address) != ""
+
+	location, source, locationErr := tc.resolveLocation(ctx, in.LocationInput)
+	var locationPtr *domain.Location
+	switch {
+	case locationErr == nil:
+		locationPtr = &location
+	case explicitLocation || !directReference:
+		return nil, VenueDetailOutput{}, toolErr(fmt.Errorf("venue_detail needs a location: %w", locationErr))
+	default:
+		warnings = append(warnings, "delivery-area availability is unknown because no location was available")
+	}
+
+	var (
+		ref       venueRef
+		candidate map[string]any
+		err       error
+	)
+	if locationPtr != nil {
+		ref, candidate, err = tc.resolveVenueRefWithSearch(ctx, in.Venue, location)
+	} else {
+		ref, err = tc.resolveVenueRef(ctx, in.Venue)
+		if err == nil && (!looksLikeObjectID(ref.ID) || strings.TrimSpace(ref.Slug) == "") {
+			err = fmt.Errorf(
+				"venue_detail could not resolve %q directly; pass a canonical slug, id, or URL, or provide a location for exact-name search",
+				in.Venue,
+			)
+		}
+	}
 	if err != nil {
 		return nil, VenueDetailOutput{}, toolErr(err)
 	}
-	includes := parseIncludeSet(in.Include, []string{"hours", "tags", "rating", "fees"})
-	slug := firstNonEmpty(ref.Slug, ref.ID)
 
-	// The discovery-feed item supplies tagline/badges and needs a location;
-	// falls through to the profile address if the caller omits lat/lon/address.
-	// A venue outside the resolved location's catalog is absent from the feed,
-	// so its absence degrades the result rather than failing it.
-	var item *domain.Item
-	if location, _, locErr := tc.resolveLocation(ctx, in.LocationInput); locErr == nil {
-		if found, itemErr := tc.wolt.ItemBySlug(ctx, location, slug); itemErr == nil {
-			item = found
+	staticPayload := ref.StaticPayload
+	if staticPayload == nil {
+		var staticErr error
+		staticPayload, staticErr = tc.wolt.VenuePageStatic(ctx, firstNonEmpty(ref.Slug, ref.ID))
+		if staticErr != nil {
+			warnings = append(warnings, "venue static details could not be loaded")
+			staticPayload = nil
+		} else {
+			applyVenueIdentity(&ref, staticPayload)
 		}
 	}
 
-	restaurant, err := tc.wolt.RestaurantByID(ctx, ref.ID)
-	if err == nil && restaurant != nil && item != nil {
-		data, warnings, buildErr := observability.BuildVenueDetail(item, restaurant, includes)
-		if buildErr == nil {
-			return nil, VenueDetailOutput{
-				Summary:  fmt.Sprintf("venue %s (%s)", asString(data["name"]), asString(data["slug"])),
-				Venue:    data,
-				Warnings: warnings,
-			}, nil
+	var dynamicPayload map[string]any
+	if strings.TrimSpace(ref.Slug) != "" {
+		dynamicPayload, err = tc.requestVenuePageDynamic(ctx, ref.Slug, woltgateway.VenuePageDynamicOptions{
+			Location:               locationPtr,
+			SelectedDeliveryMethod: "homedelivery",
+			Auth:                   tc.optionalAuth(ctx),
+		})
+		if err != nil {
+			warnings = append(warnings, "location-aware venue availability could not be loaded")
+			dynamicPayload = nil
 		}
 	}
-
-	staticPayload, staticErr := tc.wolt.VenuePageStatic(ctx, slug)
-	if staticErr != nil || len(staticPayload) == 0 {
-		return nil, VenueDetailOutput{}, toolErr(fmt.Errorf("venue not found: %s", in.Venue))
+	includes := parseIncludeSet(in.Include, []string{"hours", "tags", "rating", "fees", "promotions"})
+	data, buildWarnings, buildErr := observability.BuildVenueDetailFromPayload(
+		venueIdentityFromRef(ref, in.Venue),
+		staticPayload,
+		dynamicPayload,
+		candidate,
+		locationPtr,
+		includes,
+	)
+	if buildErr != nil {
+		return nil, VenueDetailOutput{}, toolErr(buildErr)
 	}
-	venueID := firstNonEmpty(strings.TrimSpace(venueIDFromPayload(staticPayload)), ref.ID)
-	data, warnings := observability.BuildVenueDetailFallback(slug, venueID, item, staticPayload, includes)
-	return nil, VenueDetailOutput{
+	warnings = append(warnings, buildWarnings...)
+	out := VenueDetailOutput{
 		Summary:  fmt.Sprintf("venue %s (%s)", asString(data["name"]), asString(data["slug"])),
 		Venue:    data,
 		Warnings: warnings,
+	}
+	if locationPtr != nil {
+		locationValue := locationOut(location)
+		out.Location = &locationValue
+		out.LocationSource = source
+	}
+	return nil, out, nil
+}
+
+// ---------------- wolt_resolve_venue ----------------
+
+type ResolveVenueInput struct {
+	LocationInput
+	Venue string `json:"venue" jsonschema:"exact venue name, slug, 24-char id, or wolt.com URL"`
+}
+
+type ResolveVenueOutput struct {
+	Summary        string         `json:"summary"`
+	Venue          map[string]any `json:"venue"`
+	Location       LocationOut    `json:"location"`
+	LocationSource string         `json:"location_source"`
+	Warnings       []string       `json:"warnings,omitempty"`
+}
+
+func (tc *ToolCtx) handleResolveVenue(ctx context.Context, _ *mcp.CallToolRequest, in ResolveVenueInput) (*mcp.CallToolResult, ResolveVenueOutput, error) {
+	location, source, err := tc.resolveLocation(ctx, in.LocationInput)
+	if err != nil {
+		return nil, ResolveVenueOutput{}, toolErr(fmt.Errorf("venue resolver needs a location: %w", err))
+	}
+	ref, candidate, err := tc.resolveVenueRefWithSearch(ctx, in.Venue, location)
+	if err != nil {
+		return nil, ResolveVenueOutput{}, toolErr(err)
+	}
+	warnings := []string{}
+	staticPayload := ref.StaticPayload
+	if staticPayload == nil {
+		var staticErr error
+		staticPayload, staticErr = tc.wolt.VenuePageStatic(ctx, firstNonEmpty(ref.Slug, ref.ID))
+		if staticErr != nil {
+			warnings = append(warnings, "venue static details could not be loaded")
+			staticPayload = nil
+		} else {
+			applyVenueIdentity(&ref, staticPayload)
+		}
+	}
+	var dynamicPayload map[string]any
+	var dynamicErr error
+	if strings.TrimSpace(ref.Slug) != "" {
+		dynamicPayload, dynamicErr = tc.requestVenuePageDynamic(ctx, ref.Slug, woltgateway.VenuePageDynamicOptions{
+			Location:               &location,
+			SelectedDeliveryMethod: "homedelivery",
+			Auth:                   tc.optionalAuth(ctx),
+		})
+	}
+	data, buildWarnings, buildErr := observability.BuildVenueDetailFromPayload(
+		venueIdentityFromRef(ref, in.Venue),
+		staticPayload,
+		dynamicPayload,
+		candidate,
+		&location,
+		parseIncludeSet("", []string{"hours", "tags", "rating", "fees", "promotions"}),
+	)
+	if buildErr != nil {
+		return nil, ResolveVenueOutput{}, toolErr(buildErr)
+	}
+	warnings = append(warnings, buildWarnings...)
+	if dynamicErr != nil {
+		warnings = append(warnings, "location-aware venue availability could not be loaded")
+	}
+	return nil, ResolveVenueOutput{
+		Summary:        fmt.Sprintf("resolved venue %s (%s)", asString(data["name"]), asString(data["slug"])),
+		Venue:          data,
+		Location:       locationOut(location),
+		LocationSource: source,
+		Warnings:       warnings,
 	}, nil
 }
 
@@ -114,7 +240,7 @@ func (tc *ToolCtx) handleVenueDetail(ctx context.Context, _ *mcp.CallToolRequest
 type VenueMenuInput struct {
 	Venue    string `json:"venue"               jsonschema:"venue slug, id, or url"`
 	Query    string `json:"query,omitempty"     jsonschema:"case-insensitive substring filter on item name"`
-	Category string `json:"category,omitempty"  jsonschema:"category name filter"`
+	Category string `json:"category,omitempty"  jsonschema:"exact leaf category slug from data.catalog.available_categories"`
 	Limit    int    `json:"limit,omitempty"     jsonschema:"max items"`
 	Offset   int    `json:"offset,omitempty"    jsonschema:"skip first N"`
 }
@@ -123,6 +249,23 @@ type VenueMenuOutput struct {
 	Summary  string         `json:"summary"`
 	Data     map[string]any `json:"data"`
 	Warnings []string       `json:"warnings,omitempty"`
+}
+
+const noMenuItemsWarning = "no menu items were discovered in upstream venue payloads"
+
+type venueMenuSelection struct {
+	payloads                  []map[string]any
+	metadataPayloads          []map[string]any
+	warnings                  []string
+	availableCategories       []catalogload.Category
+	loadedCategorySlugs       []string
+	categoryFilter            string
+	name                      string
+	rootMaterializedItemCount int
+	partial                   bool
+	complete                  bool
+	hasQuery                  bool
+	hasCategory               bool
 }
 
 func (tc *ToolCtx) handleVenueMenu(ctx context.Context, _ *mcp.CallToolRequest, in VenueMenuInput) (*mcp.CallToolResult, VenueMenuOutput, error) {
@@ -134,35 +277,259 @@ func (tc *ToolCtx) handleVenueMenu(ctx context.Context, _ *mcp.CallToolRequest, 
 	if err != nil {
 		return nil, VenueMenuOutput{}, toolErr(err)
 	}
-	data, warnings := observability.BuildVenueMenu(ref.ID, []map[string]any{payload}, in.Category, false, nil)
+	venueSlug := firstNonEmpty(ref.Slug, in.Venue)
+	selection, err := tc.prepareVenueMenuSelection(ctx, venueSlug, payload, in)
+	if err != nil {
+		return nil, VenueMenuOutput{}, toolErr(err)
+	}
 
-	if in.Query != "" {
-		filterMenuItemsByName(data, in.Query)
-	}
-	rows := asSlice(data["items"])
-	if in.Offset > 0 {
-		if in.Offset >= len(rows) {
-			rows = []any{}
-		} else {
-			rows = rows[in.Offset:]
-		}
-	}
-	if in.Limit > 0 && in.Limit < len(rows) {
-		rows = rows[:in.Limit]
-	}
-	data["items"] = rows
+	identity := observability.ExtractVenueIdentity(
+		venueIdentityFromRef(ref, in.Venue),
+		ref.StaticPayload,
+		payload,
+	)
+	data, menuWarnings := observability.BuildVenueMenu(
+		ref.ID,
+		selection.payloads,
+		selection.categoryFilter,
+		false,
+		nil,
+		observability.ItemVenueContext{
+			VenueID:          identity.ID,
+			VenueSlug:        identity.Slug,
+			CanonicalURL:     identity.CanonicalURL,
+			Currency:         resolveVenueCurrency(ctx, tc, ref, nil, ref.StaticPayload, payload),
+			MetadataPayloads: selection.metadataPayloads,
+		},
+	)
+	summary, warnings := finalizeVenueMenuData(
+		data,
+		payload,
+		venueSlug,
+		in,
+		selection,
+		append(selection.warnings, menuWarnings...),
+	)
 	return nil, VenueMenuOutput{
-		Summary:  humanCount(len(rows), "item", "items"),
+		Summary:  summary,
 		Data:     data,
 		Warnings: warnings,
 	}, nil
+}
+
+func (tc *ToolCtx) prepareVenueMenuSelection(
+	ctx context.Context,
+	venueSlug string,
+	rootPayload map[string]any,
+	in VenueMenuInput,
+) (venueMenuSelection, error) {
+	materializedItemIDs := materializedMenuItemIDs(rootPayload)
+	availableCategories := catalogload.Categories(rootPayload)
+	partial := catalogload.RootIsPartial(rootPayload, materializedItemIDs)
+	selection := venueMenuSelection{
+		payloads:                  []map[string]any{rootPayload},
+		metadataPayloads:          []map[string]any{},
+		warnings:                  []string{},
+		availableCategories:       availableCategories,
+		loadedCategorySlugs:       []string{},
+		categoryFilter:            in.Category,
+		name:                      "full",
+		rootMaterializedItemCount: len(materializedItemIDs),
+		partial:                   partial,
+		complete:                  !partial,
+		hasQuery:                  strings.TrimSpace(in.Query) != "",
+		hasCategory:               strings.TrimSpace(in.Category) != "",
+	}
+
+	language := domain.ResolveAssortmentLanguage(tc.locale)
+	switch {
+	case selection.hasCategory:
+		categorySlug := strings.TrimSpace(in.Category)
+		categoryResult, err := catalogload.LoadCategory(
+			ctx,
+			tc.wolt,
+			venueSlug,
+			categorySlug,
+			language,
+			tc.optionalAuth(ctx),
+		)
+		if err != nil {
+			return venueMenuSelection{}, fmt.Errorf("load category %q: %w", categorySlug, err)
+		}
+		// The category endpoint is authoritative for this selection. Root
+		// assortment items can belong to other categories or be stale copies.
+		selection.payloads = []map[string]any{categoryResult.Payload}
+		selection.metadataPayloads = []map[string]any{rootPayload}
+		selection.warnings = append(selection.warnings, categoryResult.Warnings...)
+		selection.loadedCategorySlugs = append(selection.loadedCategorySlugs, categorySlug)
+		selection.categoryFilter = ""
+		selection.name = "category"
+		selection.complete = categoryResult.Complete
+	case selection.hasQuery:
+		searchPayload, err := requestAssortmentSearch(
+			ctx,
+			tc,
+			venueSlug,
+			in.Query,
+			language,
+			tc.optionalAuth(ctx),
+		)
+		if err != nil {
+			return venueMenuSelection{}, err
+		}
+		// The search endpoint is authoritative for which items matched. Keep
+		// root assortment items out of this selection; venue identity and
+		// currency are supplied separately through the resolved context.
+		selection.payloads = []map[string]any{searchPayload}
+		selection.metadataPayloads = []map[string]any{rootPayload}
+		selection.name = "search"
+		selection.complete = true
+	case selection.partial && selection.rootMaterializedItemCount == 0:
+		selection.name = "metadata_only"
+		selection.complete = false
+	}
+	return selection, nil
+}
+
+func finalizeVenueMenuData(
+	data map[string]any,
+	rootPayload map[string]any,
+	venueSlug string,
+	in VenueMenuInput,
+	selection venueMenuSelection,
+	warnings []string,
+) (string, []string) {
+	if selection.hasQuery || selection.hasCategory || selection.partial {
+		warnings = removeWarning(warnings, noMenuItemsWarning)
+	}
+	if selection.partial && selection.name == "metadata_only" {
+		warnings = append(
+			warnings,
+			"partial catalog: root assortment exposes category metadata but not the full item catalog; pass category=<leaf slug> from data.catalog.available_categories or use wolt_venue_search_items",
+		)
+	}
+	if selection.hasQuery && selection.hasCategory {
+		filterMenuItemsByQuery(data, in.Query)
+	}
+
+	rows := asSlice(data["items"])
+	selectionItemCount := len(rows)
+	rows = paginateVenueMenuRows(rows, in.Offset, in.Limit)
+	data["items"] = rows
+	if strings.TrimSpace(asString(data["venue_slug"])) == "" {
+		data["venue_slug"] = venueSlug
+	}
+	if selection.hasCategory && selectionItemCount == 0 {
+		warnings = append(warnings, emptyVenueMenuSelectionWarning(in))
+	}
+
+	warnings = addVenueMenuCatalogMetadata(
+		data,
+		rootPayload,
+		in,
+		selection,
+		len(rows),
+		warnings,
+	)
+	if selection.partial && selection.name == "metadata_only" {
+		return fmt.Sprintf(
+			"partial catalog: %d categories available; no category loaded",
+			len(selection.availableCategories),
+		), warnings
+	}
+	return humanCount(len(rows), "item", "items"), warnings
+}
+
+func addVenueMenuCatalogMetadata(
+	data map[string]any,
+	rootPayload map[string]any,
+	in VenueMenuInput,
+	selection venueMenuSelection,
+	itemsReturned int,
+	warnings []string,
+) []string {
+	status := "complete"
+	catalogComplete := true
+	switch {
+	case selection.partial:
+		status = "partial"
+		catalogComplete = false
+	case selection.rootMaterializedItemCount == 0 && len(selection.availableCategories) == 0:
+		status = "unavailable"
+		catalogComplete = false
+		if selection.name == "full" {
+			selection.complete = false
+		}
+		warnings = removeWarning(warnings, noMenuItemsWarning)
+		warnings = append(
+			warnings,
+			"catalog unavailable: the root assortment returned neither materialized items nor category metadata",
+		)
+	}
+	data["catalog"] = map[string]any{
+		"status":                status,
+		"complete":              catalogComplete,
+		"loading_strategy":      strings.TrimSpace(asString(rootPayload["loading_strategy"])),
+		"selection":             selection.name,
+		"selection_complete":    selection.complete,
+		"requested_category":    emptyStringToNil(strings.TrimSpace(in.Category)),
+		"available_categories":  selection.availableCategories,
+		"loaded_category_slugs": selection.loadedCategorySlugs,
+		"items_returned":        itemsReturned,
+	}
+	if selection.partial && selection.name == "metadata_only" && len(asSlice(data["categories"])) == 0 {
+		categoryNames := make([]string, 0, len(selection.availableCategories))
+		for _, category := range selection.availableCategories {
+			categoryNames = append(categoryNames, category.Name)
+		}
+		data["categories"] = categoryNames
+	}
+	return warnings
+}
+
+func paginateVenueMenuRows(rows []any, offset int, limit int) []any {
+	if offset > 0 {
+		if offset >= len(rows) {
+			return []any{}
+		}
+		rows = rows[offset:]
+	}
+	if limit > 0 && limit < len(rows) {
+		rows = rows[:limit]
+	}
+	return rows
+}
+
+func emptyVenueMenuSelectionWarning(in VenueMenuInput) string {
+	if strings.TrimSpace(in.Query) != "" {
+		return fmt.Sprintf(
+			"no menu items matched query %q in category %q",
+			strings.TrimSpace(in.Query),
+			strings.TrimSpace(in.Category),
+		)
+	}
+	return fmt.Sprintf(
+		"category %q returned no menu items",
+		strings.TrimSpace(in.Category),
+	)
+}
+
+func materializedMenuItemIDs(payload map[string]any) []string {
+	itemIDs := []string{}
+	for _, item := range observability.ExtractMenuItems(payload, "", "") {
+		itemID := strings.TrimSpace(asString(item["item_id"]))
+		if itemID != "" {
+			itemIDs = append(itemIDs, itemID)
+		}
+	}
+	return itemIDs
 }
 
 // ---------------- wolt_venue_hours ----------------
 
 type VenueHoursInput struct {
 	Venue    string `json:"venue"             jsonschema:"venue slug, id, or url"`
-	Timezone string `json:"timezone,omitempty" jsonschema:"timezone override (defaults to venue timezone)"`
+	Timezone string `json:"timezone,omitempty" jsonschema:"expected venue timezone; a differing value is not applied to undated venue-local weekly hours"`
 }
 
 type VenueHoursOutput struct {
@@ -176,22 +543,22 @@ func (tc *ToolCtx) handleVenueHours(ctx context.Context, _ *mcp.CallToolRequest,
 	if err != nil {
 		return nil, VenueHoursOutput{}, toolErr(err)
 	}
-	restaurant, err := tc.wolt.RestaurantByID(ctx, ref.ID)
-	if err == nil && restaurant != nil {
-		data := observability.BuildVenueHours(restaurant, in.Timezone)
-		return nil, VenueHoursOutput{
-			Summary: fmt.Sprintf("opening windows for %s", asString(data["venue_id"])),
-			Hours:   data,
-		}, nil
+	staticPayload := ref.StaticPayload
+	if staticPayload == nil {
+		staticPayload, err = tc.wolt.VenuePageStatic(ctx, firstNonEmpty(ref.Slug, ref.ID))
+		if err != nil {
+			return nil, VenueHoursOutput{}, toolErr(fmt.Errorf("venue hours unavailable for %q: %w", in.Venue, err))
+		}
+		applyVenueIdentity(&ref, staticPayload)
 	}
-
-	slug := firstNonEmpty(ref.Slug, ref.ID)
-	staticPayload, staticErr := tc.wolt.VenuePageStatic(ctx, slug)
-	if staticErr != nil || len(staticPayload) == 0 {
-		return nil, VenueHoursOutput{}, toolErr(fmt.Errorf("venue not found: %s", in.Venue))
+	data, warnings, buildErr := observability.BuildVenueHoursFromPayload(
+		venueIdentityFromRef(ref, in.Venue),
+		staticPayload,
+		in.Timezone,
+	)
+	if buildErr != nil {
+		return nil, VenueHoursOutput{}, toolErr(buildErr)
 	}
-	venueID := firstNonEmpty(strings.TrimSpace(venueIDFromPayload(staticPayload)), ref.ID)
-	data, warnings := observability.BuildVenueHoursFallback(venueID, in.Timezone, staticPayload)
 	return nil, VenueHoursOutput{
 		Summary:  fmt.Sprintf("opening windows for %s", asString(data["venue_id"])),
 		Hours:    data,
@@ -207,8 +574,9 @@ type VenueItemInput struct {
 }
 
 type VenueItemOutput struct {
-	Summary string         `json:"summary"`
-	Item    map[string]any `json:"item"`
+	Summary  string         `json:"summary"`
+	Item     map[string]any `json:"item"`
+	Warnings []string       `json:"warnings,omitempty"`
 }
 
 func (tc *ToolCtx) handleVenueItem(ctx context.Context, _ *mcp.CallToolRequest, in VenueItemInput) (*mcp.CallToolResult, VenueItemOutput, error) {
@@ -219,8 +587,14 @@ func (tc *ToolCtx) handleVenueItem(ctx context.Context, _ *mcp.CallToolRequest, 
 	if strings.TrimSpace(in.ItemID) == "" {
 		return nil, VenueItemOutput{}, toolErrf("item_id is required")
 	}
-	payload, pageErr := tc.wolt.VenueItemPage(ctx, ref.ID, in.ItemID)
+	var payload map[string]any
+	var pageErr error
+	if domain.IsObjectID(ref.ID) {
+		payload, pageErr = tc.wolt.VenueItemPage(ctx, ref.ID, in.ItemID)
+	}
 	var currentItem map[string]any
+	currentLookupSucceeded := false
+	warnings := []string{}
 	if strings.TrimSpace(ref.Slug) != "" {
 		currentPayload, currentErr := requestAssortmentItems(
 			ctx,
@@ -230,13 +604,26 @@ func (tc *ToolCtx) handleVenueItem(ctx context.Context, _ *mcp.CallToolRequest, 
 			tc.optionalAuth(ctx),
 		)
 		if currentErr == nil {
-			currentItem = catalogitem.Find(currentPayload, in.ItemID)
+			currentLookupSucceeded = true
+			currentItem = catalogitem.ScopedItem(currentPayload, in.ItemID)
+		} else {
+			warnings = append(warnings, "current item availability could not be verified")
 		}
+	}
+	if scoped := catalogitem.ScopedItem(payload, in.ItemID); scoped != nil {
+		payload = scoped
 	}
 	if currentItem != nil {
 		payload = catalogitem.MergeCurrentItem(payload, currentItem)
-	} else if pageErr != nil {
+	} else if pageErr != nil && !currentLookupSucceeded {
 		return nil, VenueItemOutput{}, toolErr(pageErr)
+	}
+	if currentLookupSucceeded && currentItem == nil {
+		payload = catalogitem.MarkMissingFromCurrentAssortment(payload, in.ItemID)
+		warnings = append(warnings, "item is missing from the current assortment")
+	}
+	if payload == nil && !currentLookupSucceeded {
+		return nil, VenueItemOutput{}, toolErrf("item detail is unavailable")
 	}
 	if payload == nil {
 		payload = map[string]any{}
@@ -244,10 +631,24 @@ func (tc *ToolCtx) handleVenueItem(ctx context.Context, _ *mcp.CallToolRequest, 
 	if currency := resolveVenueCurrency(ctx, tc, ref, nil, payload); currency != "" {
 		payload["currency"] = currency
 	}
-	data, _ := observability.BuildItemDetail(in.ItemID, ref.ID, payload, false)
+	identity := observability.ExtractVenueIdentity(
+		venueIdentityFromRef(ref, in.Venue),
+		ref.StaticPayload,
+		payload,
+	)
+	itemContext := observability.ItemVenueContext{
+		VenueID:              identity.ID,
+		VenueSlug:            identity.Slug,
+		CanonicalURL:         identity.CanonicalURL,
+		Currency:             resolveVenueCurrency(ctx, tc, ref, nil, ref.StaticPayload, payload),
+		AvailabilityVerified: &currentLookupSucceeded,
+	}
+	data, detailWarnings := observability.BuildItemDetail(in.ItemID, ref.ID, payload, false, itemContext)
+	warnings = append(warnings, detailWarnings...)
 	return nil, VenueItemOutput{
-		Summary: fmt.Sprintf("item %s", asString(data["name"])),
-		Item:    data,
+		Summary:  fmt.Sprintf("item %s", asString(data["name"])),
+		Item:     data,
+		Warnings: warnings,
 	}, nil
 }
 
@@ -275,7 +676,14 @@ func (tc *ToolCtx) handleVenueSearchItems(ctx context.Context, _ *mcp.CallToolRe
 		return nil, VenueSearchItemsOutput{}, toolErrf("query is required")
 	}
 	language := domain.ResolveAssortmentLanguage(tc.locale)
-	payload, err := tc.wolt.AssortmentItemsSearchByVenueSlug(ctx, firstNonEmpty(ref.Slug, in.Venue), in.Query, language, tc.optionalAuth(ctx))
+	payload, err := requestAssortmentSearch(
+		ctx,
+		tc,
+		firstNonEmpty(ref.Slug, in.Venue),
+		in.Query,
+		language,
+		tc.optionalAuth(ctx),
+	)
 	if err != nil {
 		return nil, VenueSearchItemsOutput{}, toolErr(err)
 	}
@@ -283,7 +691,27 @@ func (tc *ToolCtx) handleVenueSearchItems(ctx context.Context, _ *mcp.CallToolRe
 	if in.Limit > 0 {
 		limitPtr = &in.Limit
 	}
-	data, warnings := observability.BuildItemSearchResult(in.Query, []map[string]any{payload}, observability.ItemSortName, "", limitPtr, in.Offset, nil)
+	identity := observability.ExtractVenueIdentity(
+		venueIdentityFromRef(ref, in.Venue),
+		ref.StaticPayload,
+		payload,
+	)
+	itemContext := observability.ItemVenueContext{
+		VenueID:      identity.ID,
+		VenueSlug:    identity.Slug,
+		CanonicalURL: identity.CanonicalURL,
+		Currency:     resolveVenueCurrency(ctx, tc, ref, nil, ref.StaticPayload, payload),
+	}
+	data, warnings := observability.BuildItemSearchResult(
+		in.Query,
+		[]map[string]any{payload},
+		observability.ItemSortName,
+		"",
+		limitPtr,
+		in.Offset,
+		nil,
+		itemContext,
+	)
 	return nil, VenueSearchItemsOutput{
 		Summary:  humanCount(len(asSlice(data["items"])), "match", "matches"),
 		Data:     data,
@@ -320,9 +748,16 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-func filterMenuItemsByName(data map[string]any, needle string) {
-	needle = strings.ToLower(strings.TrimSpace(needle))
-	if needle == "" {
+func venueIdentityFromRef(ref venueRef, raw string) observability.VenueIdentity {
+	return observability.VenueIdentity{
+		ID:           strings.TrimSpace(ref.ID),
+		Slug:         strings.TrimSpace(ref.Slug),
+		CanonicalURL: domain.CanonicalVenueURL(raw, ""),
+	}
+}
+
+func filterMenuItemsByQuery(data map[string]any, query string) {
+	if strings.TrimSpace(query) == "" {
 		return
 	}
 	rows := asSlice(data["items"])
@@ -332,9 +767,26 @@ func filterMenuItemsByName(data map[string]any, needle string) {
 		if row == nil {
 			continue
 		}
-		if strings.Contains(strings.ToLower(asString(row["name"])), needle) {
+		if observability.ItemMatchesQuery(row, query) {
 			filtered = append(filtered, raw)
 		}
 	}
 	data["items"] = filtered
+}
+
+func removeWarning(warnings []string, exact string) []string {
+	out := warnings[:0]
+	for _, warning := range warnings {
+		if warning != exact {
+			out = append(out, warning)
+		}
+	}
+	return out
+}
+
+func emptyStringToNil(value string) any {
+	if value == "" {
+		return nil
+	}
+	return value
 }

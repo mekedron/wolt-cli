@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	woltgateway "github.com/mekedron/wolt-cli/internal/gateway/wolt"
+	"github.com/mekedron/wolt-cli/internal/service/catalogload"
 	"github.com/mekedron/wolt-cli/internal/service/observability"
 	"github.com/mekedron/wolt-cli/internal/service/payloadutil"
 )
@@ -16,10 +17,19 @@ func needsVenueContentFallback(assortmentPayload map[string]any, venueID string)
 	if len(assortmentPayload) == 0 {
 		return true
 	}
-	if strings.EqualFold(strings.TrimSpace(asString(assortmentPayload["loading_strategy"])), "partial") {
-		return true
+	partial, materializedItemCount := venueAssortmentState(assortmentPayload, venueID)
+	return partial || materializedItemCount == 0
+}
+
+func venueAssortmentState(assortmentPayload map[string]any, venueID string) (bool, int) {
+	items := observability.ExtractMenuItems(assortmentPayload, venueID, "")
+	itemIDs := make([]string, 0, len(items))
+	for _, item := range items {
+		if itemID := strings.TrimSpace(asString(item["item_id"])); itemID != "" {
+			itemIDs = append(itemIDs, itemID)
+		}
 	}
-	return len(observability.ExtractMenuItems(assortmentPayload, venueID, "")) == 0
+	return catalogload.RootIsPartial(assortmentPayload, itemIDs), len(itemIDs)
 }
 
 func loadVenueContentPayloads(
@@ -43,10 +53,22 @@ func loadVenueContentPayloads(
 	nextPageToken := ""
 
 	for page := 0; page < pageLimit; page++ {
-		payload, err := deps.Wolt.VenueContentByVenueSlug(ctx, slug, nextPageToken, auth)
-		if err != nil && auth.HasCredentials() {
-			payload, err = deps.Wolt.VenueContentByVenueSlug(ctx, slug, nextPageToken, woltgateway.AuthContext{})
-		}
+		payload, err := catalogload.RequestPayload(
+			ctx,
+			auth,
+			assortmentCatalogRetryPolicy(),
+			func(
+				ctx context.Context,
+				requestAuth woltgateway.AuthContext,
+			) (map[string]any, error) {
+				return deps.Wolt.VenueContentByVenueSlug(
+					ctx,
+					slug,
+					nextPageToken,
+					requestAuth,
+				)
+			},
+		)
 		if err != nil {
 			if page == 0 {
 				warnings = append(warnings, "venue content endpoint unavailable")
@@ -156,7 +178,7 @@ func optionGroupsFromPayloadSpecs(payload map[string]any, groupIDs []string, cur
 	specs := extractOptionSpecs(payload)
 	optionGroups := make([]any, 0, len(groupIDs))
 	for _, groupID := range groupIDs {
-		spec, ok := specs[groupID]
+		spec, ok := findOptionGroupSpec(specs, groupID)
 		if !ok {
 			continue
 		}
@@ -169,14 +191,17 @@ func optionGroupsFromPayloadSpecs(payload map[string]any, groupIDs []string, cur
 		values := make([]any, 0, len(valueIDs))
 		for _, valueID := range valueIDs {
 			valueSpec := spec.Values[valueID]
-			values = append(values, map[string]any{
+			value := map[string]any{
 				"id":   valueSpec.ID,
 				"name": valueSpec.Name,
-				"price": map[string]any{
+			}
+			if valueSpec.HasPrice {
+				value["price"] = map[string]any{
 					"amount":   valueSpec.Price,
 					"currency": currency,
-				},
-			})
+				}
+			}
+			values = append(values, value)
 		}
 
 		optionGroups = append(optionGroups, map[string]any{
@@ -189,4 +214,21 @@ func optionGroupsFromPayloadSpecs(payload map[string]any, groupIDs []string, cur
 		})
 	}
 	return optionGroups
+}
+
+func findOptionGroupSpec(
+	specs map[string]payloadutil.OptionGroupSpec,
+	groupID string,
+) (payloadutil.OptionGroupSpec, bool) {
+	keys := make([]string, 0, len(specs))
+	for key := range specs {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		if strings.EqualFold(strings.TrimSpace(key), strings.TrimSpace(groupID)) {
+			return specs[key], true
+		}
+	}
+	return payloadutil.OptionGroupSpec{}, false
 }

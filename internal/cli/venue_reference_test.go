@@ -5,7 +5,6 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/mekedron/wolt-cli/internal/domain"
 	woltgateway "github.com/mekedron/wolt-cli/internal/gateway/wolt"
 )
 
@@ -23,6 +22,8 @@ func TestNormalizeVenueInput(t *testing.T) {
 		{"restaurant url", "https://wolt.com/fi/fin/helsinki/restaurant/hesburger-helsinki-kamppi", "hesburger-helsinki-kamppi"},
 		{"restaurant url trailing slash", "https://wolt.com/en/fin/helsinki/restaurant/hesburger-helsinki-kamppi/", "hesburger-helsinki-kamppi"},
 		{"venue url", "https://wolt.com/en/fin/helsinki/venue/wolt-market-niittari", "wolt-market-niittari"},
+		{"nested category url", "https://wolt.com/en/xx/example-city/venue/example-market/categories/produce", "example-market"},
+		{"nested item url", "https://wolt.com/en/xx/example-city/restaurant/example-restaurant/itemid-000000000000000000000001", "example-restaurant"},
 		{"discovery url", "https://wolt.com/en/discovery/helsinki/", "helsinki"},
 	}
 	for _, tc := range cases {
@@ -150,16 +151,15 @@ func TestResolveVenueReferenceURLExtractsSlugThenResolves(t *testing.T) {
 func TestResolveVenueReferenceObjectIDReverseLookup(t *testing.T) {
 	withIsolatedSlugCache(t)
 	wolt := &testWoltAPI{
-		restaurantByIDFn: func(_ context.Context, id string) (*domain.Restaurant, error) {
-			t.Fatalf("restaurant detail endpoint is retired upstream and must not be consulted, got id %q", id)
-			return nil, nil
-		},
-		venuePageStaticFn: func(_ context.Context, slug string) (map[string]any, error) {
-			if slug != "6123456789abcdef01234567" {
-				t.Fatalf("expected object id to be passed through, got %q", slug)
+		venuePageStaticFn: func(_ context.Context, reference string) (map[string]any, error) {
+			if reference != "6123456789abcdef01234567" {
+				t.Fatalf("expected object id to be passed through, got %q", reference)
 			}
 			return map[string]any{
-				"venue": map[string]any{"id": slug, "slug": "hesburger-kamppi"},
+				"venue": map[string]any{
+					"id":   reference,
+					"slug": "example-restaurant",
+				},
 			}, nil
 		},
 	}
@@ -172,8 +172,38 @@ func TestResolveVenueReferenceObjectIDReverseLookup(t *testing.T) {
 	if ref.VenueID != "6123456789abcdef01234567" {
 		t.Fatalf("expected id preserved, got %q", ref.VenueID)
 	}
-	if ref.VenueSlug != "hesburger-kamppi" {
-		t.Fatalf("expected slug from the venue page, got %q", ref.VenueSlug)
+	if ref.VenueSlug != "example-restaurant" {
+		t.Fatalf("expected slug from supported venue payload, got %q", ref.VenueSlug)
+	}
+}
+
+func TestResolveCartAddVenueReferenceAcceptsRequestedSlugAlias(t *testing.T) {
+	withIsolatedSlugCache(t)
+	const venueID = "6123456789abcdef01234567"
+	wolt := &testWoltAPI{
+		venuePageStaticFn: func(context.Context, string) (map[string]any, error) {
+			return map[string]any{
+				"venue": map[string]any{
+					"id":   venueID,
+					"slug": "canonical-market",
+				},
+			}, nil
+		},
+	}
+
+	reference, err := resolveCartAddVenueReference(
+		context.Background(),
+		Dependencies{Wolt: wolt},
+		"legacy-market",
+		"legacy-market",
+	)
+	if err != nil {
+		t.Fatalf("requested alias was rejected: %v", err)
+	}
+	if reference.ID != venueID ||
+		reference.Slug != "legacy-market" ||
+		!reference.explicitSlugVerified {
+		t.Fatalf("unexpected cart venue reference: %+v", reference)
 	}
 }
 
@@ -232,6 +262,18 @@ func TestResolveItemReference(t *testing.T) {
 			"67dbda2656a6f0831337ecdb",
 			"foo",
 		},
+		{
+			"third-party item URL is rejected",
+			"https://example.com/en/example/venue/foo/itemid-67dbda2656a6f0831337ecdb",
+			"",
+			"",
+		},
+		{
+			"lookalike Wolt host is rejected",
+			"https://wolt.com.example.org/en/example/venue/foo/itemid-67dbda2656a6f0831337ecdb",
+			"",
+			"",
+		},
 	}
 
 	for _, tc := range cases {
@@ -248,10 +290,17 @@ func TestResolveItemReference(t *testing.T) {
 	}
 }
 
-func TestResolveVenueReferenceFallsBackToInputWhenStaticFails(t *testing.T) {
+func TestResolveVenueReferenceKeepsUnverifiedSlugOutOfVenueID(t *testing.T) {
 	withIsolatedSlugCache(t)
 	wolt := &testWoltAPI{
 		venuePageStaticFn: func(_ context.Context, _ string) (map[string]any, error) {
+			return nil, context.DeadlineExceeded
+		},
+		venuePageDynamicFn: func(
+			_ context.Context,
+			_ string,
+			_ woltgateway.VenuePageDynamicOptions,
+		) (map[string]any, error) {
 			return nil, context.DeadlineExceeded
 		},
 	}
@@ -264,7 +313,7 @@ func TestResolveVenueReferenceFallsBackToInputWhenStaticFails(t *testing.T) {
 	if ref.VenueSlug != "hesburger-kamppi" {
 		t.Fatalf("expected slug echoed back when API is down, got %q", ref.VenueSlug)
 	}
-	if ref.VenueID != "hesburger-kamppi" {
-		t.Fatalf("expected venue id to fall back to slug when API is down, got %q", ref.VenueID)
+	if ref.VenueID != "" {
+		t.Fatalf("unverified slug must not be emitted as venue id, got %q", ref.VenueID)
 	}
 }

@@ -27,8 +27,8 @@ func registerDiscoveryTools(srv *mcp.Server, tc *ToolCtx) {
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "wolt_search_venues",
-		Title:       "Search venues",
-		Description: "Search venues by free-text query plus optional filters (category slug, open-now, Wolt+, minimum rating, max delivery fee). Backed by the discovery feed; supports paging via limit/offset.",
+		Title:       "Search discovery venues",
+		Description: "Search the non-exhaustive discovery feed by free-text query plus optional filters. Closed venues can be absent; use wolt_resolve_venue for an exact name, slug, id, or URL. Supports paging via limit/offset.",
 		Annotations: readOnly,
 	}, tc.handleSearchVenues)
 
@@ -98,7 +98,7 @@ func (tc *ToolCtx) handleFeed(ctx context.Context, _ *mcp.CallToolRequest, in Fe
 type TopInput struct {
 	LocationInput
 	N        int    `json:"n,omitempty"         jsonschema:"how many venues to return (default 10)"`
-	Sort     string `json:"sort,omitempty"      jsonschema:"sort: recommended | rating | delivery | fee"`
+	Sort     string `json:"sort,omitempty"      jsonschema:"case-insensitive sort strategy (surrounding whitespace is ignored): recommended | distance | rating | delivery_price | delivery_time | delivery-price | delivery-time | delivery | fee"`
 	Query    string `json:"query,omitempty"     jsonschema:"optional substring filter on venue name/tagline/category"`
 	WoltPlus bool   `json:"wolt_plus,omitempty" jsonschema:"only include Wolt+ venues"`
 }
@@ -112,15 +112,15 @@ type TopOutput struct {
 }
 
 func (tc *ToolCtx) handleTop(ctx context.Context, _ *mcp.CallToolRequest, in TopInput) (*mcp.CallToolResult, TopOutput, error) {
+	sort, err := observability.ParseVenueSort(in.Sort)
+	if err != nil {
+		return nil, TopOutput{}, toolErr(err)
+	}
 	loc, source, err := tc.resolveLocation(ctx, in.LocationInput)
 	if err != nil {
 		return nil, TopOutput{}, toolErr(err)
 	}
 	items, err := tc.wolt.Items(ctx, loc)
-	if err != nil {
-		return nil, TopOutput{}, toolErr(err)
-	}
-	sort, err := observability.ParseVenueSort(in.Sort)
 	if err != nil {
 		return nil, TopOutput{}, toolErr(err)
 	}
@@ -144,7 +144,7 @@ func (tc *ToolCtx) handleTop(ctx context.Context, _ *mcp.CallToolRequest, in Top
 type SearchVenuesInput struct {
 	LocationInput
 	Query          string  `json:"query,omitempty"            jsonschema:"search query (matches name, address, tags)"`
-	Sort           string  `json:"sort,omitempty"             jsonschema:"recommended | rating | delivery | fee"`
+	Sort           string  `json:"sort,omitempty"             jsonschema:"case-insensitive sort strategy (surrounding whitespace is ignored): recommended | distance | rating | delivery_price | delivery_time | delivery-price | delivery-time | delivery | fee"`
 	Category       string  `json:"category,omitempty"         jsonschema:"category slug (see wolt_venue_categories)"`
 	OpenNow        bool    `json:"open_now,omitempty"         jsonschema:"only currently open venues"`
 	WoltPlus       bool    `json:"wolt_plus,omitempty"        jsonschema:"only Wolt+ venues"`
@@ -163,15 +163,15 @@ type SearchVenuesOutput struct {
 }
 
 func (tc *ToolCtx) handleSearchVenues(ctx context.Context, _ *mcp.CallToolRequest, in SearchVenuesInput) (*mcp.CallToolResult, SearchVenuesOutput, error) {
+	sort, err := observability.ParseVenueSort(in.Sort)
+	if err != nil {
+		return nil, SearchVenuesOutput{}, toolErr(err)
+	}
 	loc, source, err := tc.resolveLocation(ctx, in.LocationInput)
 	if err != nil {
 		return nil, SearchVenuesOutput{}, toolErr(err)
 	}
 	items, err := tc.wolt.Items(ctx, loc)
-	if err != nil {
-		return nil, SearchVenuesOutput{}, toolErr(err)
-	}
-	sort, err := observability.ParseVenueSort(in.Sort)
 	if err != nil {
 		return nil, SearchVenuesOutput{}, toolErr(err)
 	}

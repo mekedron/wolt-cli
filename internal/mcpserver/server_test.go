@@ -389,10 +389,6 @@ func TestResolveVenueRefResolvesSlugFromObjectID(t *testing.T) {
 	const venueID = "637e383476c00f021e6bf084"
 
 	wolt := &stubWolt{
-		restaurantFn: func(_ context.Context, id string) (*domain.Restaurant, error) {
-			t.Errorf("restaurant detail endpoint is retired upstream and must not be consulted, got id %q", id)
-			return nil, errors.New("status 410")
-		},
 		venueStaticFn: func(_ context.Context, slug string) (map[string]any, error) {
 			if slug != venueID {
 				t.Fatalf("expected the object id passed to the venue page, got %q", slug)
@@ -400,7 +396,7 @@ func TestResolveVenueRefResolvesSlugFromObjectID(t *testing.T) {
 			return map[string]any{"venue": map[string]any{"id": venueID, "slug": "eat-poke-iso-omena"}}, nil
 		},
 	}
-	tc := newToolCtx(Deps{Wolt: wolt, Profiles: &stubProfiles{}, Location: &stubLocation{}, Config: &stubConfig{}})
+	tc := newToolCtx(Deps{Wolt: wolt, Profiles: &stubProfiles{}, Location: &stubLocation{}})
 
 	ref, err := tc.resolveVenueRef(context.Background(), venueID)
 	if err != nil {
