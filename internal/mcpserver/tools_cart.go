@@ -291,11 +291,13 @@ func (tc *ToolCtx) handleCartAdd(ctx context.Context, _ *mcp.CallToolRequest, in
 	}
 
 	mergedItems := []any{newLine}
-	if existingBasket != nil {
+	if weightConfig, weighted := payloadutil.WeightConfigFromItem(itemPayload); weighted {
+		mergedItems, err = payloadutil.MergeWeightedBasketItems(existingBasket, in.ItemID, count, newLine, weightConfig)
+	} else if existingBasket != nil {
 		mergedItems, err = payloadutil.MergeBasketItems(existingBasket, in.ItemID, count, newLine)
-		if err != nil {
-			return nil, CartAddOutput{}, toolErrf("item was NOT added: %v", err)
-		}
+	}
+	if err != nil {
+		return nil, CartAddOutput{}, toolErrf("item was NOT added: %v", err)
 	}
 	if currency == "" {
 		currency = resolveVenueCurrency(ctx, tc, ref, existingBasket, currentAssortment, itemPayload)

@@ -95,6 +95,59 @@ func TestCartAddRejectsUnidentifiableExistingBasket(t *testing.T) {
 	}
 }
 
+func TestCartAddSendsWeightedBasketPayload(t *testing.T) {
+	const (
+		venueID = "000000000000000000000351"
+		itemID  = "000000000000000000000352"
+	)
+	var captured map[string]any
+	wolt := &stubWolt{
+		venueStaticFn: func(context.Context, string) (map[string]any, error) {
+			return map[string]any{
+				"venue": map[string]any{"id": venueID, "slug": "synthetic-market", "currency": "GEL"},
+			}, nil
+		},
+		assortmentItemsFn: func(context.Context, string, []string, woltgateway.AuthContext) (map[string]any, error) {
+			return map[string]any{"items": []any{
+				map[string]any{
+					"id":                  itemID,
+					"name":                "Synthetic weighted item",
+					"price":               1645,
+					"purchasable_balance": 10,
+					"sell_by_weight_config": map[string]any{
+						"input_type":     "grams",
+						"grams_per_step": 500,
+						"price_per_kg":   1645,
+					},
+				},
+			}}, nil
+		},
+		addToBasketFn: func(_ context.Context, payload map[string]any, _ woltgateway.AuthContext) (map[string]any, error) {
+			captured = payload
+			return map[string]any{"id": "basket-synthetic"}, nil
+		},
+	}
+	tc := regressionMCPToolCtx(wolt)
+
+	_, _, err := tc.handleCartAdd(context.Background(), nil, CartAddInput{
+		Venue:  "synthetic-market",
+		ItemID: itemID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	item := payloadutil.Map(payloadutil.Slice(captured["items"])[0])
+	info := payloadutil.Map(item["weighted_item_info"])
+	if item["count"] != 1 || item["price"] != 823 ||
+		info["purchased_weight_in_grams"] != 500 ||
+		info["weighted_item_input_type"] != "grams" {
+		t.Fatalf("AddToBasket weighted item = %#v", item)
+	}
+	if _, exists := item["is_weighted_item"]; exists {
+		t.Fatal("basket payload contains checkout-only is_weighted_item")
+	}
+}
+
 func TestCartAddRejectsRequiredOptionsItCannotRepresent(t *testing.T) {
 	const (
 		venueID = "000000000000000000000343"

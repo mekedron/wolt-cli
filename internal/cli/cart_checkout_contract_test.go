@@ -158,6 +158,69 @@ func TestCartAddRejectsUnidentifiableExistingBasket(t *testing.T) {
 	}
 }
 
+func TestCartAddSendsWeightedBasketPayload(t *testing.T) {
+	var captured map[string]any
+	api := &testWoltAPI{
+		venuePageStaticFn: func(context.Context, string) (map[string]any, error) {
+			return syntheticVenuePayload(), nil
+		},
+		assortmentItemsFn: func(context.Context, string, []string, woltgateway.AuthContext) (map[string]any, error) {
+			return map[string]any{"items": []any{
+				map[string]any{
+					"id":                  regressionItemID,
+					"name":                "Synthetic weighted item",
+					"price":               1645,
+					"purchasable_balance": 10,
+					"sell_by_weight_config": map[string]any{
+						"input_type":     "grams",
+						"grams_per_step": 500,
+						"price_per_kg":   1645,
+					},
+				},
+			}}, nil
+		},
+		addToBasketFn: func(_ context.Context, payload map[string]any, _ woltgateway.AuthContext) (map[string]any, error) {
+			captured = payload
+			return map[string]any{"id": "basket-synthetic"}, nil
+		},
+	}
+	output, err := runCLIRegressionCommand(
+		t,
+		newCartAddCommand(regressionCLIDeps(api)),
+		regressionVenueSlug,
+		regressionItemID,
+		"--format", "json",
+	)
+	if err != nil {
+		t.Fatalf("cart add failed: %v\n%s", err, output.String())
+	}
+	item := asMap(asSlice(captured["items"])[0])
+	info := asMap(item["weighted_item_info"])
+	if asInt(item["count"]) != 1 || asInt(item["price"]) != 823 ||
+		asInt(info["purchased_weight_in_grams"]) != 500 ||
+		asString(info["weighted_item_input_type"]) != "grams" {
+		t.Fatalf("AddToBasket weighted item = %#v", item)
+	}
+	if _, exists := item["is_weighted_item"]; exists {
+		t.Fatal("basket payload contains checkout-only is_weighted_item")
+	}
+}
+
+func TestBasketLineConfiguredTotalUsesWeightedPriceAsLineTotal(t *testing.T) {
+	total, err := basketLineConfiguredTotal(map[string]any{
+		"count": 2,
+		"price": 1600,
+		"weighted_item_info": map[string]any{
+			"count":                     2,
+			"purchased_weight_in_grams": 400,
+			"weighted_item_input_type":  "number_of_items",
+		},
+	})
+	if err != nil || total != 1600 {
+		t.Fatalf("weighted configured total = %d, %v; want 1600", total, err)
+	}
+}
+
 func TestCartClearUsesBothContainersAndCompatibilityIDs(t *testing.T) {
 	deletedIDs := []string{}
 	api := &testWoltAPI{

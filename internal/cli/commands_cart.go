@@ -574,19 +574,21 @@ func newCartAddCommand(deps Dependencies) *cobra.Command {
 			}
 
 			mergedItems := []any{newLineItem}
-			if selectedBasket != nil {
+			if weightConfig, weighted := payloadutil.WeightConfigFromItem(itemPayload); weighted {
+				mergedItems, err = payloadutil.MergeWeightedBasketItems(selectedBasket, itemID, count, newLineItem, weightConfig)
+			} else if selectedBasket != nil {
 				mergedItems, err = payloadutil.MergeBasketItems(selectedBasket, itemID, count, newLineItem)
-				if err != nil {
-					return emitError(
-						cmd,
-						format,
-						profile,
-						flags.Locale,
-						flags.Output,
-						"WOLT_INVALID_BASKET",
-						err.Error()+"; the item was not added.",
-					)
-				}
+			}
+			if err != nil {
+				return emitError(
+					cmd,
+					format,
+					profile,
+					flags.Locale,
+					flags.Output,
+					"WOLT_INVALID_BASKET",
+					err.Error()+"; the item was not added.",
+				)
 			}
 			if currency == "" {
 				return emitError(
@@ -1539,6 +1541,9 @@ func basketItemsSubtotal(items []any) (int, error) {
 
 func basketLineConfiguredTotal(item map[string]any) (int, error) {
 	count := basketLineCount(item)
+	if asMap(item["weighted_item_info"]) != nil {
+		count = 1
+	}
 	unitAmount := payloadutil.MinorAmount(item["price"])
 	for _, rawOption := range asSlice(item["options"]) {
 		option := asMap(rawOption)
