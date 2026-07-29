@@ -15,8 +15,24 @@ import (
 // keeps the tests honest about what Build depends on.
 type fakeAPI struct {
 	woltgateway.API
-	venueItemPageFn func(ctx context.Context, venueID, itemID string) (map[string]any, error)
-	assortmentFn    func(ctx context.Context, slug string) (map[string]any, error)
+	venueItemPageFn   func(ctx context.Context, venueID, itemID string) (map[string]any, error)
+	assortmentFn      func(ctx context.Context, slug string) (map[string]any, error)
+	assortmentItemsFn func(ctx context.Context, slug string, itemIDs []string) (map[string]any, error)
+	venueContentFn    func(ctx context.Context, slug string, nextPageToken string) (map[string]any, error)
+	searchFn          func(ctx context.Context, slug string, query string) (map[string]any, error)
+}
+
+func (f *fakeAPI) AssortmentItemsSearchByVenueSlug(
+	ctx context.Context,
+	slug string,
+	query string,
+	_ string,
+	_ woltgateway.AuthContext,
+) (map[string]any, error) {
+	if f.searchFn != nil {
+		return f.searchFn(ctx, slug, query)
+	}
+	return map[string]any{}, nil
 }
 
 func (f *fakeAPI) VenueItemPage(ctx context.Context, venueID, itemID string) (map[string]any, error) {
@@ -29,6 +45,30 @@ func (f *fakeAPI) VenueItemPage(ctx context.Context, venueID, itemID string) (ma
 func (f *fakeAPI) AssortmentByVenueSlug(ctx context.Context, slug string) (map[string]any, error) {
 	if f.assortmentFn != nil {
 		return f.assortmentFn(ctx, slug)
+	}
+	return map[string]any{}, nil
+}
+
+func (f *fakeAPI) AssortmentItemsByVenueSlug(
+	ctx context.Context,
+	slug string,
+	itemIDs []string,
+	_ woltgateway.AuthContext,
+) (map[string]any, error) {
+	if f.assortmentItemsFn != nil {
+		return f.assortmentItemsFn(ctx, slug, itemIDs)
+	}
+	return map[string]any{}, nil
+}
+
+func (f *fakeAPI) VenueContentByVenueSlug(
+	ctx context.Context,
+	slug string,
+	nextPageToken string,
+	_ woltgateway.AuthContext,
+) (map[string]any, error) {
+	if f.venueContentFn != nil {
+		return f.venueContentFn(ctx, slug, nextPageToken)
 	}
 	return map[string]any{}, nil
 }
@@ -631,5 +671,189 @@ func TestBuildEnrichesCategoryFromItemPage(t *testing.T) {
 	item := firstMenuItem(t, purchasePlan(t, payload))
 	if item["category_id"] != "cat-from-page" {
 		t.Errorf("category_id = %v, want cat-from-page (from item page)", item["category_id"])
+	}
+}
+
+// Grocery venues load categories lazily: the assortment lists categories with
+// empty item_ids, so the item-to-category mapping only exists in venue content.
+func TestBuildResolvesCategoryFromPagedVenueContent(t *testing.T) {
+	const itemID = "000000000000000000000412"
+	basket := basketWithItem("€2.29", map[string]any{
+		"id":    itemID,
+		"count": 1,
+		"price": 229,
+	})
+	basket["venue"].(map[string]any)["slug"] = "synthetic-market"
+	basket["venue"].(map[string]any)["currency"] = "EUR"
+
+	requestedTokens := []string{}
+	api := &fakeAPI{
+		assortmentFn: func(context.Context, string) (map[string]any, error) {
+			return map[string]any{"categories": []any{
+				map[string]any{"id": "empty-category", "item_ids": []any{}},
+			}}, nil
+		},
+		venueContentFn: func(_ context.Context, _ string, token string) (map[string]any, error) {
+			requestedTokens = append(requestedTokens, token)
+			if token == "" {
+				return map[string]any{
+					"sections": []any{map[string]any{"categories": []any{
+						map[string]any{"id": "other-category", "item_ids": []any{"000000000000000000000499"}},
+					}}},
+					"next_page_token": "page-2",
+				}, nil
+			}
+			return map[string]any{
+				"sections": []any{map[string]any{"categories": []any{
+					map[string]any{"id": "dairy-category", "item_ids": []any{itemID}},
+				}}},
+			}, nil
+		},
+	}
+
+	payload, warnings, err := Build(
+		context.Background(), api, nil, basket, domain.Location{}, "standard", 0, "",
+	)
+	if err != nil {
+		t.Fatalf("Build() error = %v (warnings: %v)", err, warnings)
+	}
+	item := firstMenuItem(t, purchasePlan(t, payload))
+	if item["category_id"] != "dairy-category" {
+		t.Fatalf("category_id = %v, want dairy-category", item["category_id"])
+	}
+	if !reflect.DeepEqual(requestedTokens, []string{"", "page-2"}) {
+		t.Fatalf("venue content page tokens = %v, want [\"\" page-2]", requestedTokens)
+	}
+}
+
+// A lazily loaded assortment carries no items, so sell_by_weight_config has to
+// come from the explicit item lookup or the preview silently multiplies the
+// whole-line price by the unit count.
+func TestBuildUsesCatalogItemsLookupForWeightedPricing(t *testing.T) {
+	const itemID = "000000000000000000000413"
+	basket := basketWithItem("€1.08", map[string]any{
+		"id":          itemID,
+		"count":       3,
+		"price":       108,
+		"category_id": "produce-category",
+		"weighted_item_info": map[string]any{
+			"count":                     3,
+			"purchased_weight_in_grams": 270,
+		},
+	})
+	basket["venue"].(map[string]any)["slug"] = "synthetic-market"
+	basket["venue"].(map[string]any)["currency"] = "EUR"
+
+	api := &fakeAPI{
+		assortmentItemsFn: func(_ context.Context, _ string, itemIDs []string) (map[string]any, error) {
+			if !reflect.DeepEqual(itemIDs, []string{itemID}) {
+				t.Fatalf("catalog lookup item ids = %v", itemIDs)
+			}
+			return map[string]any{"items": []any{
+				map[string]any{
+					"id": itemID,
+					"sell_by_weight_config": map[string]any{
+						"input_type":     "number_of_items",
+						"grams_per_step": 90,
+						"price_per_kg":   399,
+					},
+				},
+			}}, nil
+		},
+	}
+
+	payload, warnings, err := Build(
+		context.Background(), api, nil, basket, domain.Location{}, "standard", 0, "",
+	)
+	if err != nil {
+		t.Fatalf("Build() error = %v (warnings: %v)", err, warnings)
+	}
+	item := firstMenuItem(t, purchasePlan(t, payload))
+	if item["count"] != 3 || item["base_price"] != 399 ||
+		item["end_amount"] != 108 || item["is_weighted_item"] != true {
+		t.Fatalf("weighted checkout item = %#v", item)
+	}
+}
+
+func TestBuildRefusesWeightedItemWithoutCatalogPricing(t *testing.T) {
+	const itemID = "000000000000000000000414"
+	basket := basketWithItem("€1.08", map[string]any{
+		"id":          itemID,
+		"count":       3,
+		"price":       108,
+		"category_id": "produce-category",
+		"weighted_item_info": map[string]any{
+			"count":                     3,
+			"purchased_weight_in_grams": 270,
+		},
+	})
+	basket["venue"].(map[string]any)["slug"] = "synthetic-market"
+	basket["venue"].(map[string]any)["currency"] = "EUR"
+
+	_, _, err := Build(
+		context.Background(), &fakeAPI{}, nil, basket, domain.Location{}, "standard", 0, "",
+	)
+	if err == nil {
+		t.Fatal("weighted item without catalog pricing produced a preview payload")
+	}
+	if !strings.Contains(err.Error(), "sold by weight") {
+		t.Fatalf("error = %v, want a sold-by-weight refusal", err)
+	}
+}
+
+// Grocery items that no bulk payload covers are still reachable by name: the
+// search response maps them to a category and carries the catalog record, so a
+// single request resolves both the category and the weight config.
+func TestBuildResolvesCategoryAndWeightFromItemSearch(t *testing.T) {
+	const itemID = "000000000000000000000415"
+	basket := basketWithItem("€14.84", map[string]any{
+		"id":    itemID,
+		"name":  "Organic watermelon whole, ~1150 g",
+		"count": 2,
+		"price": 1484,
+		"weighted_item_info": map[string]any{
+			"count":                     2,
+			"purchased_weight_in_grams": 2300,
+		},
+	})
+	basket["venue"].(map[string]any)["slug"] = "synthetic-market"
+	basket["venue"].(map[string]any)["currency"] = "EUR"
+
+	queries := []string{}
+	api := &fakeAPI{
+		searchFn: func(_ context.Context, _ string, query string) (map[string]any, error) {
+			queries = append(queries, query)
+			return map[string]any{
+				"categories": []any{
+					map[string]any{"id": "seasonal-fruit", "item_ids": []any{itemID}},
+				},
+				"items": []any{
+					map[string]any{
+						"id": itemID,
+						"sell_by_weight_config": map[string]any{
+							"input_type":     "number_of_items",
+							"grams_per_step": 1150,
+							"price_per_kg":   645,
+						},
+					},
+				},
+			}, nil
+		},
+	}
+
+	payload, warnings, err := Build(
+		context.Background(), api, nil, basket, domain.Location{}, "standard", 0, "",
+	)
+	if err != nil {
+		t.Fatalf("Build() error = %v (warnings: %v)", err, warnings)
+	}
+	item := firstMenuItem(t, purchasePlan(t, payload))
+	if item["category_id"] != "seasonal-fruit" || item["count"] != 2 ||
+		item["base_price"] != 645 || item["end_amount"] != 1484 ||
+		item["is_weighted_item"] != true {
+		t.Fatalf("searched weighted checkout item = %#v", item)
+	}
+	if !reflect.DeepEqual(queries, []string{"Organic watermelon whole, ~1150 g"}) {
+		t.Fatalf("search queries = %v, want one lookup by item name", queries)
 	}
 }

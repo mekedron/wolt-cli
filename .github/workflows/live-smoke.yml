@@ -4,7 +4,10 @@ name: Live smoke (daily)
 # upstream contract drift before users do. The read-only surface
 # (status/account/feed/venue/cart-show) always runs; a cart round-trip
 # (add a live orderable item → CLI checkout preview → MCP checkout preview
-# → remove) runs because WOLT_SMOKE_CART=1 is set below.
+# → remove) runs because WOLT_SMOKE_CART=1 is set below. A sell-by-weight leg
+# follows it: weighted items are priced by the selected weight rather than per
+# unit, so it asserts the basket line price, previews checkout, and confirms
+# the line refuses partial removal.
 # The MCP steps spawn wolt-mcp over stdio for read-only venue detail/hours and
 # checkout preview, so the daily run guards the MCP surface as well as the CLI.
 # Checkout is preview-only — no real order is ever placed, and only the unit
@@ -60,6 +63,9 @@ jobs:
       WOLT_SMOKE_LON: ${{ vars.WOLT_SMOKE_LON }}
       WOLT_SMOKE_VENUE: ${{ vars.WOLT_SMOKE_VENUE }}
       WOLT_SMOKE_CART_VENUE: ${{ vars.WOLT_SMOKE_CART_VENUE }}
+      # Grocery venue for the sell-by-weight leg. Empty falls back to the cart
+      # venue and then to discovery; only grocery assortments carry them.
+      WOLT_SMOKE_WEIGHTED_VENUE: ${{ vars.WOLT_SMOKE_WEIGHTED_VENUE }}
       # Enables the mutating cart round-trip (add → checkout preview →
       # remove) in live-smoke.sh. Unset locally so manual runs stay
       # read-only and never touch a real cart.

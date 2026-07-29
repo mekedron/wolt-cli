@@ -42,6 +42,12 @@ readonly SMOKE_DIR="${SMOKE_DIR:-${TMPDIR:-/tmp}/wolt-smoke}"
 # override remains available for controlled CI fixtures.
 readonly RUN_CART_SMOKE="${WOLT_SMOKE_CART:-0}"
 readonly CART_VENUE="${WOLT_SMOKE_CART_VENUE:-}"
+# Grocery venue used for the sell-by-weight leg. Empty falls back to the cart
+# venue and then to discovery; only grocery assortments carry weighted items.
+readonly WEIGHTED_VENUE="${WOLT_SMOKE_WEIGHTED_VENUE:-}"
+# Units added for the weighted leg. Must stay above 1 so removing one unit is a
+# genuine partial removal rather than dropping the whole line.
+readonly WEIGHTED_STEPS=2
 
 # wolt-mcp powers the MCP checkout-preview smoke — the code path PR #23 fixed
 # (the MCP handler used to POST a flat body Wolt rejected for a missing
@@ -542,12 +548,12 @@ discover_cart_fixture() {
 # using the canonical identities verified above. If the item disappears
 # between preflight and mutation, classify that race as a skipped prerequisite.
 cart_add_discovered() {
-  local venue_id="$1" item_id="$2"
-  local label="cart add"
-  local out="${SMOKE_DIR}/cart_add.json"
-  local err="${SMOKE_DIR}/cart_add.err"
+  local venue_id="$1" item_id="$2" count="${3:-1}" label="${4:-cart add}"
+  local slug="${label// /_}"
+  local out="${SMOKE_DIR}/${slug}.json"
+  local err="${SMOKE_DIR}/${slug}.err"
   printf "[%s] %-22s ... " "$(date -u +%H:%M:%S)" "${label}"
-  if "${WOLT_BIN}" cart add "${venue_id}" "${item_id}" --count 1 --format json \
+  if "${WOLT_BIN}" cart add "${venue_id}" "${item_id}" --count "${count}" --format json \
     >"${out}" 2>"${err}"; then
     if ! is_cart_add_envelope "${out}" "${item_id}" "${venue_id}"; then
       printf "FAIL (invalid cart-add envelope)\n"
@@ -606,6 +612,172 @@ cart_remove_added() {
     jq -r '.error // empty | "code:    \(.code // "-")\nmessage: \(.message // "-")"' "${out}" 2>/dev/null
     head -10 "${err}" 2>/dev/null
   } | redact | sed 's/^/    | /' | head -20 || true
+  fail=$((fail + 1))
+  failures+=("${label}")
+  return 1
+}
+
+# discover_weighted_fixture prints "<venue-id><TAB><item-id><TAB><expected-price>"
+# for the first orderable sell-by-weight item found in the candidate venues.
+# Only grocery venues carry these, so an empty result is a missing live
+# prerequisite rather than a product failure. The expected price is what Wolt
+# itself charges for the selected weight of WEIGHTED_STEPS steps:
+# price_per_kg * grams_per_step * steps / 1000, rounded half up.
+discover_weighted_fixture() {
+  local -a candidates=()
+  local venue resolved_venue_id fixture
+  if [ -n "${WEIGHTED_VENUE}" ]; then
+    candidates+=("${WEIGHTED_VENUE}")
+  elif [ -n "${CART_VENUE}" ]; then
+    candidates+=("${CART_VENUE}")
+  else
+    while IFS= read -r venue; do
+      if [ -n "${venue}" ]; then
+        candidates+=("${venue}")
+      fi
+    done < <(
+      jq -r '.data.items[]? | .slug // empty' "${SMOKE_DIR}/venues_open.json" 2>/dev/null \
+        | head -10
+    )
+  fi
+
+  local -a category_slugs=()
+  local category
+  for venue in "${candidates[@]}"; do
+    # Grocery assortments are partial, so the menu must be read per category.
+    # Scan several rather than stopping at the first non-empty one: weighted
+    # items live in produce, which is rarely the first category.
+    category_slugs=("")
+    if "${WOLT_BIN}" venue categories "${venue}" --format json \
+      >"${SMOKE_DIR}/weighted_categories.json" 2>/dev/null; then
+      while IFS= read -r category; do
+        category="${category%$'\r'}"
+        if [ -n "${category}" ]; then
+          category_slugs+=("${category}")
+        fi
+      done < <(
+        jq -r '
+          [ .data.categories[]?
+            | select(((.slug // "") | type) == "string")
+            | select(.slug | length > 0)
+          ]
+          | sort_by([(-1 * (.item_refs_count // 0)), .slug])
+          | .[:12][]
+          | .slug
+        ' "${SMOKE_DIR}/weighted_categories.json" 2>/dev/null
+      )
+    fi
+
+    resolved_venue_id=""
+    for category in "${category_slugs[@]}"; do
+      if [ -z "${category}" ]; then
+        "${WOLT_BIN}" venue menu "${venue}" --format json \
+          >"${SMOKE_DIR}/weighted_menu.json" 2>/dev/null || continue
+      else
+        "${WOLT_BIN}" venue menu "${venue}" --category "${category}" --format json \
+          >"${SMOKE_DIR}/weighted_menu.json" 2>/dev/null || continue
+      fi
+      if ! is_menu_envelope "${SMOKE_DIR}/weighted_menu.json"; then
+        continue
+      fi
+      if [ -z "${resolved_venue_id}" ]; then
+        resolved_venue_id="$(
+          jq -r '.data.venue_id // empty' "${SMOKE_DIR}/weighted_menu.json" 2>/dev/null || true
+        )"
+        if [ -z "${resolved_venue_id}" ]; then
+          break
+        fi
+        # Skip anything already in this venue's basket so cleanup never touches
+        # a line the user put there.
+        if ! "${WOLT_BIN}" cart --venue-id "${resolved_venue_id}" --format json \
+          >"${SMOKE_DIR}/weighted_basket.json" 2>/dev/null; then
+          : >"${SMOKE_DIR}/weighted_basket.json"
+        fi
+      fi
+      fixture="$(
+        jq -r --slurpfile basket "${SMOKE_DIR}/weighted_basket.json" \
+          --argjson steps "${WEIGHTED_STEPS}" '
+          ($basket[0].data.lines // []) | map(.item_id) as $present
+          | [ .data.items[]?
+              | select(.sell_by_weight_config != null)
+              | select(.is_available == true and (.is_sold_out // false) == false)
+              | select((.purchasable_balance // 0) > $steps)
+              | select(.item_id as $candidate | ($present | index($candidate)) == null)
+              | {
+                  id: .item_id,
+                  kg: (.sell_by_weight_config.price_per_kg // 0),
+                  g:  (.sell_by_weight_config.grams_per_step // 0)
+                }
+              | select(.kg > 0 and .g > 0)
+            ][0]
+          | select(. != null)
+          | "\(.id)\t\((.kg * .g * $steps + 500) / 1000 | floor)"
+        ' "${SMOKE_DIR}/weighted_menu.json" 2>/dev/null || true
+      )"
+      if [ -n "${fixture}" ]; then
+        printf '%s\t%s\n' "${resolved_venue_id}" "${fixture}"
+        return 0
+      fi
+    done
+  done
+  return 1
+}
+
+# assert_weighted_line "<venue-id>" "<item-id>" "<expected-price>" — the basket
+# line for a sell-by-weight item must carry the selected-weight price, not the
+# price per kilogram.
+assert_weighted_line() {
+  local venue_id="$1" item_id="$2" expected="$3"
+  local label="weighted cart price"
+  local out="${SMOKE_DIR}/weighted_cart.json"
+  local actual
+  printf "[%s] %-22s ... " "$(date -u +%H:%M:%S)" "${label}"
+  if ! "${WOLT_BIN}" cart --venue-id "${venue_id}" --format json \
+    >"${out}" 2>"${SMOKE_DIR}/weighted_cart.err"; then
+    printf "FAIL (cart read failed)\n"
+    fail=$((fail + 1))
+    failures+=("${label}")
+    return 1
+  fi
+  actual="$(
+    jq -r --arg id "${item_id}" '
+      [.data.lines[]? | select(.item_id == $id) | .price.amount][0] // "missing"
+    ' "${out}" 2>/dev/null || echo missing
+  )"
+  if [ "${actual}" = "${expected}" ]; then
+    printf "ok (%s c for the selected weight)\n" "${actual}"
+    pass=$((pass + 1))
+    return 0
+  fi
+  printf "FAIL (line price %s, want %s)\n" "${actual}" "${expected}"
+  fail=$((fail + 1))
+  failures+=("${label}")
+  return 1
+}
+
+# assert_weighted_partial_removal_refused "<venue-id>" "<item-id>" — a weighted
+# line cannot be partially removed: decrementing the count would leave the
+# whole-line price on the remainder and overcharge. The CLI must refuse.
+assert_weighted_partial_removal_refused() {
+  local venue_id="$1" item_id="$2"
+  local label="weighted partial rm"
+  local out="${SMOKE_DIR}/weighted_partial_remove.json"
+  printf "[%s] %-22s ... " "$(date -u +%H:%M:%S)" "${label}"
+  if "${WOLT_BIN}" cart remove "${item_id}" --count 1 --venue-id "${venue_id}" \
+    --format json >"${out}" 2>"${SMOKE_DIR}/weighted_partial_remove.err"; then
+    printf "FAIL (partial removal of a weighted line succeeded)\n"
+    fail=$((fail + 1))
+    failures+=("${label}")
+    return 1
+  fi
+  if jq -e '.error.code == "WOLT_INVALID_BASKET"' "${out}" >/dev/null 2>&1; then
+    printf "ok (refused)\n"
+    pass=$((pass + 1))
+    return 0
+  fi
+  printf "FAIL (unexpected error shape)\n"
+  jq -r '.error // empty | "code:    \(.code // "-")\nmessage: \(.message // "-")"' \
+    "${out}" 2>/dev/null | redact | sed 's/^/    | /' | head -10 || true
   fail=$((fail + 1))
   failures+=("${label}")
   return 1
@@ -728,6 +900,58 @@ if [ "${RUN_CART_SMOKE}" = "1" ]; then
         added_item_id=""
         added_venue_id=""
       fi
+    fi
+    # ---- sell-by-weight leg ----------------------------------------
+    # Weighted items are priced by the selected weight, not per unit. This
+    # guards the whole chain: the basket line price, the checkout preview
+    # (which needs a catalog weight lookup to avoid multiplying the whole-line
+    # price by the unit count), and the refusal to partially remove the line.
+    weighted_item_id=""
+    weighted_venue_id=""
+    cleanup_weighted_item() {
+      if [ -n "${weighted_item_id}" ] && [ -n "${weighted_venue_id}" ]; then
+        # --all, never --count: a weighted line refuses partial removal.
+        "${WOLT_BIN}" cart remove "${weighted_item_id}" \
+          --all \
+          --venue-id "${weighted_venue_id}" \
+          --format json >/dev/null 2>&1 || true
+      fi
+      cleanup_added_item
+    }
+    trap cleanup_weighted_item EXIT
+
+    weighted_fixture=""
+    if weighted_fixture="$(discover_weighted_fixture)"; then
+      IFS=$'\t' read -r weighted_fixture_venue_id weighted_fixture_item_id weighted_expected_price \
+        <<<"${weighted_fixture}"
+      weighted_item_id="${weighted_fixture_item_id}"
+      weighted_venue_id="${weighted_fixture_venue_id}"
+      if cart_add_discovered \
+        "${weighted_fixture_venue_id}" \
+        "${weighted_fixture_item_id}" \
+        "${WEIGHTED_STEPS}" \
+        "weighted cart add"; then
+        assert_weighted_line \
+          "${weighted_fixture_venue_id}" \
+          "${weighted_fixture_item_id}" \
+          "${weighted_expected_price}"
+        run_validated \
+          "weighted checkout" \
+          is_checkout_preview_result \
+          "${WOLT_BIN}" checkout --venue-id "${weighted_fixture_venue_id}"
+        assert_weighted_partial_removal_refused \
+          "${weighted_fixture_venue_id}" \
+          "${weighted_fixture_item_id}"
+      fi
+      if "${WOLT_BIN}" cart remove "${weighted_fixture_item_id}" --all \
+        --venue-id "${weighted_fixture_venue_id}" --format json >/dev/null 2>&1; then
+        weighted_item_id=""
+        weighted_venue_id=""
+      fi
+    else
+      skip_step "weighted cart price" "no orderable sell-by-weight item was available"
+      skip_step "weighted checkout" "no orderable sell-by-weight item was available"
+      skip_step "weighted partial rm" "no orderable sell-by-weight item was available"
     fi
   else
     fixture_status=$?

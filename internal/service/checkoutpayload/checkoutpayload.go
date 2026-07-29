@@ -14,6 +14,12 @@ import (
 
 type VenuePageStaticFunc func(context.Context, string) (map[string]any, error)
 
+// maxCheckoutVenueContentPages caps how deep a single preview pages through
+// venue content while hunting for basket item categories.
+const (
+	maxCheckoutVenueContentPages = 10
+)
+
 // Build constructs the current Wolt web checkout preview payload.
 func Build(
 	ctx context.Context,
@@ -73,6 +79,40 @@ func Build(
 		}
 	}
 
+	// Grocery assortments load their categories lazily and publish empty
+	// item_ids, so venue content is the only payload that maps a basket item to
+	// its category. It is paged in on demand: an item resolved from the venue
+	// page or the assortment costs no extra request.
+	venueContentToken := ""
+	venueContentPages := 0
+	venueContentExhausted := venueSlug == "" || wolt == nil
+	venueContentWarned := false
+	loadMoreVenueContentCategories := func() bool {
+		if venueContentExhausted || venueContentPages >= maxCheckoutVenueContentPages {
+			return false
+		}
+		venueContentPages++
+		payload, contentErr := wolt.VenueContentByVenueSlug(ctx, venueSlug, venueContentToken, woltgateway.AuthContext{})
+		if contentErr != nil || len(payload) == 0 {
+			venueContentExhausted = true
+			if contentErr != nil && !venueContentWarned {
+				venueContentWarned = true
+				warnings = append(warnings, fmt.Sprintf("unable to load venue content payload for category mapping (slug=%s)", venueSlug))
+			}
+			return false
+		}
+		mergeCheckoutCategoryIndexes(categoryIDsByItemID, buildCheckoutCategoryIDIndex(payload))
+		nextToken := strings.TrimSpace(payloadutil.String(payloadutil.CoalesceAny(
+			payload["next_page_token"],
+			payloadutil.Map(payload["pagination"])["next_page_token"],
+		)))
+		if nextToken == "" || nextToken == venueContentToken {
+			venueContentExhausted = true
+		}
+		venueContentToken = nextToken
+		return true
+	}
+
 	basketItems, err := payloadutil.BasketItemRowsForMutation(basket)
 	if err != nil {
 		return nil, warnings, fmt.Errorf("basket cannot be used for checkout preview: %w", err)
@@ -80,6 +120,65 @@ func Build(
 	if len(basketItems) == 0 {
 		return nil, warnings, fmt.Errorf("basket has no items for checkout preview")
 	}
+
+	// A lazily loaded grocery assortment publishes no items, and the item page
+	// carries no sell_by_weight_config, so weighted pricing has to come from an
+	// explicit item lookup keyed by the basket's ids.
+	catalogItemsPayload := map[string]any{}
+	if venueSlug != "" && wolt != nil {
+		basketItemIDs := make([]string, 0, len(basketItems))
+		for _, item := range basketItems {
+			if itemID := strings.TrimSpace(payloadutil.String(item["id"])); itemID != "" {
+				basketItemIDs = append(basketItemIDs, itemID)
+			}
+		}
+		if len(basketItemIDs) > 0 {
+			if payload, itemsErr := wolt.AssortmentItemsByVenueSlug(
+				ctx,
+				venueSlug,
+				basketItemIDs,
+				woltgateway.AuthContext{},
+			); itemsErr == nil {
+				catalogItemsPayload = payload
+			} else {
+				warnings = append(warnings, fmt.Sprintf("unable to load catalog items for weighted pricing (slug=%s)", venueSlug))
+			}
+		}
+	}
+
+	// Item search answers both open questions in one targeted request: the
+	// response maps the item to its categories and carries the full catalog
+	// record, including sell_by_weight_config. Each distinct basket line name is
+	// searched at most once.
+	searchCatalogPayloads := []map[string]any{}
+	searchedNames := map[string]struct{}{}
+	searchCatalogForItem := func(item map[string]any) bool {
+		if wolt == nil || venueSlug == "" {
+			return false
+		}
+		name := strings.TrimSpace(payloadutil.String(item["name"]))
+		if name == "" {
+			return false
+		}
+		if _, searched := searchedNames[name]; searched {
+			return false
+		}
+		searchedNames[name] = struct{}{}
+		payload, searchErr := wolt.AssortmentItemsSearchByVenueSlug(
+			ctx,
+			venueSlug,
+			name,
+			"",
+			woltgateway.AuthContext{},
+		)
+		if searchErr != nil || len(payload) == 0 {
+			return false
+		}
+		searchCatalogPayloads = append(searchCatalogPayloads, payload)
+		mergeCheckoutCategoryIndexes(categoryIDsByItemID, buildCheckoutCategoryIDIndex(payload))
+		return true
+	}
+
 	menuItems := make([]any, 0, len(basketItems))
 	for index, item := range basketItems {
 		itemID := strings.TrimSpace(payloadutil.String(item["id"]))
@@ -113,6 +212,9 @@ func Build(
 		}
 
 		categoryID := resolveCheckoutCategoryID(item, detail, itemID, categoryIDsByItemID)
+		for categoryID == "" && (searchCatalogForItem(item) || loadMoreVenueContentCategories()) {
+			categoryID = resolveCheckoutCategoryID(item, detail, itemID, categoryIDsByItemID)
+		}
 		if categoryID == "" {
 			return nil, warnings, fmt.Errorf("unable to resolve category_id for basket item %q", itemID)
 		}
@@ -125,11 +227,35 @@ func Build(
 		}
 		basePrice := price
 		isWeighted := false
-		catalogItem := catalogitem.Find(assortmentPayload, itemID)
-		if catalogItem == nil {
-			catalogItem = catalogitem.Find(detail, itemID)
+		findCatalogItem := func() map[string]any {
+			if found := catalogitem.Find(catalogItemsPayload, itemID); found != nil {
+				return found
+			}
+			for _, searchPayload := range searchCatalogPayloads {
+				if found := catalogitem.Find(searchPayload, itemID); found != nil {
+					return found
+				}
+			}
+			if found := catalogitem.Find(assortmentPayload, itemID); found != nil {
+				return found
+			}
+			return catalogitem.Find(detail, itemID)
 		}
-		if weightConfig, weighted := payloadutil.WeightConfigFromItem(catalogItem); weighted {
+		weightConfig, weighted := payloadutil.WeightConfigFromItem(findCatalogItem())
+		isWeightedInBasket := payloadutil.Int(payloadutil.Map(item["weighted_item_info"])["purchased_weight_in_grams"]) > 0
+		for !weighted && isWeightedInBasket && searchCatalogForItem(item) {
+			weightConfig, weighted = payloadutil.WeightConfigFromItem(findCatalogItem())
+		}
+		if !weighted && isWeightedInBasket {
+			// end_amount would silently become count * whole-line price here,
+			// overcharging by the unit count. Refuse instead of previewing a
+			// total the user would not be billed.
+			return nil, warnings, fmt.Errorf(
+				"basket item %q is sold by weight but its catalog pricing is unavailable; cannot build an accurate checkout preview",
+				itemID,
+			)
+		}
+		if weighted {
 			values, valuesErr := weightConfig.ValuesFromBasket(item)
 			if valuesErr != nil {
 				return nil, warnings, fmt.Errorf("basket item %q: %w", itemID, valuesErr)
