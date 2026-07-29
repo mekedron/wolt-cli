@@ -110,3 +110,41 @@ func TestRemoveBasketItemsRejectsPartialWeightedRemoval(t *testing.T) {
 		t.Fatal("partial weighted removal succeeded without current catalog pricing")
 	}
 }
+
+// Basket responses report the purchased weight without the input type, so the
+// partial-removal guard must key on the weight alone.
+func TestRemoveBasketItemsRejectsPartialWeightedRemovalWithoutInputType(t *testing.T) {
+	basket := map[string]any{"items": []any{
+		map[string]any{
+			"id":    "000000000000000000000404",
+			"count": 2,
+			"price": 2650,
+			"weighted_item_info": map[string]any{
+				"count":                     2,
+				"purchased_weight_in_grams": 5000,
+			},
+		},
+	}}
+	if _, _, err := RemoveBasketItems(basket, "000000000000000000000404", 1); err == nil {
+		t.Fatal("partial weighted removal succeeded without current catalog pricing")
+	}
+}
+
+func TestBuildBasketUpsertItemPreservesWeightWithoutInputType(t *testing.T) {
+	item, err := BuildBasketUpsertItem(map[string]any{
+		"id":    "000000000000000000000405",
+		"name":  "Upstream weighted line",
+		"price": 2650,
+		"weighted_item_info": map[string]any{
+			"count":                     2,
+			"purchased_weight_in_grams": 5000,
+		},
+	}, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]any{"count": 2, "purchased_weight_in_grams": 5000}
+	if !reflect.DeepEqual(item["weighted_item_info"], want) {
+		t.Fatalf("rebuilt weighted line = %#v", item["weighted_item_info"])
+	}
+}

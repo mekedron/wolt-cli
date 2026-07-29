@@ -375,20 +375,26 @@ func BuildBasketUpsertItem(line map[string]any, count int) (map[string]any, erro
 	return item, nil
 }
 
+// basketWeightedItemInfo returns the weighted selection carried by a basket
+// line. Basket responses report count and purchased weight but omit
+// weighted_item_input_type, so the input type is echoed only when the caller
+// resolved it from the catalog.
 func basketWeightedItemInfo(line map[string]any) map[string]any {
 	info := Map(line["weighted_item_info"])
-	inputType := strings.TrimSpace(String(info["weighted_item_input_type"]))
 	count := Int(info["count"])
 	grams := Int(info["purchased_weight_in_grams"])
-	if count <= 0 || grams <= 0 ||
-		(inputType != WeightedInputGrams && inputType != WeightedInputNumberOfItems) {
+	if count <= 0 || grams <= 0 {
 		return nil
 	}
-	return map[string]any{
+	weighted := map[string]any{
 		"count":                     count,
 		"purchased_weight_in_grams": grams,
-		"weighted_item_input_type":  inputType,
 	}
+	inputType := strings.TrimSpace(String(info["weighted_item_input_type"]))
+	if inputType == WeightedInputGrams || inputType == WeightedInputNumberOfItems {
+		weighted["weighted_item_input_type"] = inputType
+	}
+	return weighted
 }
 
 // MergeBasketItems preserves every existing line while adding or incrementing

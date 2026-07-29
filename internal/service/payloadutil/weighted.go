@@ -59,8 +59,9 @@ func (config WeightConfig) ValuesForSteps(steps int) (WeightedValues, error) {
 	return config.values(count, grams)
 }
 
-// ValuesFromBasket reads an existing weighted selection. Older basket lines
-// may omit the input type, so the current catalog config remains authoritative.
+// ValuesFromBasket reads an existing weighted selection. Basket lines carry
+// the purchased weight but never the input type, so the catalog config is the
+// only authority on how the selection converts to a count.
 func (config WeightConfig) ValuesFromBasket(line map[string]any) (WeightedValues, error) {
 	info := Map(line["weighted_item_info"])
 	grams := Int(info["purchased_weight_in_grams"])
