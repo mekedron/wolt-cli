@@ -697,7 +697,7 @@ discover_weighted_fixture() {
       fixture="$(
         jq -r --slurpfile basket "${SMOKE_DIR}/weighted_basket.json" \
           --argjson steps "${WEIGHTED_STEPS}" '
-          ($basket[0].data.lines // []) | map(.item_id) as $present
+          ($basket[0].data.lines // [] | map(.item_id)) as $present
           | [ .data.items[]?
               | select(.sell_by_weight_config != null)
               | select(.is_available == true and (.is_sold_out // false) == false)
