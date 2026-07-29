@@ -170,6 +170,55 @@ func TestBuildProducesPurchasePlanShape(t *testing.T) {
 	}
 }
 
+func TestBuildUsesCatalogWeightForCheckoutItem(t *testing.T) {
+	const itemID = "000000000000000000000411"
+	basket := basketWithItem("GEL 8.23", map[string]any{
+		"id":          itemID,
+		"count":       1,
+		"price":       1645,
+		"category_id": "synthetic-category",
+		"weighted_item_info": map[string]any{
+			"count":                     1,
+			"purchased_weight_in_grams": 500,
+		},
+	})
+	basket["venue"].(map[string]any)["slug"] = "synthetic-market"
+	basket["venue"].(map[string]any)["currency"] = "GEL"
+	api := &fakeAPI{
+		assortmentFn: func(context.Context, string) (map[string]any, error) {
+			return map[string]any{"items": []any{
+				map[string]any{
+					"id": itemID,
+					"sell_by_weight_config": map[string]any{
+						"input_type":     "grams",
+						"grams_per_step": 500,
+						"price_per_kg":   1645,
+					},
+				},
+			}}, nil
+		},
+	}
+
+	payload, warnings, err := Build(
+		context.Background(),
+		api,
+		nil,
+		basket,
+		domain.Location{},
+		"standard",
+		0,
+		"",
+	)
+	if err != nil {
+		t.Fatalf("Build() error = %v (warnings: %v)", err, warnings)
+	}
+	item := firstMenuItem(t, purchasePlan(t, payload))
+	if item["count"] != 1 || item["base_price"] != 1645 ||
+		item["end_amount"] != 823 || item["is_weighted_item"] != true {
+		t.Fatalf("weighted checkout item = %#v", item)
+	}
+}
+
 func TestBuildCheckoutOptionsOnlyOverridesKnownDetailPrices(t *testing.T) {
 	raw := []any{
 		map[string]any{

@@ -359,7 +359,7 @@ func BuildBasketUpsertItem(line map[string]any, count int) (map[string]any, erro
 		}
 	}
 
-	return map[string]any{
+	item := map[string]any{
 		"id":      itemID,
 		"count":   count,
 		"name":    String(line["name"]),
@@ -368,7 +368,27 @@ func BuildBasketUpsertItem(line map[string]any, count int) (map[string]any, erro
 		"substitution_settings": map[string]any{
 			"is_allowed": allowSubstitutions,
 		},
-	}, nil
+	}
+	if info := basketWeightedItemInfo(line); info != nil {
+		item["weighted_item_info"] = info
+	}
+	return item, nil
+}
+
+func basketWeightedItemInfo(line map[string]any) map[string]any {
+	info := Map(line["weighted_item_info"])
+	inputType := strings.TrimSpace(String(info["weighted_item_input_type"]))
+	count := Int(info["count"])
+	grams := Int(info["purchased_weight_in_grams"])
+	if count <= 0 || grams <= 0 ||
+		(inputType != WeightedInputGrams && inputType != WeightedInputNumberOfItems) {
+		return nil
+	}
+	return map[string]any{
+		"count":                     count,
+		"purchased_weight_in_grams": grams,
+		"weighted_item_input_type":  inputType,
+	}
 }
 
 // MergeBasketItems preserves every existing line while adding or incrementing
@@ -455,6 +475,9 @@ func RemoveBasketItems(basket map[string]any, itemID string, count int) ([]any, 
 				remainingCount -= lineCount
 			}
 			continue
+		}
+		if basketWeightedItemInfo(line) != nil {
+			return nil, 0, fmt.Errorf("weighted item %q cannot be partially removed without current catalog pricing", target)
 		}
 		nextRemoved, ok := CheckedAddInt(removed, remainingCount)
 		if !ok {

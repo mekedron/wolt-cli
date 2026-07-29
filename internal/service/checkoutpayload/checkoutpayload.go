@@ -8,6 +8,7 @@ import (
 
 	"github.com/mekedron/wolt-cli/internal/domain"
 	woltgateway "github.com/mekedron/wolt-cli/internal/gateway/wolt"
+	"github.com/mekedron/wolt-cli/internal/service/catalogitem"
 	"github.com/mekedron/wolt-cli/internal/service/payloadutil"
 )
 
@@ -122,14 +123,30 @@ func Build(
 		if !ok {
 			return nil, warnings, fmt.Errorf("basket item %q total exceeds the supported integer range", itemID)
 		}
+		basePrice := price
+		isWeighted := false
+		catalogItem := catalogitem.Find(assortmentPayload, itemID)
+		if catalogItem == nil {
+			catalogItem = catalogitem.Find(detail, itemID)
+		}
+		if weightConfig, weighted := payloadutil.WeightConfigFromItem(catalogItem); weighted {
+			values, valuesErr := weightConfig.ValuesFromBasket(item)
+			if valuesErr != nil {
+				return nil, warnings, fmt.Errorf("basket item %q: %w", itemID, valuesErr)
+			}
+			count = values.Count
+			basePrice = weightConfig.PricePerKilogram
+			endAmount = values.Price
+			isWeighted = true
+		}
 
 		menuItems = append(menuItems, map[string]any{
 			"id":                                itemID,
 			"venue_id":                          venueID,
 			"count":                             count,
-			"base_price":                        price,
+			"base_price":                        basePrice,
 			"end_amount":                        endAmount,
-			"is_weighted_item":                  false,
+			"is_weighted_item":                  isWeighted,
 			"category_id":                       categoryID,
 			"category_ids":                      categoryIDs,
 			"alcohol_permille":                  payloadutil.Int(payloadutil.CoalesceAny(item["alcohol_permille"], 0)),
