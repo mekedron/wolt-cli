@@ -311,6 +311,88 @@ func TestCheckoutRejectsNegativeTipBeforeUpstream(t *testing.T) {
 	}
 }
 
+func TestCheckoutUsesValidatedCatalogCategoryWhenBasketOmitsIt(t *testing.T) {
+	const (
+		venueID = "000000000000000000000361"
+		itemID  = "000000000000000000000362"
+	)
+	assortmentItemCalls := 0
+	var captured map[string]any
+	wolt := &stubWolt{
+		venueStaticFn: func(context.Context, string) (map[string]any, error) {
+			return map[string]any{
+				"venue": map[string]any{
+					"id":       venueID,
+					"slug":     "synthetic-tools-market",
+					"currency": "GEL",
+				},
+			}, nil
+		},
+		basketsPageFn: func(context.Context, domain.Location, woltgateway.AuthContext) (map[string]any, error) {
+			return map[string]any{"baskets": []any{
+				map[string]any{
+					"id": "basket-category-regression",
+					"venue": map[string]any{
+						"id":       venueID,
+						"slug":     "synthetic-tools-market",
+						"currency": "GEL",
+					},
+					"total": "GEL 12.50",
+					"items": []any{
+						map[string]any{
+							"id":    itemID,
+							"name":  "Catalog-only category item",
+							"count": 1,
+							"price": 1250,
+						},
+					},
+				},
+			}}, nil
+		},
+		assortmentItemsFn: func(context.Context, string, []string, woltgateway.AuthContext) (map[string]any, error) {
+			assortmentItemCalls++
+			return map[string]any{"items": []any{
+				map[string]any{
+					"id":                  itemID,
+					"name":                "Catalog-only category item",
+					"price":               1250,
+					"category_id":         "hardware-category",
+					"purchasable_balance": 1,
+				},
+			}}, nil
+		},
+		checkoutPreviewFn: func(_ context.Context, payload map[string]any, _ woltgateway.AuthContext) (map[string]any, error) {
+			captured = payload
+			return map[string]any{
+				"payable_amount": 1250,
+				"delivery_configs": []any{
+					map[string]any{"type": "standard", "selected": true},
+				},
+			}, nil
+		},
+	}
+	tc := regressionMCPToolCtx(wolt)
+
+	_, output, err := tc.handleCheckoutPreview(context.Background(), nil, CheckoutPreviewInput{
+		LocationInput: LocationInput{Lat: 10.25, Lon: 20.5},
+		Venue:         "synthetic-tools-market",
+	})
+	if err != nil {
+		t.Fatalf("handleCheckoutPreview: %v", err)
+	}
+	if output.Status != "ready" {
+		t.Fatalf("checkout output = %#v", output)
+	}
+	if assortmentItemCalls != 1 {
+		t.Fatalf("current-item lookup calls = %d, want 1", assortmentItemCalls)
+	}
+	plan := asMap(captured["purchase_plan"])
+	item := asMap(asSlice(plan["menu_items"])[0])
+	if asString(item["category_id"]) != "hardware-category" {
+		t.Fatalf("checkout category_id = %v, want hardware-category", item["category_id"])
+	}
+}
+
 func TestCartClearUsesBothContainersAndCompatibilityIDs(t *testing.T) {
 	deletedIDs := []string{}
 	wolt := &stubWolt{

@@ -674,6 +674,55 @@ func TestBuildEnrichesCategoryFromItemPage(t *testing.T) {
 	}
 }
 
+func TestBuildUsesCategoryFromValidatedCurrentCatalog(t *testing.T) {
+	const itemID = "000000000000000000000416"
+	basket := basketWithItem("GEL 12.50", map[string]any{
+		"id":    itemID,
+		"name":  "Catalog-only category item",
+		"count": 1,
+		"price": 1250,
+	})
+	basket["venue"].(map[string]any)["slug"] = "synthetic-tools-market"
+	basket["venue"].(map[string]any)["currency"] = "GEL"
+
+	api := &fakeAPI{
+		assortmentItemsFn: func(context.Context, string, []string) (map[string]any, error) {
+			t.Fatal("Build repeated the current-item lookup instead of reusing the validated catalog")
+			return nil, nil
+		},
+	}
+	currentCatalog := map[string]any{
+		"items": []any{
+			map[string]any{
+				"id":          itemID,
+				"category_id": "hardware-category",
+			},
+		},
+	}
+
+	payload, warnings, err := Build(
+		context.Background(),
+		api,
+		nil,
+		basket,
+		domain.Location{},
+		"standard",
+		0,
+		"",
+		WithCurrentCatalog(currentCatalog),
+	)
+	if err != nil {
+		t.Fatalf("Build() error = %v (warnings: %v)", err, warnings)
+	}
+	item := firstMenuItem(t, purchasePlan(t, payload))
+	if item["category_id"] != "hardware-category" {
+		t.Fatalf("category_id = %v, want hardware-category", item["category_id"])
+	}
+	if !reflect.DeepEqual(item["category_ids"], []any{"hardware-category"}) {
+		t.Fatalf("category_ids = %#v, want canonical catalog category", item["category_ids"])
+	}
+}
+
 // Grocery venues load categories lazily: the assortment lists categories with
 // empty item_ids, so the item-to-category mapping only exists in venue content.
 func TestBuildResolvesCategoryFromPagedVenueContent(t *testing.T) {

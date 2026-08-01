@@ -14,6 +14,22 @@ import (
 
 type VenuePageStaticFunc func(context.Context, string) (map[string]any, error)
 
+type BuildOption func(*buildOptions)
+
+type buildOptions struct {
+	currentCatalog map[string]any
+}
+
+// WithCurrentCatalog reuses the authenticated current-item payload that the
+// caller already loaded to validate basket availability. Besides avoiding a
+// second lookup, this preserves item metadata such as category_id that the
+// basket payload itself does not carry.
+func WithCurrentCatalog(payload map[string]any) BuildOption {
+	return func(options *buildOptions) {
+		options.currentCatalog = payload
+	}
+}
+
 // maxCheckoutVenueContentPages caps how deep a single preview pages through
 // venue content while hunting for basket item categories.
 const (
@@ -30,7 +46,14 @@ func Build(
 	deliveryMode string,
 	tip int,
 	promoCode string,
+	buildOpts ...BuildOption,
 ) (map[string]any, []string, error) {
+	options := buildOptions{}
+	for _, option := range buildOpts {
+		if option != nil {
+			option(&options)
+		}
+	}
 	if tip < 0 {
 		return nil, nil, fmt.Errorf("tip must be zero or greater")
 	}
@@ -124,8 +147,11 @@ func Build(
 	// A lazily loaded grocery assortment publishes no items, and the item page
 	// carries no sell_by_weight_config, so weighted pricing has to come from an
 	// explicit item lookup keyed by the basket's ids.
-	catalogItemsPayload := map[string]any{}
-	if venueSlug != "" && wolt != nil {
+	catalogItemsPayload := options.currentCatalog
+	if catalogItemsPayload == nil {
+		catalogItemsPayload = map[string]any{}
+	}
+	if len(catalogItemsPayload) == 0 && venueSlug != "" && wolt != nil {
 		basketItemIDs := make([]string, 0, len(basketItems))
 		for _, item := range basketItems {
 			if itemID := strings.TrimSpace(payloadutil.String(item["id"])); itemID != "" {
@@ -211,9 +237,23 @@ func Build(
 			}
 		}
 
-		categoryID := resolveCheckoutCategoryID(item, detail, itemID, categoryIDsByItemID)
+		resolveCategoryID := func() string {
+			if categoryID := resolveCheckoutCategoryID(item, detail, itemID, categoryIDsByItemID); categoryID != "" {
+				return categoryID
+			}
+			if categoryID := resolveCheckoutCategoryIDFromCatalogPayload(catalogItemsPayload, itemID); categoryID != "" {
+				return categoryID
+			}
+			for _, searchPayload := range searchCatalogPayloads {
+				if categoryID := resolveCheckoutCategoryIDFromCatalogPayload(searchPayload, itemID); categoryID != "" {
+					return categoryID
+				}
+			}
+			return resolveCheckoutCategoryIDFromCatalogPayload(assortmentPayload, itemID)
+		}
+		categoryID := resolveCategoryID()
 		for categoryID == "" && (searchCatalogForItem(item) || loadMoreVenueContentCategories()) {
-			categoryID = resolveCheckoutCategoryID(item, detail, itemID, categoryIDsByItemID)
+			categoryID = resolveCategoryID()
 		}
 		if categoryID == "" {
 			return nil, warnings, fmt.Errorf("unable to resolve category_id for basket item %q", itemID)
@@ -382,6 +422,10 @@ func resolveCheckoutCategoryIDFromItemLikePayload(payload map[string]any) string
 		}
 	}
 	return ""
+}
+
+func resolveCheckoutCategoryIDFromCatalogPayload(payload map[string]any, itemID string) string {
+	return resolveCheckoutCategoryIDFromItemLikePayload(catalogitem.Find(payload, itemID))
 }
 
 func resolveBasketVenueSlug(venue map[string]any) string {

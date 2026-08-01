@@ -122,6 +122,76 @@ func TestCheckoutNegativeTipFailsBeforeUpstream(t *testing.T) {
 	}
 }
 
+func TestCheckoutUsesValidatedCatalogCategoryWhenBasketOmitsIt(t *testing.T) {
+	assortmentItemCalls := 0
+	var captured map[string]any
+	api := &testWoltAPI{
+		venuePageStaticFn: func(context.Context, string) (map[string]any, error) {
+			return syntheticVenuePayload(), nil
+		},
+		basketsPageFn: func(context.Context, domain.Location, woltgateway.AuthContext) (map[string]any, error) {
+			return map[string]any{"baskets": []any{
+				map[string]any{
+					"id": "basket-category-regression",
+					"venue": map[string]any{
+						"id":       regressionVenueID,
+						"slug":     regressionVenueSlug,
+						"currency": "GEL",
+					},
+					"total": "GEL 12.50",
+					"items": []any{
+						map[string]any{
+							"id":    regressionItemID,
+							"name":  "Catalog-only category item",
+							"count": 1,
+							"price": 1250,
+						},
+					},
+				},
+			}}, nil
+		},
+		assortmentItemsFn: func(context.Context, string, []string, woltgateway.AuthContext) (map[string]any, error) {
+			assortmentItemCalls++
+			return map[string]any{"items": []any{
+				map[string]any{
+					"id":                  regressionItemID,
+					"name":                "Catalog-only category item",
+					"price":               1250,
+					"category_id":         "hardware-category",
+					"purchasable_balance": 1,
+				},
+			}}, nil
+		},
+		checkoutPreviewFn: func(_ context.Context, payload map[string]any, _ woltgateway.AuthContext) (map[string]any, error) {
+			captured = payload
+			return map[string]any{
+				"payable_amount": 1250,
+				"delivery_configs": []any{
+					map[string]any{"type": "standard", "selected": true},
+				},
+			}, nil
+		},
+	}
+
+	output, err := runCLIRegressionCommand(
+		t,
+		newCheckoutPreviewCommand(regressionCLIDeps(api)),
+		"--venue-id", regressionVenueID,
+		"--format", "json",
+	)
+	if err != nil {
+		t.Fatalf("checkout preview failed: %v\n%s", err, output.String())
+	}
+	if assortmentItemCalls != 1 {
+		t.Fatalf("current-item lookup calls = %d, want 1", assortmentItemCalls)
+	}
+	plan := asMap(captured["purchase_plan"])
+	item := asMap(asSlice(plan["menu_items"])[0])
+	if asString(item["category_id"]) != "hardware-category" {
+		t.Fatalf("checkout category_id = %v, want hardware-category", item["category_id"])
+	}
+}
+
 func TestCartAddRejectsUnidentifiableExistingBasket(t *testing.T) {
 	addCalls := 0
 	api := &testWoltAPI{
