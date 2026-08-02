@@ -219,6 +219,7 @@ func newCheckoutPreviewCommand(deps Dependencies) *cobra.Command {
 				deliveryMode,
 				tip,
 				promoCode,
+				checkoutpayload.WithCurrentCatalog(currentItems),
 			)
 			if err != nil {
 				return emitError(

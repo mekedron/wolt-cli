@@ -139,7 +139,17 @@ func (tc *ToolCtx) handleCheckoutPreview(ctx context.Context, _ *mcp.CallToolReq
 		}, nil
 	}
 
-	payload, buildWarnings, err := checkoutpayload.Build(ctx, tc.wolt, tc.wolt.VenuePageStatic, basket, loc, deliveryMode, in.Tip, in.PromoCode)
+	payload, buildWarnings, err := checkoutpayload.Build(
+		ctx,
+		tc.wolt,
+		tc.wolt.VenuePageStatic,
+		basket,
+		loc,
+		deliveryMode,
+		in.Tip,
+		in.PromoCode,
+		checkoutpayload.WithCurrentCatalog(currentItems),
+	)
 	if err != nil {
 		return nil, CheckoutPreviewOutput{}, toolErr(err)
 	}
