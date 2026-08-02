@@ -24,9 +24,12 @@ type buildOptions struct {
 // caller already loaded to validate basket availability. Besides avoiding a
 // second lookup, this preserves item metadata such as category_id that the
 // basket payload itself does not carry.
+//
+// The payload is a hint, not a contract: Build still loads the catalog itself
+// for any basket item the payload does not describe.
 func WithCurrentCatalog(payload map[string]any) BuildOption {
-	return func(options *buildOptions) {
-		options.currentCatalog = payload
+	return func(opts *buildOptions) {
+		opts.currentCatalog = payload
 	}
 }
 
@@ -48,11 +51,9 @@ func Build(
 	promoCode string,
 	buildOpts ...BuildOption,
 ) (map[string]any, []string, error) {
-	options := buildOptions{}
+	cfg := buildOptions{}
 	for _, option := range buildOpts {
-		if option != nil {
-			option(&options)
-		}
+		option(&cfg)
 	}
 	if tip < 0 {
 		return nil, nil, fmt.Errorf("tip must be zero or greater")
@@ -145,30 +146,38 @@ func Build(
 	}
 
 	// A lazily loaded grocery assortment publishes no items, and the item page
-	// carries no sell_by_weight_config, so weighted pricing has to come from an
-	// explicit item lookup keyed by the basket's ids.
-	catalogItemsPayload := options.currentCatalog
+	// carries no sell_by_weight_config, so weighted pricing and category
+	// resolution both need an explicit item lookup keyed by the basket's ids.
+	// A caller-supplied payload covers that lookup only for the ids it actually
+	// describes; the rest are still fetched here, so an incomplete hint degrades
+	// to one extra request instead of an unresolvable item.
+	catalogItemsPayload := cfg.currentCatalog
 	if catalogItemsPayload == nil {
 		catalogItemsPayload = map[string]any{}
 	}
-	if len(catalogItemsPayload) == 0 && venueSlug != "" && wolt != nil {
-		basketItemIDs := make([]string, 0, len(basketItems))
-		for _, item := range basketItems {
-			if itemID := strings.TrimSpace(payloadutil.String(item["id"])); itemID != "" {
-				basketItemIDs = append(basketItemIDs, itemID)
-			}
+	fetchedCatalogPayloads := []map[string]any{}
+	uncoveredItemIDs := make([]string, 0, len(basketItems))
+	for _, item := range basketItems {
+		itemID := strings.TrimSpace(payloadutil.String(item["id"]))
+		if itemID == "" || catalogitem.Find(catalogItemsPayload, itemID) != nil {
+			continue
 		}
-		if len(basketItemIDs) > 0 {
-			if payload, itemsErr := wolt.AssortmentItemsByVenueSlug(
-				ctx,
-				venueSlug,
-				basketItemIDs,
-				woltgateway.AuthContext{},
-			); itemsErr == nil {
+		uncoveredItemIDs = append(uncoveredItemIDs, itemID)
+	}
+	if len(uncoveredItemIDs) > 0 && venueSlug != "" && wolt != nil {
+		if payload, itemsErr := wolt.AssortmentItemsByVenueSlug(
+			ctx,
+			venueSlug,
+			uncoveredItemIDs,
+			woltgateway.AuthContext{},
+		); itemsErr == nil {
+			if len(catalogItemsPayload) == 0 {
 				catalogItemsPayload = payload
 			} else {
-				warnings = append(warnings, fmt.Sprintf("unable to load catalog items for weighted pricing (slug=%s)", venueSlug))
+				fetchedCatalogPayloads = append(fetchedCatalogPayloads, payload)
 			}
+		} else {
+			warnings = append(warnings, fmt.Sprintf("unable to load catalog items for weighted pricing (slug=%s)", venueSlug))
 		}
 	}
 
@@ -205,6 +214,18 @@ func Build(
 		return true
 	}
 
+	// Catalog payloads are consulted most-specific first: the exact-item
+	// lookup, then any targeted search, then the venue-wide assortment. The
+	// search slice grows while items are processed, so the list is rebuilt per
+	// lookup rather than captured once.
+	catalogPayloads := func() []map[string]any {
+		payloads := make([]map[string]any, 0, 2+len(fetchedCatalogPayloads)+len(searchCatalogPayloads))
+		payloads = append(payloads, catalogItemsPayload)
+		payloads = append(payloads, fetchedCatalogPayloads...)
+		payloads = append(payloads, searchCatalogPayloads...)
+		return append(payloads, assortmentPayload)
+	}
+
 	menuItems := make([]any, 0, len(basketItems))
 	for index, item := range basketItems {
 		itemID := strings.TrimSpace(payloadutil.String(item["id"]))
@@ -237,19 +258,19 @@ func Build(
 			}
 		}
 
+		// A payload that carries the item but no category is not authoritative
+		// for the category, so resolution continues to the next candidate
+		// instead of stopping at the first payload that merely knows the item.
 		resolveCategoryID := func() string {
 			if categoryID := resolveCheckoutCategoryID(item, detail, itemID, categoryIDsByItemID); categoryID != "" {
 				return categoryID
 			}
-			if categoryID := resolveCheckoutCategoryIDFromCatalogPayload(catalogItemsPayload, itemID); categoryID != "" {
-				return categoryID
-			}
-			for _, searchPayload := range searchCatalogPayloads {
-				if categoryID := resolveCheckoutCategoryIDFromCatalogPayload(searchPayload, itemID); categoryID != "" {
+			for _, payload := range catalogPayloads() {
+				if categoryID := resolveCheckoutCategoryIDFromCatalogPayload(payload, itemID); categoryID != "" {
 					return categoryID
 				}
 			}
-			return resolveCheckoutCategoryIDFromCatalogPayload(assortmentPayload, itemID)
+			return ""
 		}
 		categoryID := resolveCategoryID()
 		for categoryID == "" && (searchCatalogForItem(item) || loadMoreVenueContentCategories()) {
@@ -268,16 +289,10 @@ func Build(
 		basePrice := price
 		isWeighted := false
 		findCatalogItem := func() map[string]any {
-			if found := catalogitem.Find(catalogItemsPayload, itemID); found != nil {
-				return found
-			}
-			for _, searchPayload := range searchCatalogPayloads {
-				if found := catalogitem.Find(searchPayload, itemID); found != nil {
+			for _, payload := range catalogPayloads() {
+				if found := catalogitem.Find(payload, itemID); found != nil {
 					return found
 				}
-			}
-			if found := catalogitem.Find(assortmentPayload, itemID); found != nil {
-				return found
 			}
 			return catalogitem.Find(detail, itemID)
 		}

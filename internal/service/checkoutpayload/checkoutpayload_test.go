@@ -8,6 +8,7 @@ import (
 
 	"github.com/mekedron/wolt-cli/internal/domain"
 	woltgateway "github.com/mekedron/wolt-cli/internal/gateway/wolt"
+	"github.com/mekedron/wolt-cli/internal/service/payloadutil"
 )
 
 // fakeAPI embeds the gateway interface so we only implement the handful of
@@ -720,6 +721,78 @@ func TestBuildUsesCategoryFromValidatedCurrentCatalog(t *testing.T) {
 	}
 	if !reflect.DeepEqual(item["category_ids"], []any{"hardware-category"}) {
 		t.Fatalf("category_ids = %#v, want canonical catalog category", item["category_ids"])
+	}
+}
+
+// A supplied catalog is a hint, not a contract. Items it does not describe are
+// still fetched, and only those items are requested.
+func TestBuildFetchesCatalogItemsMissingFromSuppliedCurrentCatalog(t *testing.T) {
+	const (
+		coveredItemID   = "000000000000000000000417"
+		uncoveredItemID = "000000000000000000000418"
+	)
+	basket := basketWithItem("GEL 25.00", map[string]any{
+		"id":    coveredItemID,
+		"name":  "Covered item",
+		"count": 1,
+		"price": 1250,
+	})
+	basket["venue"].(map[string]any)["slug"] = "synthetic-tools-market"
+	basket["venue"].(map[string]any)["currency"] = "GEL"
+	basket["items"] = append(payloadutil.Slice(basket["items"]), map[string]any{
+		"id":    uncoveredItemID,
+		"name":  "Uncovered item",
+		"count": 1,
+		"price": 1250,
+	})
+
+	requestedIDs := [][]string{}
+	api := &fakeAPI{
+		assortmentItemsFn: func(_ context.Context, _ string, itemIDs []string) (map[string]any, error) {
+			requestedIDs = append(requestedIDs, append([]string(nil), itemIDs...))
+			return map[string]any{"items": []any{
+				map[string]any{
+					"id":          uncoveredItemID,
+					"category_id": "fetched-category",
+				},
+			}}, nil
+		},
+	}
+	currentCatalog := map[string]any{
+		"items": []any{
+			map[string]any{
+				"id":          coveredItemID,
+				"category_id": "hardware-category",
+			},
+		},
+	}
+
+	payload, warnings, err := Build(
+		context.Background(),
+		api,
+		nil,
+		basket,
+		domain.Location{},
+		"standard",
+		0,
+		"",
+		WithCurrentCatalog(currentCatalog),
+	)
+	if err != nil {
+		t.Fatalf("Build() error = %v (warnings: %v)", err, warnings)
+	}
+	if !reflect.DeepEqual(requestedIDs, [][]string{{uncoveredItemID}}) {
+		t.Fatalf("catalog lookups = %#v, want a single lookup for the uncovered id only", requestedIDs)
+	}
+	menuItems := payloadutil.Slice(purchasePlan(t, payload)["menu_items"])
+	if len(menuItems) != 2 {
+		t.Fatalf("menu_items = %d, want 2", len(menuItems))
+	}
+	if got := payloadutil.Map(menuItems[0])["category_id"]; got != "hardware-category" {
+		t.Fatalf("covered category_id = %v, want hardware-category", got)
+	}
+	if got := payloadutil.Map(menuItems[1])["category_id"]; got != "fetched-category" {
+		t.Fatalf("uncovered category_id = %v, want fetched-category", got)
 	}
 }
 
