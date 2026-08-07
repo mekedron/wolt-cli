@@ -3,6 +3,7 @@ package wolt
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -13,6 +14,54 @@ import (
 
 	"github.com/mekedron/wolt-cli/internal/domain"
 )
+
+func TestSearchItemsUsesGlobalItemTargetAndLimit(t *testing.T) {
+	httpClient := &captureHTTPClient{responseBody: `{"sections":[]}`}
+	client := NewClient(
+		WithHTTPClient(httpClient),
+		WithEndpoints(Endpoints{SearchPage: "https://example.test/v1/pages/search"}),
+	)
+	location := domain.Location{Lat: 10.25, Lon: 20.5}
+	_, err := client.SearchItems(
+		context.Background(),
+		location,
+		"  semantic query  ",
+		37,
+		AuthContext{WToken: "synthetic-token"},
+	)
+	if err != nil {
+		t.Fatalf("SearchItems() error = %v", err)
+	}
+	if got := httpClient.request.Method; got != http.MethodPost {
+		t.Fatalf("method = %s, want POST", got)
+	}
+	if got := httpClient.request.Header.Get("Authorization"); got != "Bearer synthetic-token" {
+		t.Fatalf("authorization = %q", got)
+	}
+	var body map[string]any
+	if err := json.Unmarshal([]byte(httpClient.requestBody), &body); err != nil {
+		t.Fatalf("decode request body: %v", err)
+	}
+	if body["q"] != "  semantic query  " || body["target"] != "items" || int(body["limit"].(float64)) != 37 {
+		t.Fatalf("request body = %#v", body)
+	}
+	if body["lat"] != location.Lat || body["lon"] != location.Lon {
+		t.Fatalf("request location = %#v", body)
+	}
+}
+
+func TestSearchItemsRejectsLimitBeforeRequest(t *testing.T) {
+	httpClient := &captureHTTPClient{}
+	client := NewClient(WithHTTPClient(httpClient))
+	for _, limit := range []int{0, domain.GlobalItemSearchMaxLimit + 1} {
+		if _, err := client.SearchItems(context.Background(), domain.Location{}, "query", limit, AuthContext{}); err == nil {
+			t.Fatalf("SearchItems(limit=%d) did not return an error", limit)
+		}
+	}
+	if httpClient.doCalls != 0 {
+		t.Fatalf("upstream calls = %d, want 0", httpClient.doCalls)
+	}
+}
 
 type captureHTTPClient struct {
 	request      *http.Request

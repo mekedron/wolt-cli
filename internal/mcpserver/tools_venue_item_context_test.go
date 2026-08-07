@@ -113,6 +113,37 @@ func TestVenueItemToolsCarryResolvedVenueCurrencyAndCategoryContext(t *testing.T
 	assertItemContext(t, asMap(rows[0]), venueID, venueSlug, canonicalURL)
 }
 
+func TestVenueSearchItemsPreservesUpstreamRelevanceOrder(t *testing.T) {
+	payload := map[string]any{
+		"items": []any{
+			map[string]any{"id": "item-b", "name": "Z ranked first", "price": 200},
+			map[string]any{"id": "item-a", "name": "A ranked second", "price": 100},
+		},
+	}
+	tc := newToolCtx(Deps{
+		Wolt: &stubWolt{
+			venueStaticFn: func(context.Context, string) (map[string]any, error) {
+				return map[string]any{"venue": map[string]any{"id": "venue-a", "slug": "venue-a"}}, nil
+			},
+			assortmentSearchFn: func(context.Context, string, string, string, woltgateway.AuthContext) (map[string]any, error) {
+				return payload, nil
+			},
+		},
+		Profiles: &stubProfiles{},
+	})
+	_, result, err := tc.handleVenueSearchItems(context.Background(), nil, VenueSearchItemsInput{
+		Venue: "venue-a",
+		Query: "semantic query",
+	})
+	if err != nil {
+		t.Fatalf("handleVenueSearchItems() error = %v", err)
+	}
+	rows := asSlice(result.Data["items"])
+	if len(rows) != 2 || asString(asMap(rows[0])["item_id"]) != "item-b" || asString(asMap(rows[1])["item_id"]) != "item-a" {
+		t.Fatalf("item order = %#v", rows)
+	}
+}
+
 func assertItemContext(t *testing.T, item map[string]any, venueID string, venueSlug string, canonicalURL string) {
 	t.Helper()
 	if item["venue_id"] != venueID || item["venue_slug"] != venueSlug || item["canonical_url"] != canonicalURL {

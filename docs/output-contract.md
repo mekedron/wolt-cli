@@ -198,6 +198,44 @@ Wolt's `online` field, while `store_open_now` remains `null` because order
 availability does not prove that a physical store is open. Discovery remains
 ranked and non-exhaustive even when these fields are present.
 
+### `wolt items` — GlobalItemSearchResult
+
+```
+query: string
+requested_limit: int
+upstream_returned_count: int
+normalized_count: int
+returned_count: int
+filtered_out_count: int
+available_only: bool
+limit_reached: bool
+upstream_cap_reached: bool
+completeness: "unknown"
+items[]: {
+  global_rank, item_id, name, description,
+  base_price, original_price, price_type,
+  unit_price, unit_price_type, unit_size, unit_size_type,
+  is_sold_by_weight, is_available,
+  image_url, product_line, tags, action_link,
+  venue_id, venue_slug, venue_name, venue_status, venue_rating,
+  venue_image_url, delivery_estimate, delivery_method,
+  delivery_method_type, show_wolt_plus
+}
+venue_groups[]: {
+  venue_id, venue_slug, venue_name, venue_status, venue_rating,
+  item_count, item_ranks[],
+  expand: { mcp_tool, venue, query, cli_command, cli_args[] }
+}
+```
+
+`global_rank` and `item_ranks[]` are one-based positions in Wolt's unfiltered
+response. They can contain gaps after `--available-only`. `is_available` is
+nullable: a missing upstream signal remains unknown. `item_count` is the number
+of matches for that venue in the current returned sample, not a venue-wide
+total. Wolt currently provides no continuation token or exact match total for
+global item search and caps one request at 200, so completeness is never
+inferred from a short response or a reached limit.
+
 ### `wolt feed` — DiscoveryFeed
 
 ```

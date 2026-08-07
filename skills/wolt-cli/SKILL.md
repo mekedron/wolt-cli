@@ -80,6 +80,10 @@ Apply exactly:
   `kind: "brands"`; brand carousels render as a single one-line summary.
 - Flat list / filtered search across all nearby venues: `venues`,
   `venues categories` (paginated).
+- Product search across nearby venues: `items --query <text>`. Preserve its
+  global rank; expand a venue with `venue menu <venue> --query <text>` when the
+  user wants more from that store. Global completeness is unknown because Wolt
+  supplies neither a continuation token nor an exact total.
 - Inspect one venue deeply: `venue`, `venue categories` (paginated),
   `venue menu`, `venue hours`.
 - Resolve one item/options for basket actions: `venue item`.
@@ -112,9 +116,9 @@ instead of unrestricted full-catalog menu crawl.
 
 If you're an AI agent running inside a host that speaks the Model Context
 Protocol (Claude Desktop, Claude Code, Cursor, …), prefer the `wolt-mcp`
-server tools (`wolt_feed`, `wolt_top`, `wolt_cart_show`, `wolt_cart_add`,
-`wolt_checkout_preview`, …) over shelling out to the CLI. They share the same
-auth state (`~/.wolt/.wolt-config.json`) and return typed, schema-described
+server tools (`wolt_feed`, `wolt_top`, `wolt_search_items`, `wolt_cart_show`,
+`wolt_cart_add`, `wolt_checkout_preview`, …) over shelling out to the CLI. They
+share the same auth state (`~/.wolt/.wolt-config.json`) and return typed, schema-described
 JSON instead of human-formatted tables. See `../../docs/mcp.md` for the full
 catalog and client setup.
 

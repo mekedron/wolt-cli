@@ -705,7 +705,7 @@ func (tc *ToolCtx) handleVenueSearchItems(ctx context.Context, _ *mcp.CallToolRe
 	data, warnings := observability.BuildItemSearchResult(
 		in.Query,
 		[]map[string]any{payload},
-		observability.ItemSortName,
+		observability.ItemSortRelevance,
 		"",
 		limitPtr,
 		in.Offset,

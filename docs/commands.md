@@ -1,6 +1,6 @@
 # Commands
 
-`wolt-cli` exposes eleven top-level commands. Every leaf command supports
+`wolt-cli` exposes twelve top-level commands. Every leaf command supports
 the same machine output (`--format table|json|yaml`) and the same global
 flags listed at the bottom of this page.
 
@@ -20,6 +20,7 @@ flags listed at the bottom of this page.
 | `wolt feed` | Browse the home-page-style discovery feed grouped by section. |
 | `wolt top` | Flatten the feed into a single top-N ranked table. |
 | `wolt venues` | Browse or search nearby venues as a flat list. |
+| `wolt items` | Search globally ranked items across nearby venues. |
 | `wolt venue` | Inspect one venue: details, menu, hours, items, categories. |
 | `wolt cart` | Read or mutate the saved basket draft. |
 | `wolt checkout` | Preview the checkout payload (no order placement). |
@@ -212,6 +213,29 @@ Wolt+ endpoints — one upstream call, sub-second response. Pass
 `--enrich` to fetch dynamic campaign banners and resolve Wolt+ for
 venues whose flag is missing from the feed payload (slower; bounded by
 internal budgets). `--promotions-only` implies `--enrich`.
+
+## `wolt items`
+
+```console
+wolt items --query <text> [--limit 1-200] [--available-only]
+```
+
+Calls Wolt's item-targeted global search and preserves the upstream relevance
+order. The default limit is 20. Machine output contains the complete returned
+sample without duplicating product objects: `items[]` is the flat ranked list,
+while `venue_groups[]` references those rows by `item_ranks[]` and provides
+structured arguments for expanding the same query with
+`wolt venue menu <venue> --query <text>`.
+
+The table groups matches by venue and shows up to three products from each
+venue; JSON and YAML retain every returned row. `--available-only` removes only
+rows explicitly marked unavailable by Wolt. An absent availability signal stays
+unknown.
+
+The current upstream endpoint exposes neither a continuation token nor an exact
+total and caps a single request at 200. Consequently the result always reports
+`completeness: unknown`; `limit_reached` and `upstream_cap_reached` describe the
+sample boundary but never claim that every matching Wolt item was returned.
 
 ## `wolt venue`
 

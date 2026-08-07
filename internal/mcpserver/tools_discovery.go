@@ -2,10 +2,14 @@ package mcpserver
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/mekedron/wolt-cli/internal/domain"
 	"github.com/mekedron/wolt-cli/internal/service/observability"
+	"github.com/mekedron/wolt-cli/internal/service/searchload"
 )
 
 func registerDiscoveryTools(srv *mcp.Server, tc *ToolCtx) {
@@ -33,6 +37,13 @@ func registerDiscoveryTools(srv *mcp.Server, tc *ToolCtx) {
 	}, tc.handleSearchVenues)
 
 	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "wolt_search_items",
+		Title:       "Search items across venues",
+		Description: "Search globally ranked Wolt items across nearby venues. Preserves Wolt relevance and returns flat matches plus per-venue groups. The upstream endpoint has no continuation token or exact total, so completeness is always unknown.",
+		Annotations: readOnly,
+	}, tc.handleSearchItems)
+
+	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "wolt_venue_categories",
 		Title:       "List venue categories",
 		Description: "List the category slugs available at a location (e.g. 'pizza', 'sushi', 'burger'). Use the slug as the 'category' filter on other tools.",
@@ -45,6 +56,62 @@ func registerDiscoveryTools(srv *mcp.Server, tc *ToolCtx) {
 		Description: "Geocode a free-form address string into lat/lon via OSM Nominatim. Useful when the user gives an address and other tools need explicit coordinates.",
 		Annotations: readOnly,
 	}, tc.handleResolveAddress)
+}
+
+// ---------------- wolt_search_items ----------------
+
+type SearchItemsInput struct {
+	LocationInput
+	Query         string `json:"query"                    jsonschema:"item search query"`
+	Limit         int    `json:"limit,omitempty"          jsonschema:"maximum globally ranked matches to request; default 20, range 1-200"`
+	AvailableOnly bool   `json:"available_only,omitempty" jsonschema:"exclude items that Wolt explicitly marks unavailable"`
+}
+
+type SearchItemsOutput struct {
+	Summary        string         `json:"summary"`
+	LocationSource string         `json:"location_source"`
+	Location       LocationOut    `json:"location"`
+	Data           map[string]any `json:"data"`
+	Warnings       []string       `json:"warnings,omitempty"`
+}
+
+func (tc *ToolCtx) handleSearchItems(
+	ctx context.Context,
+	_ *mcp.CallToolRequest,
+	in SearchItemsInput,
+) (*mcp.CallToolResult, SearchItemsOutput, error) {
+	query := strings.TrimSpace(in.Query)
+	if query == "" {
+		return nil, SearchItemsOutput{}, toolErr(fmt.Errorf("query is required"))
+	}
+	limit := in.Limit
+	if limit == 0 {
+		limit = domain.GlobalItemSearchDefaultLimit
+	}
+	if limit < 1 || limit > domain.GlobalItemSearchMaxLimit {
+		return nil, SearchItemsOutput{}, toolErr(fmt.Errorf("limit must be between 1 and %d", domain.GlobalItemSearchMaxLimit))
+	}
+	location, source, err := tc.resolveLocation(ctx, in.LocationInput)
+	if err != nil {
+		return nil, SearchItemsOutput{}, toolErr(err)
+	}
+	searchAPI, ok := tc.wolt.(searchload.API)
+	if !ok {
+		return nil, SearchItemsOutput{}, toolErr(fmt.Errorf("global item search is unavailable in the configured Wolt gateway"))
+	}
+	payload, err := searchload.RequestItems(ctx, searchAPI, location, query, limit, tc.optionalAuth(ctx))
+	if err != nil {
+		return nil, SearchItemsOutput{}, toolErr(err)
+	}
+	data, warnings := observability.BuildGlobalItemSearchResult(query, limit, payload, in.AvailableOnly)
+	count := asInt(data["returned_count"])
+	return nil, SearchItemsOutput{
+		Summary:        humanCount(count, "globally ranked item", "globally ranked items") + "; completeness unknown",
+		LocationSource: source,
+		Location:       locationOut(location),
+		Data:           data,
+		Warnings:       warnings,
+	}, nil
 }
 
 // ---------------- wolt_feed ----------------

@@ -581,13 +581,38 @@ func (c *Client) Search(ctx context.Context, location domain.Location, query str
 		"lat":    location.Lat,
 		"lon":    location.Lon,
 	}
+	return c.searchPage(ctx, body, AuthContext{})
+}
+
+// SearchItems returns globally ranked item matches across nearby venues.
+func (c *Client) SearchItems(
+	ctx context.Context,
+	location domain.Location,
+	query string,
+	limit int,
+	auth AuthContext,
+) (map[string]any, error) {
+	if limit < 1 || limit > domain.GlobalItemSearchMaxLimit {
+		return nil, fmt.Errorf("item search limit must be between 1 and %d", domain.GlobalItemSearchMaxLimit)
+	}
+	body := map[string]any{
+		"q":      query,
+		"target": "items",
+		"limit":  limit,
+		"lat":    location.Lat,
+		"lon":    location.Lon,
+	}
+	return c.searchPage(ctx, body, auth)
+}
+
+func (c *Client) searchPage(ctx context.Context, body map[string]any, auth AuthContext) (map[string]any, error) {
 	return c.doJSONRequest(
 		ctx,
 		http.MethodPost,
 		c.endpoints.SearchPage,
 		nil,
 		body,
-		c.headers(map[string]string{"Content-Type": "application/json"}, nil),
+		c.headers(map[string]string{"Content-Type": "application/json"}, &auth),
 	)
 }
 

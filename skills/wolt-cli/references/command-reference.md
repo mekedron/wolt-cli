@@ -16,7 +16,8 @@ wolt <group> <command> [flags]
 > and service packages, with MCP-specific typed handlers instead of CLI
 > envelopes or tables.
 > Tool surface: `wolt_feed`, `wolt_top`,
-> `wolt_search_venues`, `wolt_venue_categories`, `wolt_resolve_address`,
+> `wolt_search_venues`, `wolt_search_items`, `wolt_venue_categories`,
+> `wolt_resolve_address`,
 > `wolt_resolve_venue`, `wolt_venue_detail`, `wolt_venue_menu`, `wolt_venue_hours`,
 > `wolt_venue_item`, `wolt_venue_search_items`, `wolt_account_*`,
 > `wolt_favorites_*`, `wolt_cart_*`, `wolt_checkout_preview`. Full catalog
@@ -76,6 +77,15 @@ Discovery is ranked and non-exhaustive. In MCP workflows, use
 closed or scheduled-order venues.
 
 - `wolt venues categories [--limit <n>] [--offset <n> | --page <n>] [--address ... | --lat ... --lon ...]`
+
+- `wolt items --query <text> [--limit 1-200] [--available-only] [--address ...]`
+
+Global item search preserves Wolt's relevance order and returns flat item rows
+plus venue groups. The table shows up to three rows per venue; machine output
+keeps the full returned sample. There is no offset or page flag because the
+upstream endpoint exposes no continuation token or exact total; completeness
+is reported as unknown. Expand one venue with `venue menu --query` or the MCP
+tool `wolt_venue_search_items`.
 
 ## Venue
 
