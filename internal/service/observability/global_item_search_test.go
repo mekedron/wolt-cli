@@ -91,6 +91,70 @@ func TestBuildGlobalItemSearchResultReportsCapWithoutClaimingCompleteness(t *tes
 	}
 }
 
+func TestBuildGlobalItemSearchResultPrefersDetailAvailabilityAndRealPrices(t *testing.T) {
+	entry := func(itemID string, summaryExtra, detailExtra map[string]any) map[string]any {
+		summary := map[string]any{
+			"id":       itemID,
+			"venue_id": "venue-a",
+			"name":     "Item " + itemID,
+			"currency": "EUR",
+		}
+		details := map[string]any{
+			"id":       itemID,
+			"venue_id": "venue-a",
+			"name":     "Item " + itemID,
+			"currency": "EUR",
+		}
+		for key, value := range summaryExtra {
+			summary[key] = value
+		}
+		for key, value := range detailExtra {
+			details[key] = value
+		}
+		return map[string]any{
+			"menu_item": summary,
+			"link":      map[string]any{"menu_item_details": details},
+		}
+	}
+	payload := map[string]any{
+		"sections": []any{
+			map[string]any{
+				"items": []any{
+					entry("shadowed-price", map[string]any{"price": 875}, map[string]any{"price": 0}),
+					entry("free-item", map[string]any{"price": 0}, map[string]any{"price": 0}),
+					entry("detail-unavailable", map[string]any{"price": 100}, map[string]any{"is_available": false, "price": 100}),
+				},
+			},
+		},
+	}
+
+	data, warnings := BuildGlobalItemSearchResult("query", 3, payload, false)
+	if len(warnings) != 0 {
+		t.Fatalf("warnings = %#v", warnings)
+	}
+	items := data["items"].([]map[string]any)
+	byID := map[string]map[string]any{}
+	for _, item := range items {
+		byID[stringFromAny(item["item_id"])] = item
+	}
+	if got := stringFromAny(toMap(byID["shadowed-price"]["base_price"])["formatted_amount"]); got != "EUR 8.75" {
+		t.Fatalf("zero detail price shadowed the summary price: formatted = %q", got)
+	}
+	if got := stringFromAny(toMap(byID["free-item"]["base_price"])["formatted_amount"]); got != "EUR 0.00" {
+		t.Fatalf("genuinely free item lost its zero price: formatted = %q", got)
+	}
+	if byID["detail-unavailable"]["is_available"] != false {
+		t.Fatalf("detail-level unavailability was dropped: %#v", byID["detail-unavailable"]["is_available"])
+	}
+
+	filtered, _ := BuildGlobalItemSearchResult("query", 3, payload, true)
+	for _, item := range filtered["items"].([]map[string]any) {
+		if stringFromAny(item["item_id"]) == "detail-unavailable" {
+			t.Fatalf("available_only kept an item Wolt explicitly marks unavailable")
+		}
+	}
+}
+
 func globalSearchTestEntry(itemID, venueID, name string, available any, withDetails bool) map[string]any {
 	summary := map[string]any{
 		"id":         itemID,

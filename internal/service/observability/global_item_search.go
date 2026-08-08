@@ -102,15 +102,15 @@ func normalizeGlobalItem(summary map[string]any, details map[string]any, rank in
 		"item_id":              itemID,
 		"name":                 name,
 		"description":          emptyToNil(firstGlobalSearchString(details["description"], summary["description"])),
-		"base_price":           normalizeGlobalSearchPrice(coalesceValue(details["price"], summary["price"]), currency),
-		"original_price":       normalizeGlobalSearchPrice(coalesceValue(details["original_price"], summary["original_price"]), currency),
+		"base_price":           normalizeGlobalSearchPrice(firstGlobalSearchPrice(details["price"], summary["price"]), currency),
+		"original_price":       normalizeGlobalSearchPrice(firstGlobalSearchPrice(details["original_price"], summary["original_price"]), currency),
 		"price_type":           emptyToNil(firstGlobalSearchString(details["price_type"], summary["price_type"])),
 		"unit_price":           normalizeGlobalSearchPrice(details["unit_price"], currency),
 		"unit_price_type":      emptyToNil(stringFromAny(details["unit_price_type"])),
 		"unit_size":            details["unit_size"],
 		"unit_size_type":       emptyToNil(stringFromAny(details["unit_size_type"])),
 		"is_sold_by_weight":    nullableBoolValue(details["is_sold_by_weight"]),
-		"is_available":         nullableBoolValue(summary["is_available"]),
+		"is_available":         nullableBoolValue(coalesceValue(details["is_available"], summary["is_available"])),
 		"image_url":            emptyToNil(firstGlobalSearchString(toMap(details["image"])["url"], toMap(summary["image"])["url"])),
 		"product_line":         emptyToNil(stringFromAny(details["product_line"])),
 		"tags":                 firstGlobalSearchSlice(details["tags"], summary["tags"]),
@@ -162,6 +162,34 @@ func buildGlobalItemVenueGroups(items []map[string]any, query string) []map[stri
 		group["item_ranks"] = append(group["item_ranks"].([]int), item["global_rank"].(int))
 	}
 	return groups
+}
+
+// firstGlobalSearchPrice prefers the first candidate carrying a non-zero
+// amount: detail payloads can hold a numeric 0 placeholder, and a plain
+// nil-coalesce would let it shadow the real summary price. When no non-zero
+// candidate exists the first non-nil one wins, so genuinely free items keep
+// their zero price.
+func firstGlobalSearchPrice(values ...any) any {
+	for _, value := range values {
+		if value != nil && !isZeroGlobalSearchAmount(value) {
+			return value
+		}
+	}
+	return coalesceValue(values...)
+}
+
+func isZeroGlobalSearchAmount(value any) bool {
+	if price := toMap(value); price != nil {
+		value = price["amount"]
+	}
+	switch amount := value.(type) {
+	case float64:
+		return amount == 0
+	case int:
+		return amount == 0
+	default:
+		return false
+	}
 }
 
 func normalizeGlobalSearchPrice(value any, currency string) map[string]any {
