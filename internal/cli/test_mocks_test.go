@@ -8,6 +8,7 @@ import (
 )
 
 type testWoltAPI struct {
+	searchItemsFn        func(context.Context, domain.Location, string, int, woltgateway.AuthContext) (map[string]any, error)
 	refreshAccessTokenFn func(context.Context, string, woltgateway.AuthContext) (woltgateway.TokenRefreshResult, error)
 	deliveryInfoListFn   func(context.Context, woltgateway.AuthContext) (map[string]any, error)
 	venuePageStaticFn    func(context.Context, string) (map[string]any, error)
@@ -36,6 +37,13 @@ func (m *testWoltAPI) Items(context.Context, domain.Location) ([]domain.Item, er
 }
 
 func (m *testWoltAPI) Search(context.Context, domain.Location, string) (map[string]any, error) {
+	return map[string]any{}, nil
+}
+
+func (m *testWoltAPI) SearchItems(ctx context.Context, location domain.Location, query string, limit int, auth woltgateway.AuthContext) (map[string]any, error) {
+	if m.searchItemsFn != nil {
+		return m.searchItemsFn(ctx, location, query, limit, auth)
+	}
 	return map[string]any{}, nil
 }
 

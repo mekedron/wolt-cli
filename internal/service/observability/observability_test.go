@@ -254,7 +254,6 @@ func TestBuildItemSearchResultFallback(t *testing.T) {
 	data, warnings := observability.BuildItemSearchResult(
 		"whopper",
 		nil,
-		observability.ItemSortRelevance,
 		"",
 		nil,
 		0,
@@ -288,7 +287,6 @@ func TestBuildItemSearchResultNormalizesBasePrice(t *testing.T) {
 	data, warnings := observability.BuildItemSearchResult(
 		"coca",
 		payloads,
-		observability.ItemSortRelevance,
 		"",
 		nil,
 		0,

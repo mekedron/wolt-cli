@@ -29,6 +29,7 @@ var expectedToolNames = []string{
 	"wolt_feed",
 	"wolt_top",
 	"wolt_search_venues",
+	"wolt_search_items",
 	"wolt_venue_categories",
 	"wolt_resolve_address",
 	"wolt_resolve_venue",
@@ -685,6 +686,7 @@ type stubWolt struct {
 	itemsFn              func(context.Context, domain.Location) ([]domain.Item, error)
 	userMeFn             func(context.Context, woltgateway.AuthContext) (map[string]any, error)
 	searchFn             func(context.Context, domain.Location, string) (map[string]any, error)
+	searchItemsFn        func(context.Context, domain.Location, string, int, woltgateway.AuthContext) (map[string]any, error)
 	assortmentFn         func(context.Context, string) (map[string]any, error)
 	assortmentCategoryFn func(context.Context, string, string, string, woltgateway.AuthContext) (map[string]any, error)
 	assortmentSearchFn   func(context.Context, string, string, string, woltgateway.AuthContext) (map[string]any, error)
@@ -716,6 +718,12 @@ func (s *stubWolt) Items(ctx context.Context, loc domain.Location) ([]domain.Ite
 func (s *stubWolt) Search(ctx context.Context, location domain.Location, query string) (map[string]any, error) {
 	if s.searchFn != nil {
 		return s.searchFn(ctx, location, query)
+	}
+	return map[string]any{}, nil
+}
+func (s *stubWolt) SearchItems(ctx context.Context, location domain.Location, query string, limit int, auth woltgateway.AuthContext) (map[string]any, error) {
+	if s.searchItemsFn != nil {
+		return s.searchItemsFn(ctx, location, query, limit, auth)
 	}
 	return map[string]any{}, nil
 }

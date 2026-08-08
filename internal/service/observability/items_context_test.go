@@ -22,7 +22,6 @@ func TestBuildItemSearchResultCarriesScopedVenueAndItemContext(t *testing.T) {
 	data, warnings := observability.BuildItemSearchResult(
 		"frozen fish",
 		[]map[string]any{itemSearchContextFixture(itemID, translations)},
-		observability.ItemSortRelevance,
 		"",
 		nil,
 		0,
@@ -86,7 +85,6 @@ func TestBuildItemSearchResultPreservesAuthoritativeCrossLanguageMatches(t *test
 	data, warnings := observability.BuildItemSearchResult(
 		"profile-language-query-not-in-display-name",
 		[]map[string]any{payload},
-		observability.ItemSortRelevance,
 		"",
 		nil,
 		0,

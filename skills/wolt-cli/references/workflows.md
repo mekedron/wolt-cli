@@ -29,6 +29,7 @@ wolt feed --query "burger"          # filter the feed (matches brand carousels t
 ```bash
 # Discover/search
 wolt venues  --query "burger" --limit 10 --format json
+wolt items --query "whopper" --limit 20 --format json
 wolt venue <venue-slug>  --format json
 
 # Resolve item and options

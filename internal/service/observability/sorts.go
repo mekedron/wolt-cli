@@ -82,26 +82,3 @@ func ParseVenueType(value string) (VenueType, error) {
 		return "", fmt.Errorf("invalid venue type %q", value)
 	}
 }
-
-// ItemSort controls menu-item ordering.
-type ItemSort string
-
-const (
-	ItemSortRelevance ItemSort = "relevance"
-	ItemSortPrice     ItemSort = "price"
-	ItemSortName      ItemSort = "name"
-)
-
-// ParseItemSort parses item sort value.
-func ParseItemSort(value string) (ItemSort, error) {
-	v := ItemSort(strings.ToLower(strings.TrimSpace(value)))
-	if v == "" {
-		return ItemSortRelevance, nil
-	}
-	switch v {
-	case ItemSortRelevance, ItemSortPrice, ItemSortName:
-		return v, nil
-	default:
-		return "", fmt.Errorf("invalid item sort %q", value)
-	}
-}

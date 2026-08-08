@@ -106,7 +106,7 @@ concurrent explicit login or logout.
 
 ## Tool catalog
 
-25 tools in v1. ✓ = read-only, ⚠ = mutates user state.
+26 tools in v1. ✓ = read-only, ⚠ = mutates user state.
 
 ### Discovery (no auth required)
 
@@ -115,6 +115,7 @@ concurrent explicit login or logout.
 | `wolt_feed` ✓ | Discovery home page grouped by section ("Popular", "Order again", …) |
 | `wolt_top` ✓ | Top N venues for a location, with sort/filter |
 | `wolt_search_venues` ✓ | Filter the non-exhaustive discovery feed by text, category, availability, Wolt+, rating, and fee |
+| `wolt_search_items` ✓ | Globally ranked item search across nearby venues; returns flat rows and per-venue groups |
 | `wolt_venue_categories` ✓ | Available category slugs at a location |
 | `wolt_resolve_address` ✓ | Geocode a free-form address to lat/lon |
 
@@ -205,6 +206,23 @@ closed or scheduled-order venues found by the dedicated search endpoint. The
 result returns canonical identity plus separate availability fields for
 ordering now, scheduled ordering, closed state, next opening time, and delivery
 to the selected location when Wolt supplies those signals.
+
+`wolt_search_items` uses Wolt's dedicated item target rather than filtering the
+discovery feed or crawling venue catalogs. It preserves Wolt's global relevance
+ranking and defaults to 20 rows (`limit` accepts 1–200). `available_only`
+excludes only explicit `is_available=false` rows. The endpoint currently
+exposes no continuation token or exact total, so `data.completeness` is always
+`unknown`; reaching the requested limit or the 200-row upstream cap is reported
+without claiming an exhaustive result. Use each `venue_groups[].expand` action
+or `wolt_venue_search_items` to continue within one venue.
+
+`wolt_venue_search_items` returns rows in Wolt's live relevance order and
+re-runs the upstream search on every call. Offset pagination therefore has no
+stable snapshot: if Wolt reorders results between two calls, an item can
+appear on two pages or fall between them. Calls with `offset > 0` carry a
+warning stating this; prefer a single call with a larger `limit` when complete
+membership matters.
+
 `wolt_venue_detail` and `wolt_venue_hours` accept the same slug, ID, and URL
 forms without requiring a saved profile or location. A location is still needed
 to resolve an exact display name and enables location-aware availability.

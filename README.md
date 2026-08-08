@@ -18,6 +18,7 @@ It is not affiliated with Wolt. Use it at your own responsibility.
 - discovery feed grouped by section (`wolt feed`), with `--summary` for a one-line-per-section overview
 - top-N flattened picks across the feed (`wolt top`) — the "what should I eat right now" shortcut
 - venue browsing, filtering, sorting, and category listing (`wolt venues`)
+- globally ranked item search across nearby venues (`wolt items`)
 - venue details, menus (with `--query` / `--category`), hours, and item drilldown
 - option matrix inspection and option resolution by name (`--option "Drink=Cola"`)
 - cart commands (`cart`, `cart count`, `cart add`, `cart remove`, `cart clear`)
@@ -172,6 +173,8 @@ wolt account --format json
 
 # 1) Find a venue
 wolt venues --query "burger king" --limit 10
+# Or search products across all nearby venues while keeping Wolt relevance:
+wolt items --query "whopper" --limit 20
 # Want a single ranked list across all curated sections? Use top:
 wolt top 10 --query burger
 
