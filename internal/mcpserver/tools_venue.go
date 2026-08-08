@@ -658,7 +658,7 @@ type VenueSearchItemsInput struct {
 	Venue  string `json:"venue"        jsonschema:"venue slug, id, or url"`
 	Query  string `json:"query"        jsonschema:"item name query"`
 	Limit  int    `json:"limit,omitempty"  jsonschema:"max items"`
-	Offset int    `json:"offset,omitempty" jsonschema:"skip first N"`
+	Offset int    `json:"offset,omitempty" jsonschema:"skip first N; each call re-runs the live search in upstream relevance order, so page membership can shift between calls"`
 }
 
 type VenueSearchItemsOutput struct {
@@ -711,6 +711,12 @@ func (tc *ToolCtx) handleVenueSearchItems(ctx context.Context, _ *mcp.CallToolRe
 		nil,
 		itemContext,
 	)
+	if in.Offset > 0 {
+		warnings = append(
+			warnings,
+			"offset pagination re-runs the live search and rows follow upstream relevance order, so page membership can shift between calls",
+		)
+	}
 	return nil, VenueSearchItemsOutput{
 		Summary:  humanCount(len(asSlice(data["items"])), "match", "matches"),
 		Data:     data,

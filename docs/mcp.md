@@ -216,6 +216,13 @@ exposes no continuation token or exact total, so `data.completeness` is always
 without claiming an exhaustive result. Use each `venue_groups[].expand` action
 or `wolt_venue_search_items` to continue within one venue.
 
+`wolt_venue_search_items` returns rows in Wolt's live relevance order and
+re-runs the upstream search on every call. Offset pagination therefore has no
+stable snapshot: if Wolt reorders results between two calls, an item can
+appear on two pages or fall between them. Calls with `offset > 0` carry a
+warning stating this; prefer a single call with a larger `limit` when complete
+membership matters.
+
 `wolt_venue_detail` and `wolt_venue_hours` accept the same slug, ID, and URL
 forms without requiring a saved profile or location. A location is still needed
 to resolve an exact display name and enables location-aware availability.
