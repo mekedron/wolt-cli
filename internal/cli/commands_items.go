@@ -53,11 +53,7 @@ func newItemsCommand(deps Dependencies) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			searchAPI, ok := deps.Wolt.(searchload.API)
-			if !ok {
-				return fmt.Errorf("global item search is unavailable in the configured Wolt gateway")
-			}
-			payload, err := searchload.RequestItems(cmd.Context(), searchAPI, location, query, limit, auth)
+			payload, err := searchload.RequestItems(cmd.Context(), deps.Wolt, location, query, limit, auth)
 			if err != nil {
 				return emitUpstreamError(cmd, format, profile, flags.Locale, flags.Output, flags.Verbose, err)
 			}

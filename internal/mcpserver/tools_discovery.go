@@ -95,11 +95,7 @@ func (tc *ToolCtx) handleSearchItems(
 	if err != nil {
 		return nil, SearchItemsOutput{}, toolErr(err)
 	}
-	searchAPI, ok := tc.wolt.(searchload.API)
-	if !ok {
-		return nil, SearchItemsOutput{}, toolErr(fmt.Errorf("global item search is unavailable in the configured Wolt gateway"))
-	}
-	payload, err := searchload.RequestItems(ctx, searchAPI, location, query, limit, tc.optionalAuth(ctx))
+	payload, err := searchload.RequestItems(ctx, tc.wolt, location, query, limit, tc.optionalAuth(ctx))
 	if err != nil {
 		return nil, SearchItemsOutput{}, toolErr(err)
 	}

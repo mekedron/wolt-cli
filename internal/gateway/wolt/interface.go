@@ -34,6 +34,7 @@ type API interface {
 	Sections(ctx context.Context, location domain.Location) ([]domain.Section, error)
 	Items(ctx context.Context, location domain.Location) ([]domain.Item, error)
 	Search(ctx context.Context, location domain.Location, query string) (map[string]any, error)
+	SearchItems(ctx context.Context, location domain.Location, query string, limit int, auth AuthContext) (map[string]any, error)
 	VenuePageStatic(ctx context.Context, slug string) (map[string]any, error)
 	VenuePageDynamic(ctx context.Context, slug string, options VenuePageDynamicOptions) (map[string]any, error)
 	AssortmentByVenueSlug(ctx context.Context, slug string) (map[string]any, error)
