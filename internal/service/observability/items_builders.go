@@ -289,11 +289,11 @@ type ItemVenueContext struct {
 	MetadataPayloads []map[string]any
 }
 
-// BuildItemSearchResult normalizes item search and fallback data.
+// BuildItemSearchResult normalizes item search and fallback data. Rows keep
+// the upstream relevance order; no local re-sorting is applied.
 func BuildItemSearchResult(
 	query string,
 	payloads []map[string]any,
-	sortMode ItemSort,
 	category string,
 	limit *int,
 	offset int,
@@ -340,19 +340,6 @@ func BuildItemSearchResult(
 				"is_sold_out":  false,
 			})
 		}
-	}
-
-	switch sortMode {
-	case ItemSortPrice:
-		sort.SliceStable(menuItems, func(i, j int) bool {
-			left := intValue(toMap(menuItems[i]["base_price"])["amount"])
-			right := intValue(toMap(menuItems[j]["base_price"])["amount"])
-			return left < right
-		})
-	case ItemSortName:
-		sort.SliceStable(menuItems, func(i, j int) bool {
-			return strings.ToLower(stringFromAny(menuItems[i]["name"])) < strings.ToLower(stringFromAny(menuItems[j]["name"]))
-		})
 	}
 
 	total := len(menuItems)

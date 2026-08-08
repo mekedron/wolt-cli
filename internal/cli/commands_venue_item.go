@@ -341,7 +341,6 @@ func newVenueMenuCommand(deps Dependencies) *cobra.Command {
 				data, searchWarnings := observability.BuildItemSearchResult(
 					query,
 					[]map[string]any{searchPayload},
-					observability.ItemSortRelevance,
 					category,
 					nil,
 					0,

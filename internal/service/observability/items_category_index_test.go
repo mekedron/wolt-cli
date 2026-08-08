@@ -129,7 +129,6 @@ func TestItemBuildersEnrichCategoryNamesFromOrderedMetadata(t *testing.T) {
 				return BuildItemSearchResult(
 					"",
 					[]map[string]any{selected},
-					ItemSortRelevance,
 					"",
 					nil,
 					0,
@@ -228,7 +227,6 @@ func TestItemBuildersFilterByCategorySlugFromMetadata(t *testing.T) {
 				return BuildItemSearchResult(
 					"",
 					[]map[string]any{selected},
-					ItemSortRelevance,
 					"fresh-produce",
 					nil,
 					0,
