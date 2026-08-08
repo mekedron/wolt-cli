@@ -102,15 +102,15 @@ func normalizeGlobalItem(summary map[string]any, details map[string]any, rank in
 		"item_id":              itemID,
 		"name":                 name,
 		"description":          emptyToNil(firstGlobalSearchString(details["description"], summary["description"])),
-		"base_price":           normalizeGlobalSearchPrice(firstGlobalSearchValue(details["price"], summary["price"]), currency),
-		"original_price":       normalizeGlobalSearchPrice(firstGlobalSearchValue(details["original_price"], summary["original_price"]), currency),
+		"base_price":           normalizeGlobalSearchPrice(coalesceValue(details["price"], summary["price"]), currency),
+		"original_price":       normalizeGlobalSearchPrice(coalesceValue(details["original_price"], summary["original_price"]), currency),
 		"price_type":           emptyToNil(firstGlobalSearchString(details["price_type"], summary["price_type"])),
 		"unit_price":           normalizeGlobalSearchPrice(details["unit_price"], currency),
 		"unit_price_type":      emptyToNil(stringFromAny(details["unit_price_type"])),
 		"unit_size":            details["unit_size"],
 		"unit_size_type":       emptyToNil(stringFromAny(details["unit_size_type"])),
-		"is_sold_by_weight":    boolOrNil(details["is_sold_by_weight"]),
-		"is_available":         boolOrNil(summary["is_available"]),
+		"is_sold_by_weight":    nullableBoolValue(details["is_sold_by_weight"]),
+		"is_available":         nullableBoolValue(summary["is_available"]),
 		"image_url":            emptyToNil(firstGlobalSearchString(toMap(details["image"])["url"], toMap(summary["image"])["url"])),
 		"product_line":         emptyToNil(stringFromAny(details["product_line"])),
 		"tags":                 firstGlobalSearchSlice(details["tags"], summary["tags"]),
@@ -119,12 +119,12 @@ func normalizeGlobalItem(summary map[string]any, details map[string]any, rank in
 		"venue_slug":           emptyToNil(stringFromAny(details["venue_slug"])),
 		"venue_name":           emptyToNil(firstGlobalSearchString(details["venue_name"], summary["venue_name"])),
 		"venue_status":         emptyToNil(firstGlobalSearchString(details["venue_status"], summary["venue_status"])),
-		"venue_rating":         firstGlobalSearchValue(details["venue_rating"], summary["venue_rating"]),
+		"venue_rating":         coalesceValue(details["venue_rating"], summary["venue_rating"]),
 		"venue_image_url":      emptyToNil(stringFromAny(toMap(details["venue_image"])["url"])),
-		"delivery_estimate":    firstGlobalSearchValue(details["estimate_range"], summary["estimate_range"]),
+		"delivery_estimate":    coalesceValue(details["estimate_range"], summary["estimate_range"]),
 		"delivery_method":      emptyToNil(firstGlobalSearchString(details["delivery_method"], summary["delivery_method"])),
 		"delivery_method_type": emptyToNil(firstGlobalSearchString(details["delivery_method_type"], summary["delivery_method_type"])),
-		"show_wolt_plus":       boolOrNil(firstGlobalSearchValue(details["show_wolt_plus"], summary["show_wolt_plus"])),
+		"show_wolt_plus":       nullableBoolValue(coalesceValue(details["show_wolt_plus"], summary["show_wolt_plus"])),
 	}
 	removeEmptyGlobalSearchPrices(row)
 	return row, nil
@@ -182,21 +182,11 @@ func removeEmptyGlobalSearchPrices(row map[string]any) {
 }
 
 func firstGlobalSearchString(values ...any) string {
-	for _, value := range values {
-		if text := strings.TrimSpace(stringFromAny(value)); text != "" {
-			return text
-		}
+	texts := make([]string, len(values))
+	for index, value := range values {
+		texts[index] = stringFromAny(value)
 	}
-	return ""
-}
-
-func firstGlobalSearchValue(values ...any) any {
-	for _, value := range values {
-		if value != nil {
-			return value
-		}
-	}
-	return nil
+	return firstNonEmptyValue(texts...)
 }
 
 func firstGlobalSearchSlice(values ...any) []any {
@@ -206,11 +196,4 @@ func firstGlobalSearchSlice(values ...any) []any {
 		}
 	}
 	return []any{}
-}
-
-func boolOrNil(value any) any {
-	if typed, ok := value.(bool); ok {
-		return typed
-	}
-	return nil
 }
