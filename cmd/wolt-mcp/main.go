@@ -36,6 +36,7 @@ const (
 	woltHTTPMinIntervalEnv     = "WOLT_HTTP_MIN_INTERVAL_MS"
 	defaultLocale              = "en-FI"
 	localeEnv                  = "WOLT_LOCALE"
+	compactContentEnv          = "WOLT_MCP_COMPACT_CONTENT"
 	duplicateContentEnv        = "WOLT_MCP_DUPLICATE_CONTENT"
 )
 
@@ -72,15 +73,23 @@ func main() {
 		woltgateway.WithLocale(locale),
 	)
 
+	if deprecatedDuplicateContentSet() {
+		logger.Warn(
+			"WOLT_MCP_DUPLICATE_CONTENT is deprecated and no longer has any effect; "+
+				"serialized JSON in content is now the default and the variable can be removed",
+			"compact_opt_out", compactContentEnv,
+		)
+	}
+
 	deps := mcpserver.Deps{
-		Wolt:             wolt,
-		Profiles:         profile.NewResolver(store),
-		Location:         locationgateway.NewClient(),
-		Config:           store,
-		Version:          version,
-		Locale:           locale,
-		Logger:           logger,
-		DuplicateContent: resolveDuplicateContent(),
+		Wolt:           wolt,
+		Profiles:       profile.NewResolver(store),
+		Location:       locationgateway.NewClient(),
+		Config:         store,
+		Version:        version,
+		Locale:         locale,
+		Logger:         logger,
+		CompactContent: resolveCompactContent(),
 	}
 
 	srv := mcpserver.NewServer(deps)
@@ -106,11 +115,16 @@ Options:
                         Can also be set via the WOLT_LOCALE environment variable.
 
 Environment:
-  WOLT_MCP_DUPLICATE_CONTENT=1
-                        Also serve the full typed payload as serialized JSON in
-                        content, not just structuredContent. Set this only for
-                        clients that read content alone — it roughly doubles
-                        response size.
+  WOLT_MCP_COMPACT_CONTENT=1
+                        Reduce content to the short summary, leaving the full
+                        typed payload in structuredContent alone. Roughly halves
+                        response size, but a client that reads only content then
+                        sees no data — set it only when every client you use
+                        reads structuredContent.
+
+  WOLT_MCP_DUPLICATE_CONTENT
+                        Deprecated and ignored. Serialized JSON in content is
+                        now the default, so this variable can be removed.
 
 Wire into an MCP client (Claude Desktop, Claude Code, Cursor) with:
 
@@ -133,10 +147,24 @@ func resolveWoltRequestMinInterval() time.Duration {
 	return time.Duration(ms) * time.Millisecond
 }
 
-// resolveDuplicateContent reads the opt-in that mirrors the full typed payload
-// into Content. Only the documented truthy spellings enable it, so a stray or
-// empty value keeps the compact default rather than silently doubling payloads.
-func resolveDuplicateContent() bool {
+// resolveCompactContent reads the opt-in that reduces Content to the short
+// summary. Only the documented truthy spellings enable it, so a stray or empty
+// value keeps the spec-compliant default rather than silently withholding the
+// payload from clients that read only Content.
+func resolveCompactContent() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(compactContentEnv))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+// deprecatedDuplicateContentSet reports whether the superseded opt-in is still
+// present in the environment. Serializing JSON into Content is now the default,
+// so the variable no longer changes behavior; callers warn once at startup so
+// users know they can drop it.
+func deprecatedDuplicateContentSet() bool {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv(duplicateContentEnv))) {
 	case "1", "true", "yes", "on":
 		return true

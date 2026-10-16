@@ -16,7 +16,7 @@ import (
 	profileservice "github.com/mekedron/wolt-cli/internal/service/profile"
 )
 
-func TestCartShowSupportsCompactAndCompatibilityContentModes(t *testing.T) {
+func TestCartShowServesSerializedJSONByDefaultAndSummaryOnOptOut(t *testing.T) {
 	const marker = "basket-detail-required-by-content-only-clients"
 	payload := map[string]any{
 		"baskets": []any{
@@ -41,6 +41,7 @@ func TestCartShowSupportsCompactAndCompatibilityContentModes(t *testing.T) {
 	defer func() { _ = client.Close() }()
 
 	compact, err := client.CallTool(context.Background(), &mcp.CallToolParams{
+		Meta: mcp.Meta{duplicateContentMetaKey: false},
 		Name: "wolt_cart_show",
 		Arguments: map[string]any{
 			"lat": 10.25,
@@ -48,27 +49,26 @@ func TestCartShowSupportsCompactAndCompatibilityContentModes(t *testing.T) {
 		},
 	})
 	if err != nil {
-		t.Fatalf("CallTool: %v", err)
+		t.Fatalf("CallTool with compact metadata: %v", err)
 	}
 	if compact.IsError {
 		t.Fatalf("unexpected tool error: %s", textContent(compact))
 	}
 	if got := textContent(compact); got != "1 basket" {
-		t.Fatalf("default Content = %q, want short summary", got)
+		t.Fatalf("compact Content = %q, want short summary", got)
 	}
 	if strings.Contains(textContent(compact), marker) {
-		t.Fatal("default Content duplicated the structured basket payload")
+		t.Fatal("compact Content kept the structured basket payload")
 	}
 	compactStructured, err := json.Marshal(compact.StructuredContent)
 	if err != nil {
-		t.Fatalf("marshal default StructuredContent: %v", err)
+		t.Fatalf("marshal compact StructuredContent: %v", err)
 	}
 	if !strings.Contains(string(compactStructured), marker) {
-		t.Fatal("default StructuredContent lost the full basket payload")
+		t.Fatal("compact StructuredContent lost the full basket payload")
 	}
 
 	compatible, err := client.CallTool(context.Background(), &mcp.CallToolParams{
-		Meta: mcp.Meta{duplicateContentMetaKey: true},
 		Name: "wolt_cart_show",
 		Arguments: map[string]any{
 			"lat": 10.25,
@@ -76,10 +76,10 @@ func TestCartShowSupportsCompactAndCompatibilityContentModes(t *testing.T) {
 		},
 	})
 	if err != nil {
-		t.Fatalf("CallTool with compatibility metadata: %v", err)
+		t.Fatalf("CallTool with default content mode: %v", err)
 	}
 	if compatible.IsError {
-		t.Fatalf("unexpected compatibility-mode tool error: %s", textContent(compatible))
+		t.Fatalf("unexpected default-mode tool error: %s", textContent(compatible))
 	}
 	var contentOnly map[string]any
 	if err := json.Unmarshal([]byte(textContent(compatible)), &contentOnly); err != nil {
@@ -115,7 +115,7 @@ func TestStructuredResultUsesSummaryWhenSDKContentDiffers(t *testing.T) {
 		}, nil
 	}
 
-	result, err := newToolResultMiddleware(false)(next)(context.Background(), callToolMethod, nil)
+	result, err := newToolResultMiddleware(true)(next)(context.Background(), callToolMethod, nil)
 	if err != nil {
 		t.Fatalf("middleware: %v", err)
 	}
@@ -128,9 +128,10 @@ func TestStructuredResultUsesSummaryWhenSDKContentDiffers(t *testing.T) {
 	}
 }
 
-// The server-level default exists for clients that cannot send request
-// metadata, so it must reach Content without any _meta on the call.
-func TestServerLevelDuplicateContentDefaultKeepsFullPayloadInContent(t *testing.T) {
+// The serialized JSON the MCP spec asks for has to reach Content without any
+// _meta on the call, because a content-only client cannot send request
+// metadata. The compact opt-out has to reach it the same way.
+func TestServerLevelContentModeAppliesWithoutRequestMeta(t *testing.T) {
 	const marker = "example-venue-marker"
 	next := func(context.Context, string, mcp.Request) (mcp.Result, error) {
 		return &mcp.CallToolResult{
@@ -146,14 +147,14 @@ func TestServerLevelDuplicateContentDefaultKeepsFullPayloadInContent(t *testing.
 
 	for _, test := range []struct {
 		name           string
-		duplicate      bool
+		compact        bool
 		wantFullInBody bool
 	}{
-		{name: "compact default", duplicate: false, wantFullInBody: false},
-		{name: "server-level duplication", duplicate: true, wantFullInBody: true},
+		{name: "spec-compliant default", compact: false, wantFullInBody: true},
+		{name: "server-level compact opt-out", compact: true, wantFullInBody: false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			result, err := newToolResultMiddleware(test.duplicate)(next)(
+			result, err := newToolResultMiddleware(test.compact)(next)(
 				context.Background(),
 				callToolMethod,
 				nil,
@@ -170,37 +171,42 @@ func TestServerLevelDuplicateContentDefaultKeepsFullPayloadInContent(t *testing.
 					got, test.wantFullInBody, textContent(toolResult))
 			}
 			if toolResult.StructuredContent == nil {
-				t.Fatal("StructuredContent must survive regardless of duplication")
+				t.Fatal("StructuredContent must survive regardless of content mode")
 			}
 		})
 	}
 }
 
 // An explicit per-request boolean has to win over the server default in both
-// directions, otherwise a single misconfigured client cannot recover.
-func TestRequestMetaOverridesServerDuplicateContentDefault(t *testing.T) {
-	if got := duplicateContentRequested(nil, true); !got {
-		t.Fatal("nil request must fall back to the server default true")
+// directions, otherwise a single misconfigured client cannot recover. The
+// metadata key keeps its original "duplicate" sense: true asks for the
+// serialized JSON, false asks for the summary.
+func TestRequestMetaOverridesServerContentModeDefault(t *testing.T) {
+	if got := compactContentRequested(nil, true); !got {
+		t.Fatal("nil request must fall back to the server default compact=true")
 	}
-	if got := duplicateContentRequested(nil, false); got {
-		t.Fatal("nil request must fall back to the server default false")
+	if got := compactContentRequested(nil, false); got {
+		t.Fatal("nil request must fall back to the server default compact=false")
 	}
 
 	req := &mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{
 		Meta: mcp.Meta{duplicateContentMetaKey: false},
 	}}
-	if duplicateContentRequested(req, true) {
-		t.Fatal("explicit _meta false must override server default true")
+	if !compactContentRequested(req, false) {
+		t.Fatal("explicit _meta false must ask for the summary over a serializing default")
 	}
 
 	req.Params.Meta = mcp.Meta{duplicateContentMetaKey: true}
-	if !duplicateContentRequested(req, false) {
-		t.Fatal("explicit _meta true must override server default false")
+	if compactContentRequested(req, true) {
+		t.Fatal("explicit _meta true must ask for serialized JSON over a compact default")
 	}
 
 	req.Params.Meta = mcp.Meta{duplicateContentMetaKey: "yes"}
-	if duplicateContentRequested(req, false) {
-		t.Fatal("non-boolean _meta must not enable duplication")
+	if !compactContentRequested(req, true) {
+		t.Fatal("non-boolean _meta must leave the server default compact=true untouched")
+	}
+	if compactContentRequested(req, false) {
+		t.Fatal("non-boolean _meta must leave the server default compact=false untouched")
 	}
 }
 

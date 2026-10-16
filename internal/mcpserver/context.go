@@ -34,10 +34,13 @@ type Deps struct {
 	Version  string
 	Locale   string
 	Logger   *slog.Logger
-	// DuplicateContent serves the full typed payload as serialized JSON in
-	// Content in addition to StructuredContent. Leave false unless a client
-	// reads only Content, because it roughly doubles response size.
-	DuplicateContent bool
+	// CompactContent reduces Content to the short summary, leaving the full
+	// typed payload in StructuredContent alone. Leave false unless every client
+	// reads StructuredContent: the MCP spec says a tool returning structured
+	// content SHOULD also serialize it into a TextContent block, and a client
+	// that reads only Content sees no data without it. Setting it roughly halves
+	// response size.
+	CompactContent bool
 }
 
 // ToolCtx is the shared receiver every tool handler hangs off. Keeping it as a

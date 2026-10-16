@@ -13,14 +13,16 @@ const callToolMethod = "tools/call"
 const duplicateContentMetaKey = "wolt/duplicate_content"
 
 // newToolResultMiddleware exposes classified tool errors in result metadata.
-// Successful results carry a short Content summary while retaining the complete
-// typed output in StructuredContent.
+// Successful results retain the complete typed output in StructuredContent and,
+// by default, the SDK's serialized JSON in Content as well: the MCP spec says a
+// tool returning structured content SHOULD also return the serialized JSON in a
+// TextContent block, because a client that reads only Content would otherwise
+// see no data at all.
 //
-// duplicateDefault turns on the SDK's serialized-JSON compatibility duplicate
-// in Content for every call. It exists for clients that read only Content and
-// cannot be configured to send request metadata; per-request metadata
+// compactDefault reduces Content to the short summary instead, halving response
+// size for clients that do read StructuredContent. Per-request metadata
 // (duplicateContentMetaKey) overrides it in either direction.
-func newToolResultMiddleware(duplicateDefault bool) mcp.Middleware {
+func newToolResultMiddleware(compactDefault bool) mcp.Middleware {
 	return func(next mcp.MethodHandler) mcp.MethodHandler {
 		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
 			result, err := next(ctx, method, req)
@@ -39,7 +41,7 @@ func newToolResultMiddleware(duplicateDefault bool) mcp.Middleware {
 				normalizeToolErrorResult(toolResult)
 				return result, nil
 			}
-			if duplicateContentRequested(req, duplicateDefault) {
+			if !compactContentRequested(req, compactDefault) {
 				return result, nil
 			}
 
@@ -57,17 +59,19 @@ func newToolResultMiddleware(duplicateDefault bool) mcp.Middleware {
 	}
 }
 
-// duplicateContentRequested resolves the effective duplication setting. An
-// explicit request-metadata boolean wins so a single client can opt in or out
-// without restarting the server; anything else falls back to the server default.
-func duplicateContentRequested(req mcp.Request, duplicateDefault bool) bool {
+// compactContentRequested reports whether Content should be reduced to the short
+// summary. The request-metadata key keeps its original "duplicate" sense — an
+// explicit true asks for the serialized JSON, false asks for the summary — so a
+// single client can override without restarting the server; anything else falls
+// back to the server default.
+func compactContentRequested(req mcp.Request, compactDefault bool) bool {
 	if req == nil || req.GetParams() == nil {
-		return duplicateDefault
+		return compactDefault
 	}
-	if enabled, ok := req.GetParams().GetMeta()[duplicateContentMetaKey].(bool); ok {
-		return enabled
+	if duplicate, ok := req.GetParams().GetMeta()[duplicateContentMetaKey].(bool); ok {
+		return !duplicate
 	}
-	return duplicateDefault
+	return compactDefault
 }
 
 func normalizeToolErrorResult(result *mcp.CallToolResult) {

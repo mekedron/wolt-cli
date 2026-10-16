@@ -293,20 +293,27 @@ delivery configurations, offers, and tip configuration.
 
 ## MCP result contract
 
-Successful tool calls keep the complete typed result in
-`structuredContent`; by default, `content` contains only the short summary so
-the full JSON is not duplicated.
+Successful tool calls keep the complete typed result in `structuredContent` and,
+by default, the same payload as serialized JSON in `content`. The MCP spec
+requires this of any tool returning structured content:
 
-Clients that read only `content` can opt into the SDK's serialized-JSON
-compatibility duplicate two ways:
+> For backwards compatibility, a tool that returns structured content SHOULD
+> also return the serialized JSON in a TextContent block.
 
-- **Per server** — start `wolt-mcp` with `WOLT_MCP_DUPLICATE_CONTENT=1`. Use this
+Without it, a client that reads only `content` receives the summary and no data
+— a venue search arrives as `10 matches` with no names, prices, or IDs.
+
+Clients that do read `structuredContent` can drop the serialized copy and halve
+response size two ways:
+
+- **Per server** — start `wolt-mcp` with `WOLT_MCP_COMPACT_CONTENT=1`. Use this
   when the client cannot be configured to send request metadata.
-- **Per request** — set `_meta["wolt/duplicate_content"]`. An explicit `true` or
-  `false` overrides the server default in either direction.
+- **Per request** — set `_meta["wolt/duplicate_content"]`. An explicit `true`
+  asks for the serialized JSON and `false` asks for the summary, overriding the
+  server default in either direction.
 
-Duplication roughly doubles response size, so leave it off unless a client needs
-it. Ordinary tool errors keep
+`WOLT_MCP_DUPLICATE_CONTENT` is deprecated and ignored; its behavior is now the
+default, so it can be removed. Ordinary tool errors keep
 `structuredContent` unset so they cannot violate a tool's success schema, retain
 the short message in `content`, and expose the following stable shape in
 `_meta.wolt_error`:
