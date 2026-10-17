@@ -563,3 +563,79 @@ func TestCartRemovePricesRemainingOptionValuesFromCatalog(t *testing.T) {
 		t.Fatalf("remaining option = %#v, want grp-extras/val-feta priced 400", option)
 	}
 }
+
+func TestCartAddAndRemoveKeepWholeLinePrices(t *testing.T) {
+	const itemID = "000000000000000000000141"
+	var captured map[string]any
+	basketItems := []any{}
+	wolt := &stubWolt{
+		venueStaticFn: func(context.Context, string) (map[string]any, error) {
+			return scheduledVenueStaticPayload(), nil
+		},
+		venueDynamicFn: func(context.Context, string, woltgateway.VenuePageDynamicOptions) (map[string]any, error) {
+			return scheduledVenueDynamicPayload(), nil
+		},
+		assortmentItemsFn: func(context.Context, string, []string, woltgateway.AuthContext) (map[string]any, error) {
+			return map[string]any{"items": []any{
+				map[string]any{
+					"id":                  itemID,
+					"name":                "Soft drink",
+					"price":               350,
+					"purchasable_balance": 8,
+				},
+			}}, nil
+		},
+		basketsPageFn: func(context.Context, domain.Location, woltgateway.AuthContext) (map[string]any, error) {
+			if len(basketItems) == 0 {
+				return map[string]any{"baskets": []any{}}, nil
+			}
+			return map[string]any{"baskets": []any{
+				map[string]any{
+					"id":         "basket-1",
+					"venue_id":   scheduledVenueID,
+					"venue_slug": scheduledVenueSlug,
+					"currency":   scheduledVenueCurrency,
+					"items":      basketItems,
+				},
+			}}, nil
+		},
+		addToBasketFn: func(_ context.Context, payload map[string]any, _ woltgateway.AuthContext) (map[string]any, error) {
+			captured = payload
+			basketItems = asSlice(payload["items"])
+			return map[string]any{"id": "basket-1", "venue_id": scheduledVenueID}, nil
+		},
+	}
+	tc := newToolCtx(Deps{
+		Wolt: wolt,
+		Profiles: &stubProfiles{profile: domain.Profile{
+			Name:   "default",
+			WToken: "token",
+		}},
+	})
+
+	if _, _, err := tc.handleCartAdd(context.Background(), nil, CartAddInput{
+		LocationInput: LocationInput{Lat: 10.25, Lon: 20.5},
+		Venue:         scheduledVenueID,
+		ItemID:        itemID,
+		Count:         2,
+	}); err != nil {
+		t.Fatalf("handleCartAdd: %v", err)
+	}
+	line := asMap(asSlice(captured["items"])[0])
+	if asInt(line["count"]) != 2 || asInt(line["price"]) != 700 {
+		t.Fatalf("added line = %#v, want count 2 at line price 700", line)
+	}
+
+	if _, _, err := tc.handleCartRemove(context.Background(), nil, CartRemoveInput{
+		LocationInput: LocationInput{Lat: 10.25, Lon: 20.5},
+		Venue:         scheduledVenueSlug,
+		ItemID:        itemID,
+		Count:         1,
+	}); err != nil {
+		t.Fatalf("handleCartRemove: %v", err)
+	}
+	line = asMap(asSlice(captured["items"])[0])
+	if asInt(line["count"]) != 1 || asInt(line["price"]) != 350 {
+		t.Fatalf("remaining line = %#v, want count 1 at line price 350", line)
+	}
+}

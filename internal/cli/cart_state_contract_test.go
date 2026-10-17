@@ -43,7 +43,7 @@ func TestBuildCartStateNormalizesMissingCountAndHonorsExplicitZeroTotal(t *testi
 					map[string]any{
 						"id":    "item-1",
 						"name":  "Example item",
-						"price": 500,
+						"price": 600,
 						"options": []any{
 							map[string]any{
 								"id": "extra",
@@ -64,7 +64,7 @@ func TestBuildCartStateNormalizesMissingCountAndHonorsExplicitZeroTotal(t *testi
 		t.Fatalf("missing basket count was not normalized: %#v", state)
 	}
 	if got := asInt(asMap(state["subtotal"])["amount"]); got != 600 {
-		t.Fatalf("configured subtotal = %d, want 600", got)
+		t.Fatalf("subtotal = %d, want the line price 600 (paid options included)", got)
 	}
 	total := asMap(state["total"])
 	if asInt(total["amount"]) != 0 || asString(total["formatted_amount"]) != "€0.00" {

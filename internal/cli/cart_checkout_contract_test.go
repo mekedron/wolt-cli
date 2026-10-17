@@ -77,6 +77,8 @@ func syntheticVenuePayload() map[string]any {
 	}
 }
 
+// configuredRegressionLine builds a basket line whose price is the whole-line
+// total, as Wolt stores it.
 func configuredRegressionLine(itemID, name string, count, price int) map[string]any {
 	return map[string]any{
 		"id":    itemID,
@@ -276,18 +278,47 @@ func TestCartAddSendsWeightedBasketPayload(t *testing.T) {
 	}
 }
 
-func TestBasketLineConfiguredTotalUsesWeightedPriceAsLineTotal(t *testing.T) {
-	total, err := basketLineConfiguredTotal(map[string]any{
-		"count": 2,
-		"price": 1600,
-		"weighted_item_info": map[string]any{
-			"count":                     2,
-			"purchased_weight_in_grams": 400,
-			"weighted_item_input_type":  "number_of_items",
+func TestBasketItemsSubtotalSumsWholeLinePrices(t *testing.T) {
+	items := []any{
+		map[string]any{"count": 2, "price": 700},
+		map[string]any{
+			"count": 2,
+			"price": 3080,
+			"options": []any{map[string]any{
+				"id":     "refills",
+				"values": []any{map[string]any{"id": "yogurt", "count": 1, "price": 100}},
+			}},
 		},
+		map[string]any{
+			"count": 2,
+			"price": 1600,
+			"weighted_item_info": map[string]any{
+				"count":                     2,
+				"purchased_weight_in_grams": 400,
+			},
+		},
+	}
+	total, err := basketItemsSubtotal(items)
+	if err != nil || total != 5380 {
+		t.Fatalf("basket subtotal = %d, %v; want 5380", total, err)
+	}
+}
+
+func TestBasketLineUnitPriceSplitsCountBasedLinesOnly(t *testing.T) {
+	unit, err := basketLineUnitPrice(map[string]any{"count": 2, "price": 3080})
+	if err != nil || unit != 1540 {
+		t.Fatalf("count-based unit price = %d, %v; want 1540", unit, err)
+	}
+	unit, err = basketLineUnitPrice(map[string]any{
+		"count":              2,
+		"price":              1601,
+		"weighted_item_info": map[string]any{"count": 2, "purchased_weight_in_grams": 400},
 	})
-	if err != nil || total != 1600 {
-		t.Fatalf("weighted configured total = %d, %v; want 1600", total, err)
+	if err != nil || unit != 1601 {
+		t.Fatalf("weighted unit price = %d, %v; want the line price 1601", unit, err)
+	}
+	if _, err := basketLineUnitPrice(map[string]any{"count": 2, "price": 625}); err == nil {
+		t.Fatal("expected an error for a line price that is not a multiple of its count")
 	}
 }
 
@@ -396,7 +427,7 @@ func TestCartAddKeepsFallbackCountsConfiguredTotalAndNestedPrices(t *testing.T) 
 				"venue_slug": regressionVenueSlug,
 				"currency":   "EUR",
 				"items": []any{
-					configuredRegressionLine(regressionOtherID, "Existing configured item", 2, 300),
+					configuredRegressionLine(regressionOtherID, "Existing configured item", 2, 800),
 				},
 			},
 			unrelatedRegressionBasket("000000000000000000000299"),
@@ -502,8 +533,8 @@ func TestCartAddKeepsFallbackCountsConfiguredTotalAndNestedPrices(t *testing.T) 
 		asInt(added["price"]) != 700 {
 		t.Fatalf("fresh line metadata = %#v", added)
 	}
-	// The saved line price is the base price (500) plus the selected paid option
-	// values (2 x 100), so the cart and checkout preview agree.
+	// The saved line price is the whole-line total: one unit of the base price
+	// (500) plus the selected paid option values (2 x 100).
 	option := asMap(asSlice(added["options"])[0])
 	value := asMap(asSlice(option["values"])[0])
 	if asInt(value["price"]) != 100 || asInt(value["count"]) != 2 {
@@ -517,8 +548,8 @@ func TestCartAddKeepsFallbackCountsConfiguredTotalAndNestedPrices(t *testing.T) 
 	if asInt(data["total_items"]) != 6 {
 		t.Fatalf("fallback total_items = %v, want 6", data["total_items"])
 	}
-	if got := asInt(asMap(data["total"])["amount"]); got != 1700 {
-		t.Fatalf("fallback total = %d, want configured target-basket total 1700 (fresh line 700 incl. options)", got)
+	if got := asInt(asMap(data["total"])["amount"]); got != 1500 {
+		t.Fatalf("fallback total = %d, want target-basket total 1500 (existing line 800 + fresh line 700 incl. options)", got)
 	}
 }
 
@@ -627,10 +658,10 @@ func TestCartRemoveKeepsFallbackCountsAndConfiguredTotalOnEmptyRefresh(t *testin
 						"id":      regressionItemID,
 						"name":    "Removed item",
 						"count":   2,
-						"price":   map[string]any{"amount": 500},
+						"price":   map[string]any{"amount": 1000},
 						"options": []any{},
 					},
-					configuredRegressionLine(regressionOtherID, "Configured remainder", 2, 300),
+					configuredRegressionLine(regressionOtherID, "Configured remainder", 2, 800),
 				},
 			},
 			unrelatedRegressionBasket("000000000000000000000299"),
@@ -682,8 +713,12 @@ func TestCartRemoveKeepsFallbackCountsAndConfiguredTotalOnEmptyRefresh(t *testin
 	if asInt(data["total_items"]) != 6 {
 		t.Fatalf("fallback total_items = %v, want 6", data["total_items"])
 	}
+	remaining := asMap(asSlice(mutation["items"])[0])
+	if asInt(remaining["count"]) != 1 || asInt(remaining["price"]) != 500 {
+		t.Fatalf("partially removed line = %#v, want count 1 at line price 500", remaining)
+	}
 	if got := asInt(asMap(data["total"])["amount"]); got != 1300 {
-		t.Fatalf("fallback total = %d, want 1300", got)
+		t.Fatalf("fallback total = %d, want 1300 (500 + 800)", got)
 	}
 }
 

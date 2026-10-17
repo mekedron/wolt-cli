@@ -372,8 +372,10 @@ the library ID, `venue item` the item-level ID. `--option` accepts either, and
 the basket always stores the item-level ID, the only one the Wolt app shows as
 selected. When a dish uses one library group more than once (pick one, two or
 three toppings), the library ID is ambiguous and the error lists the
-item-level IDs to choose from. The saved line price is the dish price plus the
-selected paid option values, so `wolt cart` and `wolt checkout` agree.
+item-level IDs to choose from. The saved line price is the whole-line total,
+count x (dish price plus the selected paid option values), as the Wolt app
+stores it, so `wolt cart`, `wolt checkout` and the Wolt app show the same
+total.
 
 Wolt's basket responses list selected option values without their prices.
 `cart add`, `cart remove` and `checkout` send every line back, so they take the

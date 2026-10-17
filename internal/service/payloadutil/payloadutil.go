@@ -264,6 +264,11 @@ func BasketItemRowsForMutation(basket map[string]any) ([]map[string]any, error) 
 // BuildBasketUpsertItem converts one basket response line back into the compact
 // item shape accepted by the basket replacement endpoint. It rejects
 // incomplete state instead of silently dropping fields during reconstruction.
+//
+// A basket line's price is the whole-line total (count x unit price, paid
+// option values included); Wolt sums line prices without multiplying by
+// count. A count change therefore rescales the price of a count-based line.
+// Weighted lines are priced by weight by their own builders and keep theirs.
 func BuildBasketUpsertItem(line map[string]any, count int) (map[string]any, error) {
 	if line == nil {
 		return nil, fmt.Errorf("basket item must be an object")
@@ -275,12 +280,24 @@ func BuildBasketUpsertItem(line map[string]any, count int) (map[string]any, erro
 	if count <= 0 {
 		return nil, fmt.Errorf("basket item %q count must be greater than zero", itemID)
 	}
-	if _, err := basketMutationCount(line, "basket item"); err != nil {
+	lineCount, err := basketMutationCount(line, "basket item")
+	if err != nil {
 		return nil, fmt.Errorf("basket item %q: %w", itemID, err)
 	}
 	price, hasPrice := optionPrice(line)
 	if !hasPrice || price <= 0 {
 		return nil, fmt.Errorf("basket item %q has no positive current price", itemID)
+	}
+	if count != lineCount && basketWeightedItemInfo(line) == nil {
+		unitPrice, unitErr := LineUnitPrice(price, lineCount)
+		if unitErr != nil {
+			return nil, fmt.Errorf("basket item %q: %w", itemID, unitErr)
+		}
+		var ok bool
+		price, ok = CheckedMultiplyInt(unitPrice, count)
+		if !ok {
+			return nil, fmt.Errorf("basket item %q total exceeds the supported integer range", itemID)
+		}
 	}
 
 	rawOptions := []any{}
@@ -374,6 +391,24 @@ func BuildBasketUpsertItem(line map[string]any, count int) (map[string]any, erro
 		item["weighted_item_info"] = info
 	}
 	return item, nil
+}
+
+// LineUnitPrice splits a count-based basket line's whole-line price into the
+// price of one unit. A price that does not divide evenly is not a line total
+// this CLI or the Wolt app would have stored, so it is rejected rather than
+// rounded into a different total.
+func LineUnitPrice(linePrice int, count int) (int, error) {
+	if count <= 0 {
+		return 0, fmt.Errorf("count must be greater than zero")
+	}
+	if linePrice%count != 0 {
+		return 0, fmt.Errorf(
+			"line price %d is not a whole multiple of its count %d; remove the item and add it again",
+			linePrice,
+			count,
+		)
+	}
+	return linePrice / count, nil
 }
 
 // basketWeightedItemInfo returns the weighted selection carried by a basket
