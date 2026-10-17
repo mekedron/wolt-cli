@@ -2,9 +2,13 @@ name: Live smoke (daily)
 
 # Daily smoke against real Wolt consumer-api endpoints. Detects
 # upstream contract drift before users do. The read-only surface
-# (status/account/feed/venue/cart-show) always runs; a cart round-trip
-# (add a live orderable item → CLI checkout preview → MCP checkout preview
-# → remove) runs because WOLT_SMOKE_CART=1 is set below. A sell-by-weight leg
+# (status/account/feed/venue/cart-show) always runs; a cart round-trip runs
+# because WOLT_SMOKE_CART=1 is set below. It adds two units of a live
+# orderable item and checks that the line total is count x unit price and
+# that Wolt's own basket total equals the CLI subtotal. It previews checkout
+# through the CLI, where Wolt's item subtotal must match that total, and
+# through MCP. Then it removes one unit, checks the line again and removes
+# the rest. A sell-by-weight leg
 # follows it: weighted items are priced by the selected weight rather than per
 # unit, so it asserts the basket line price, previews checkout, and confirms
 # the line refuses partial removal. An option-groups leg adds a restaurant
@@ -13,8 +17,8 @@ name: Live smoke (daily)
 # checkout, and removes one of two units, which rebuilds the remaining line.
 # The MCP steps spawn wolt-mcp over stdio for read-only venue detail/hours and
 # checkout preview, so the daily run guards the MCP surface as well as the CLI.
-# Checkout is preview-only — no real order is ever placed, and only the unit
-# added by this run is removed. No login or sync.
+# Checkout is preview-only — no real order is ever placed, and only the units
+# added by this run are removed. No login or sync.
 #
 # Required repository secret:
 #   WOLT_SMOKE_CONFIG_JSON  contents of ~/.wolt/.wolt-config.json
