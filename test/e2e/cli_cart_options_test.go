@@ -204,6 +204,59 @@ func TestCartAddWithLibraryOptionsSendsItemLevelGroupAndPricedLines(t *testing.T
 	}
 }
 
+// Covers issue #59: a line added with a count stores the whole-line price
+// (count x (base + paid option values)), as the Wolt app does. Wolt sums line
+// prices without multiplying them by count.
+func TestCartAddWithCountStoresWholeLinePrice(t *testing.T) {
+	seenAddPayload := map[string]any{}
+	deps := optionsCLIDeps(&mockWolt{
+		venuePageStaticFunc: func(context.Context, string) (map[string]any, error) {
+			return map[string]any{"venue": map[string]any{"id": optionsVenueID, "slug": optionsVenueSlug, "currency": "EUR"}}, nil
+		},
+		venueItemPageFunc: func(context.Context, string, string) (map[string]any, error) {
+			return nil, errors.New("item endpoint unavailable")
+		},
+		assortmentItemsFn: func(context.Context, string, []string, woltgateway.AuthContext) (map[string]any, error) {
+			return optionsVenueAssortment(), nil
+		},
+		assortmentBySlugFunc: func(context.Context, string) (map[string]any, error) {
+			return optionsVenueAssortment(), nil
+		},
+		basketsPageFunc: func(context.Context, domain.Location, woltgateway.AuthContext) (map[string]any, error) {
+			return map[string]any{"baskets": []any{}}, nil
+		},
+		addToBasketFunc: func(_ context.Context, payload map[string]any, _ woltgateway.AuthContext) (map[string]any, error) {
+			seenAddPayload = payload
+			return map[string]any{"id": "basket-1", "venue_id": optionsVenueID}, nil
+		},
+		basketCountFunc: func(context.Context, woltgateway.AuthContext) (map[string]any, error) {
+			return map[string]any{"count": 1}, nil
+		},
+	})
+
+	exitCode, out := runCLIWithDeps(t, deps,
+		"cart", "add", optionsVenueSlug, "item-pizza",
+		"--count", "2",
+		"--option", "Extras=Feta",
+		"--wtoken", "token", "--format", "json",
+	)
+	if exitCode != 0 {
+		t.Fatalf("expected exit 0, got %d\noutput:\n%s", exitCode, out)
+	}
+	items := asSlicePayload(t, seenAddPayload["items"])
+	if len(items) != 1 {
+		t.Fatalf("expected one line, got %#v", items)
+	}
+	added := asMapPayload(t, items[0])
+	_, value := selectedOptionValue(t, added)
+	if asIntPayload(added["count"]) != 2 || asIntPayload(added["price"]) != 3780 {
+		t.Fatalf("line = %#v, want count 2 at 2 x (1490 + 400) = 3780", added)
+	}
+	if asIntPayload(value["price"]) != 400 || asIntPayload(value["count"]) != 1 {
+		t.Fatalf("option value must stay priced per unit, got %#v", value)
+	}
+}
+
 // `wolt cart remove` rebuilds every remaining line, so it has to restore the
 // option value prices the basket response leaves out. Prices come from the
 // venue assortment; the item endpoint is asked only for lines the assortment
@@ -239,7 +292,7 @@ func TestCartRemoveRestoresOptionValuePricesFromCatalog(t *testing.T) {
 		},
 		basketsPageFunc: func(context.Context, domain.Location, woltgateway.AuthContext) (map[string]any, error) {
 			return optionsVenueBasketsPage(
-				unpricedOptionLine("item-pizza", "Super Pizza", 2, 1890, "item-grp-extras", "val-feta"),
+				unpricedOptionLine("item-pizza", "Super Pizza", 2, 3780, "item-grp-extras", "val-feta"),
 				unpricedOptionLine("item-kebab", "Kebab", 1, 1470, "item-grp-dip", "val-garlic"),
 			), nil
 		},
@@ -265,8 +318,9 @@ func TestCartRemoveRestoresOptionValuePricesFromCatalog(t *testing.T) {
 	}
 	pizza := asMapPayload(t, items[0])
 	groupID, value := selectedOptionValue(t, pizza)
-	if asIntPayload(pizza["count"]) != 1 || groupID != "item-grp-extras" || asIntPayload(value["price"]) != 400 {
-		t.Fatalf("pizza line must drop to 1 and keep feta at 400, got %#v", pizza)
+	if asIntPayload(pizza["count"]) != 1 || asIntPayload(pizza["price"]) != 1890 ||
+		groupID != "item-grp-extras" || asIntPayload(value["price"]) != 400 {
+		t.Fatalf("pizza line must drop to 1 at line price 1890 and keep feta at 400, got %#v", pizza)
 	}
 	kebab := asMapPayload(t, items[1])
 	groupID, value = selectedOptionValue(t, kebab)
@@ -288,7 +342,7 @@ func TestCartRemoveRefusesOptionValueWithoutAnyPrice(t *testing.T) {
 		},
 		basketsPageFunc: func(context.Context, domain.Location, woltgateway.AuthContext) (map[string]any, error) {
 			return optionsVenueBasketsPage(
-				unpricedOptionLine("item-pizza", "Super Pizza", 2, 1890, "item-grp-extras", "val-feta"),
+				unpricedOptionLine("item-pizza", "Super Pizza", 2, 3780, "item-grp-extras", "val-feta"),
 				unpricedOptionLine("item-kebab", "Kebab", 1, 1350, "item-grp-dip", "val-retired"),
 			), nil
 		},
@@ -317,7 +371,8 @@ func TestCheckoutPreviewPricesBasketOptionValuesFromCatalog(t *testing.T) {
 	deps := optionsCLIDeps(&mockWolt{
 		basketsPageFunc: func(context.Context, domain.Location, woltgateway.AuthContext) (map[string]any, error) {
 			return optionsVenueBasketsPage(
-				unpricedOptionLine("item-pizza", "Super Pizza", 2, 1890, "item-grp-extras", "val-feta"),
+				// Whole-line price: 2 x (1490 base + 400 feta).
+				unpricedOptionLine("item-pizza", "Super Pizza", 2, 3780, "item-grp-extras", "val-feta"),
 			), nil
 		},
 		venueItemPageFunc: func(context.Context, string, string) (map[string]any, error) {
@@ -350,8 +405,9 @@ func TestCheckoutPreviewPricesBasketOptionValuesFromCatalog(t *testing.T) {
 		t.Fatalf("expected one menu item, got %#v", menuItems)
 	}
 	item := asMapPayload(t, menuItems[0])
-	if asIntPayload(item["count"]) != 2 || asIntPayload(item["end_amount"]) != 3780 {
-		t.Fatalf("menu item = %#v, want 2 x 1890 = 3780", item)
+	if asIntPayload(item["count"]) != 2 || asIntPayload(item["end_amount"]) != 3780 ||
+		asIntPayload(item["base_price"]) != 1490 {
+		t.Fatalf("menu item = %#v, want count 2, end_amount 3780 (the line price), base_price 1490", item)
 	}
 	groupID, value := selectedOptionValue(t, item)
 	if groupID != "item-grp-extras" || value["id"] != "val-feta" || asIntPayload(value["price"]) != 400 {

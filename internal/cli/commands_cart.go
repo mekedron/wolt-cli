@@ -563,11 +563,24 @@ func newCartAddCommand(deps Dependencies) *cobra.Command {
 					warnings,
 				)
 			}
-			// Wolt stores the unit price of a basket line including its paid option
-			// values (the app does the same). Weighted lines are priced by weight.
+			// A basket line's price is the whole-line total: count x (unit price
+			// plus paid option values), as the Wolt app stores it. Weighted lines
+			// are priced by weight.
 			linePrice := price
 			if _, weighted := payloadutil.WeightConfigFromItem(itemPayload); !weighted {
-				linePrice += basketOptionsTotal(options)
+				var ok bool
+				linePrice, ok = payloadutil.CheckedMultiplyInt(price+basketOptionsTotal(options), count)
+				if !ok {
+					return emitError(
+						cmd,
+						format,
+						profile,
+						flags.Locale,
+						flags.Output,
+						"WOLT_INVALID_ARGUMENT",
+						"Item total exceeds the supported integer range; the item was not added.",
+					)
+				}
 			}
 			newLineItem := map[string]any{
 				"id":      itemID,
@@ -1417,12 +1430,8 @@ func buildCartState(page map[string]any, venueID string) (map[string]any, []stri
 			continue
 		}
 		count := basketLineCount(item)
-		price := payloadutil.MinorAmount(item["price"])
-		lineAmount, totalErr := basketLineConfiguredTotal(item)
-		if totalErr != nil {
-			totalsValid = false
-			lineAmount = 0
-		} else if nextSubtotal, ok := payloadutil.CheckedAddInt(subtotalAmount, lineAmount); ok {
+		lineAmount := payloadutil.MinorAmount(item["price"])
+		if nextSubtotal, ok := payloadutil.CheckedAddInt(subtotalAmount, lineAmount); ok {
 			subtotalAmount = nextSubtotal
 		} else {
 			totalsValid = false
@@ -1433,6 +1442,13 @@ func buildCartState(page map[string]any, venueID string) (map[string]any, []stri
 		if !totalsValid {
 			lineTotalDisplay = nil
 		}
+		price, unitErr := basketLineUnitPrice(item)
+		priceDisplay := any(formatMinorAmount(price, currency))
+		if unitErr != nil {
+			price = 0
+			priceDisplay = nil
+			warnings = append(warnings, fmt.Sprintf("basket item %q: %v", asString(item["id"]), unitErr))
+		}
 		lines = append(lines, map[string]any{
 			"line_id": asString(item["id"]),
 			"item_id": asString(item["id"]),
@@ -1441,7 +1457,7 @@ func buildCartState(page map[string]any, venueID string) (map[string]any, []stri
 			"options": coalesceAny(item["options"], []any{}),
 			"price": map[string]any{
 				"amount":           price,
-				"formatted_amount": formatMinorAmount(price, currency),
+				"formatted_amount": priceDisplay,
 			},
 			"line_total": map[string]any{
 				"amount":           lineAmount,
@@ -1536,15 +1552,13 @@ func basketLineCount(item map[string]any) int {
 	return count
 }
 
+// basketItemsSubtotal sums the line prices. Each line price is already the
+// whole-line total with paid option values included.
 func basketItemsSubtotal(items []any) (int, error) {
 	total := 0
 	for _, rawItem := range items {
-		lineTotal, err := basketLineConfiguredTotal(asMap(rawItem))
-		if err != nil {
-			return 0, err
-		}
 		var ok bool
-		total, ok = payloadutil.CheckedAddInt(total, lineTotal)
+		total, ok = payloadutil.CheckedAddInt(total, payloadutil.MinorAmount(asMap(rawItem)["price"]))
 		if !ok {
 			return 0, fmt.Errorf("basket subtotal exceeds the supported integer range")
 		}
@@ -1552,38 +1566,15 @@ func basketItemsSubtotal(items []any) (int, error) {
 	return total, nil
 }
 
-func basketLineConfiguredTotal(item map[string]any) (int, error) {
-	count := basketLineCount(item)
+// basketLineUnitPrice is the price of one unit of a count-based line. A
+// weighted line has no per-unit price in the basket, so its line price is
+// returned as is.
+func basketLineUnitPrice(item map[string]any) (int, error) {
+	price := payloadutil.MinorAmount(item["price"])
 	if asMap(item["weighted_item_info"]) != nil {
-		count = 1
+		return price, nil
 	}
-	unitAmount := payloadutil.MinorAmount(item["price"])
-	for _, rawOption := range asSlice(item["options"]) {
-		option := asMap(rawOption)
-		for _, rawValue := range asSlice(option["values"]) {
-			value := asMap(rawValue)
-			valueCount := asInt(value["count"])
-			if valueCount <= 0 {
-				valueCount = 1
-			}
-			optionAmount, ok := payloadutil.CheckedMultiplyInt(
-				payloadutil.MinorAmount(value["price"]),
-				valueCount,
-			)
-			if !ok {
-				return 0, fmt.Errorf("basket option total exceeds the supported integer range")
-			}
-			unitAmount, ok = payloadutil.CheckedAddInt(unitAmount, optionAmount)
-			if !ok {
-				return 0, fmt.Errorf("basket item unit total exceeds the supported integer range")
-			}
-		}
-	}
-	lineTotal, ok := payloadutil.CheckedMultiplyInt(unitAmount, count)
-	if !ok {
-		return 0, fmt.Errorf("basket item total exceeds the supported integer range")
-	}
-	return lineTotal, nil
+	return payloadutil.LineUnitPrice(price, basketLineCount(item))
 }
 
 func buildCartTable(data map[string]any, includeDetails bool) string {

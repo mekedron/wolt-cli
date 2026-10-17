@@ -2,6 +2,7 @@ package payloadutil
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -243,7 +244,7 @@ func TestBasketReplacementHelpersPreserveUnrelatedLines(t *testing.T) {
 	option := Map(Slice(Map(merged[0])["options"])[0])
 	value := Map(Slice(option["values"])[0])
 	if String(Map(merged[0])["name"]) != "A refreshed" ||
-		Int(Map(merged[0])["price"]) != 550 ||
+		Int(Map(merged[0])["price"]) != 3*550 ||
 		String(value["id"]) != "large" ||
 		Int(value["price"]) != 125 ||
 		!Bool(Map(Map(merged[0])["substitution_settings"])["is_allowed"]) {
@@ -255,6 +256,7 @@ func TestBasketReplacementHelpersPreserveUnrelatedLines(t *testing.T) {
 		t.Fatalf("RemoveBasketItems(partial) error = %v", err)
 	}
 	if removed != 1 || len(remaining) != 2 || Int(Map(remaining[0])["count"]) != 1 ||
+		Int(Map(remaining[0])["price"]) != 250 ||
 		String(Map(remaining[1])["id"]) != "item-b" {
 		t.Fatalf("RemoveBasketItems(partial) = (%#v, %d)", remaining, removed)
 	}
@@ -624,4 +626,61 @@ func keys(m map[string]OptionGroupSpec) []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+func TestBuildBasketUpsertItemRescalesWholeLinePriceOnCountChange(t *testing.T) {
+	line := map[string]any{
+		"id":    "item-a",
+		"count": 2,
+		"price": 3080,
+		"options": []any{map[string]any{
+			"id":     "refills",
+			"values": []any{map[string]any{"id": "yogurt", "count": 1, "price": 100}},
+		}},
+	}
+	for _, tc := range []struct {
+		count int
+		want  int
+	}{
+		{count: 2, want: 3080},
+		{count: 3, want: 4620},
+		{count: 1, want: 1540},
+	} {
+		item, err := BuildBasketUpsertItem(line, tc.count)
+		if err != nil {
+			t.Fatalf("BuildBasketUpsertItem(count %d) error = %v", tc.count, err)
+		}
+		if Int(item["count"]) != tc.count || Int(item["price"]) != tc.want {
+			t.Fatalf("BuildBasketUpsertItem(count %d) = %#v, want price %d", tc.count, item, tc.want)
+		}
+		value := Map(Slice(Map(Slice(item["options"])[0])["values"])[0])
+		if Int(value["price"]) != 100 || Int(value["count"]) != 1 {
+			t.Fatalf("option value is per unit and must not scale: %#v", value)
+		}
+	}
+}
+
+func TestBuildBasketUpsertItemRejectsPriceNotDivisibleByCount(t *testing.T) {
+	_, err := BuildBasketUpsertItem(map[string]any{"id": "item-a", "count": 2, "price": 625}, 3)
+	if err == nil || !strings.Contains(err.Error(), "not a whole multiple") {
+		t.Fatalf("BuildBasketUpsertItem() error = %v, want a not-a-multiple error", err)
+	}
+}
+
+func TestBuildBasketUpsertItemKeepsWeightedLinePrice(t *testing.T) {
+	item, err := BuildBasketUpsertItem(map[string]any{
+		"id":    "potatoes",
+		"count": 3,
+		"price": 1161,
+		"weighted_item_info": map[string]any{
+			"count":                     3,
+			"purchased_weight_in_grams": 900,
+		},
+	}, 1)
+	if err != nil {
+		t.Fatalf("BuildBasketUpsertItem() error = %v", err)
+	}
+	if Int(item["price"]) != 1161 {
+		t.Fatalf("weighted line price = %v, want 1161 unchanged", item["price"])
+	}
 }

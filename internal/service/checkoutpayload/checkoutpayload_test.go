@@ -123,9 +123,10 @@ func mapKeys(m map[string]any) []string {
 // rejects with `('body', 'purchase_plan'): Field required`.
 func TestBuildProducesPurchasePlanShape(t *testing.T) {
 	basket := basketWithItem("€12.50", map[string]any{
-		"id":          "627cb2c7e2a6f0a1b2c3d4e5",
-		"count":       2,
-		"price":       map[string]any{"amount": 625},
+		"id":    "627cb2c7e2a6f0a1b2c3d4e5",
+		"count": 2,
+		// Whole-line total: 2 x (625 base + 2 x 75 paid option values).
+		"price":       map[string]any{"amount": 1550},
 		"category_id": "cat-burgers",
 		"options": []any{
 			map[string]any{
@@ -180,7 +181,9 @@ func TestBuildProducesPurchasePlanShape(t *testing.T) {
 		t.Errorf("is_priority_delivery = %v, want false", plan["is_priority_delivery"])
 	}
 
-	// menu_items mapping: count, base_price, derived end_amount, category_id.
+	// menu_items mapping, as the Wolt app sends it: base_price is one unit
+	// without options, end_amount is the whole-line total Wolt does not
+	// multiply by count again.
 	item := firstMenuItem(t, plan)
 	if item["base_price"] != 625 {
 		t.Errorf("base_price = %v, want 625", item["base_price"])
@@ -188,8 +191,8 @@ func TestBuildProducesPurchasePlanShape(t *testing.T) {
 	if item["count"] != 2 {
 		t.Errorf("count = %v, want 2", item["count"])
 	}
-	if item["end_amount"] != 1250 {
-		t.Errorf("end_amount = %v, want 1250 (count*price)", item["end_amount"])
+	if item["end_amount"] != 1550 {
+		t.Errorf("end_amount = %v, want 1550 (the basket line price)", item["end_amount"])
 	}
 	if item["category_id"] != "cat-burgers" {
 		t.Errorf("category_id = %v, want cat-burgers", item["category_id"])

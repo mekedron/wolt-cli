@@ -35,12 +35,11 @@ func TestCheckoutCategoryIndexUsesOnlyDeterministicCategoryContainers(t *testing
 	}
 }
 
-func TestBuildRejectsLineTotalOverflow(t *testing.T) {
-	maxInt := int(^uint(0) >> 1)
-	basket := basketWithItem("EUR 1", map[string]any{
+func TestBuildRejectsLinePriceNotDivisibleByCount(t *testing.T) {
+	basket := basketWithItem("EUR 6.25", map[string]any{
 		"id":          "000000000000000000000503",
 		"count":       2,
-		"price":       maxInt,
+		"price":       625,
 		"category_id": "category-a",
 	})
 	_, _, err := Build(
@@ -53,8 +52,8 @@ func TestBuildRejectsLineTotalOverflow(t *testing.T) {
 		0,
 		"",
 	)
-	if err == nil || !strings.Contains(err.Error(), "integer range") {
-		t.Fatalf("overflow error = %v", err)
+	if err == nil || !strings.Contains(err.Error(), "not a whole multiple") {
+		t.Fatalf("indivisible line price error = %v", err)
 	}
 }
 

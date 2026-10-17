@@ -280,11 +280,17 @@ func (tc *ToolCtx) handleCartAdd(ctx context.Context, _ *mcp.CallToolRequest, in
 	}
 	orderAvailability, availabilityWarnings := tc.cartVenueAvailability(ctx, ref, loc)
 
+	// A basket line's price is the whole-line total, as the Wolt app stores
+	// it. Weighted lines are repriced by weight when they are built.
+	linePrice, ok := payloadutil.CheckedMultiplyInt(price, count)
+	if !ok {
+		return nil, CartAddOutput{}, toolErrf("item was NOT added because its total exceeds the supported integer range")
+	}
 	newLine := map[string]any{
 		"id":      in.ItemID,
 		"count":   count,
 		"name":    name,
-		"price":   price,
+		"price":   linePrice,
 		"options": []any{},
 		"substitution_settings": map[string]any{
 			"is_allowed": in.AllowSubstitutions,

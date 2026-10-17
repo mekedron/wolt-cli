@@ -295,11 +295,11 @@ func Build(
 		categoryIDs := resolveCheckoutCategoryIDs(item, categoryID)
 		valuePrices := payloadutil.OptionValuePriceIndex(detail)
 		options := buildCheckoutOptions(replacement["options"], valuePrices)
-		endAmount, ok := payloadutil.CheckedMultiplyInt(count, price)
-		if !ok {
-			return nil, warnings, fmt.Errorf("basket item %q total exceeds the supported integer range", itemID)
-		}
-		basePrice := price
+		// The basket line price is already the whole-line total, and Wolt reads
+		// end_amount as that total without multiplying it by count. base_price
+		// is one unit without its paid option values, as the Wolt app sends it.
+		endAmount := price
+		basePrice := 0
 		isWeighted := false
 		findCatalogItem := func() map[string]any {
 			for _, payload := range catalogPayloads() {
@@ -315,9 +315,10 @@ func Build(
 			weightConfig, weighted = payloadutil.WeightConfigFromItem(findCatalogItem())
 		}
 		if !weighted && isWeightedInBasket {
-			// end_amount would silently become count * whole-line price here,
-			// overcharging by the unit count. Refuse instead of previewing a
-			// total the user would not be billed.
+			// Without the catalog config the line would be split into count
+			// equal units, and its base_price would be a fraction of a weighed
+			// price rather than the price per kilogram. Refuse instead of
+			// previewing a total the user would not be billed.
 			return nil, warnings, fmt.Errorf(
 				"basket item %q is sold by weight but its catalog pricing is unavailable; cannot build an accurate checkout preview",
 				itemID,
@@ -332,6 +333,18 @@ func Build(
 			basePrice = weightConfig.PricePerKilogram
 			endAmount = values.Price
 			isWeighted = true
+		} else {
+			unitPrice, unitErr := payloadutil.LineUnitPrice(price, count)
+			if unitErr != nil {
+				return nil, warnings, fmt.Errorf("basket item %q: %w", itemID, unitErr)
+			}
+			basePrice = unitPrice - checkoutOptionsUnitTotal(options)
+			if basePrice < 0 {
+				return nil, warnings, fmt.Errorf(
+					"basket item %q costs less than its selected options; cannot build an accurate checkout preview",
+					itemID,
+				)
+			}
 		}
 
 		menuItems = append(menuItems, map[string]any{
@@ -630,6 +643,19 @@ func resolveCheckoutCategoryIDs(item map[string]any, categoryID string) []any {
 		}
 	}
 	return categoryIDs
+}
+
+// checkoutOptionsUnitTotal is the price the selected option values add to one
+// unit of a line.
+func checkoutOptionsUnitTotal(options []any) int {
+	total := 0
+	for _, option := range options {
+		for _, rawValue := range payloadutil.Slice(payloadutil.Map(option)["values"]) {
+			value := payloadutil.Map(rawValue)
+			total += payloadutil.Int(value["price"]) * payloadutil.Int(value["count"])
+		}
+	}
+	return total
 }
 
 func buildCheckoutOptions(raw any, valuePrices map[string]int) []any {

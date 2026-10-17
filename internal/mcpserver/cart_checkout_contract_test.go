@@ -602,8 +602,10 @@ func TestCheckoutPayloadPreservesNestedBasketPricesThroughHandler(t *testing.T) 
 	}
 	plan := asMap(captured["purchase_plan"])
 	item := asMap(asSlice(plan["menu_items"])[0])
-	if asInt(item["base_price"]) != 650 {
-		t.Fatalf("base_price = %v, want 650", item["base_price"])
+	// base_price is one unit without the paid option value; end_amount is the
+	// whole-line price with it.
+	if asInt(item["base_price"]) != 550 || asInt(item["end_amount"]) != 650 {
+		t.Fatalf("base_price, end_amount = %v, %v; want 550, 650", item["base_price"], item["end_amount"])
 	}
 	option := asMap(asSlice(item["options"])[0])
 	value := asMap(asSlice(option["values"])[0])
