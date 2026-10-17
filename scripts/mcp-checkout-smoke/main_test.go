@@ -7,40 +7,38 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-func TestValidateCheckoutResultAcceptsSummaryOnlyContent(t *testing.T) {
+func TestValidateCheckoutResultAcceptsSerializedContent(t *testing.T) {
 	result := &mcp.CallToolResult{
-		Content: []mcp.Content{&mcp.TextContent{Text: "checkout ready"}},
-		StructuredContent: map[string]any{
-			"summary":                  "checkout ready",
-			"status":                   "ready",
-			"requested_delivery_mode":  "standard",
-			"applied_delivery_mode":    "standard",
-			"available_delivery_modes": []any{"standard", "priority"},
-			"data":                     map[string]any{"payable_amount": 500},
-		},
+		Content: []mcp.Content{&mcp.TextContent{
+			Text: `{"applied_delivery_mode":"standard","available_delivery_modes":["standard","priority"],"data":{"payable_amount":500},"requested_delivery_mode":"standard","status":"ready","summary":"checkout ready"}`,
+		}},
+		StructuredContent: readyCheckoutData(),
 	}
 	if err := validateCheckoutResult(result, "standard"); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func TestValidateCheckoutResultRejectsDuplicatedContent(t *testing.T) {
-	structured := map[string]any{
-		"summary":                  "checkout ready",
-		"status":                   "ready",
-		"requested_delivery_mode":  "standard",
-		"applied_delivery_mode":    "standard",
-		"available_delivery_modes": []any{"standard"},
-		"data":                     map[string]any{"payable_amount": 500},
-	}
+func TestValidateCheckoutResultRejectsSummaryOnlyContent(t *testing.T) {
 	result := &mcp.CallToolResult{
-		Content: []mcp.Content{&mcp.TextContent{
-			Text: `{"applied_delivery_mode":"standard","available_delivery_modes":["standard"],"data":{"payable_amount":500},"requested_delivery_mode":"standard","status":"ready","summary":"checkout ready"}`,
-		}},
-		StructuredContent: structured,
+		Content:           []mcp.Content{&mcp.TextContent{Text: "checkout ready"}},
+		StructuredContent: readyCheckoutData(),
 	}
 	err := validateCheckoutResult(result, "standard")
-	if err == nil || !strings.Contains(err.Error(), "content is not the structured summary") {
+	if err == nil || !strings.Contains(err.Error(), "content is not the serialized structured result") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestValidateCheckoutResultRejectsContentThatDiffersFromStructured(t *testing.T) {
+	result := &mcp.CallToolResult{
+		Content: []mcp.Content{&mcp.TextContent{
+			Text: `{"applied_delivery_mode":"standard","available_delivery_modes":["standard","priority"],"data":{"payable_amount":999},"requested_delivery_mode":"standard","status":"ready","summary":"checkout ready"}`,
+		}},
+		StructuredContent: readyCheckoutData(),
+	}
+	err := validateCheckoutResult(result, "standard")
+	if err == nil || !strings.Contains(err.Error(), "content JSON differs from the structured result") {
 		t.Fatalf("error = %v", err)
 	}
 }
@@ -159,6 +157,17 @@ func typedCheckoutResult(data map[string]any) *mcp.CallToolResult {
 		Content:           []mcp.Content{&mcp.TextContent{Text: data["summary"].(string)}},
 		StructuredContent: data,
 		IsError:           true,
+	}
+}
+
+func readyCheckoutData() map[string]any {
+	return map[string]any{
+		"summary":                  "checkout ready",
+		"status":                   "ready",
+		"requested_delivery_mode":  "standard",
+		"applied_delivery_mode":    "standard",
+		"available_delivery_modes": []any{"standard", "priority"},
+		"data":                     map[string]any{"payable_amount": float64(500)},
 	}
 }
 
