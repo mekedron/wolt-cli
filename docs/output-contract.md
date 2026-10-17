@@ -475,6 +475,13 @@ lines[]: {
 subtotal, fees, total
 ```
 
+`line_total` is the price Wolt stores for the whole line: count x (unit price
+plus paid option values). `price` is one unit of it. For a weighted line both
+are the price of the weighed amount. `subtotal` is the sum of the line totals,
+the same item total the Wolt app shows. A line whose stored price does not
+divide evenly by its count gets a `null` unit price and a warning; remove the
+item and add it again.
+
 ### `wolt cart add|remove|clear` — CartMutationResult
 
 ```
