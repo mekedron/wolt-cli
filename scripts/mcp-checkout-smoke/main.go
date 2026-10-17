@@ -29,6 +29,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -116,15 +117,8 @@ func validateCheckoutResult(result *mcp.CallToolResult, requestedMode string) er
 	if summary == "" {
 		return fmt.Errorf("structured result has no summary")
 	}
-	if text := firstText(result); text != summary {
-		return fmt.Errorf("content is not the structured summary: content=%q summary=%q", text, summary)
-	}
-	compact, err := json.Marshal(data)
-	if err != nil {
-		return fmt.Errorf("encode structured result: %w", err)
-	}
-	if strings.TrimSpace(firstText(result)) == strings.TrimSpace(string(compact)) {
-		return fmt.Errorf("content duplicates the full structured result")
+	if err := validateContent(result, data, summary); err != nil {
+		return err
 	}
 
 	requestedMode = strings.ToLower(strings.TrimSpace(requestedMode))
@@ -151,6 +145,29 @@ func validateCheckoutResult(result *mcp.CallToolResult, requestedMode string) er
 	}
 	if preview, ok := data["data"].(map[string]any); !ok || len(preview) == 0 {
 		return fmt.Errorf("structured result has no checkout preview data")
+	}
+	return nil
+}
+
+// validateContent checks the Content block against the server's default
+// result contract: a successful call serializes the full structured result
+// into Content, as the MCP spec asks, so clients that read only Content still
+// get the data. A typed checkout outcome (IsError with structured data) keeps
+// the handler's short summary in Content instead.
+func validateContent(result *mcp.CallToolResult, data map[string]any, summary string) error {
+	text := firstText(result)
+	if result.IsError {
+		if text != summary {
+			return fmt.Errorf("typed checkout error content is not the summary: content=%q summary=%q", text, summary)
+		}
+		return nil
+	}
+	var content map[string]any
+	if err := json.Unmarshal([]byte(text), &content); err != nil {
+		return fmt.Errorf("content is not the serialized structured result: %q", text)
+	}
+	if !reflect.DeepEqual(content, data) {
+		return fmt.Errorf("content JSON differs from the structured result: content=%q", text)
 	}
 	return nil
 }
