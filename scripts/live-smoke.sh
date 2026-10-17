@@ -927,6 +927,76 @@ assert_options_line() {
   return 1
 }
 
+# assert_line_pricing "<venue-id>" "<item-id>" "<expected-count>" "<label>" —
+# a basket line's price is its whole-line total, as the Wolt app stores it
+# (issue #59). The line total must be count x the unit price, and the basket
+# total Wolt itself reports must equal the CLI subtotal. The cart output is
+# kept at ${SMOKE_DIR}/<label>.json for assert_checkout_item_subtotal.
+assert_line_pricing() {
+  local venue_id="$1" item_id="$2" expected_count="$3" label="$4"
+  local out="${SMOKE_DIR}/${label// /_}.json"
+  local verdict
+  printf "[%s] %-22s ... " "$(date -u +%H:%M:%S)" "${label}"
+  if ! "${WOLT_BIN}" cart --venue-id "${venue_id}" --format json \
+    >"${out}" 2>"${SMOKE_DIR}/${label// /_}.err"; then
+    printf "FAIL (cart read failed)\n"
+    fail=$((fail + 1))
+    failures+=("${label}")
+    return 1
+  fi
+  verdict="$(
+    jq -r --arg id "${item_id}" --argjson count "${expected_count}" '
+      . as $root
+      | [ .data.lines[]? | select((.item_id | ascii_downcase) == ($id | ascii_downcase)) ][0]
+      | if . == null then "line missing"
+        elif .count != $count then "count \(.count), want \($count)"
+        elif .line_total.amount != (.price.amount * $count) then
+          "line total \(.line_total.amount), want \($count) x \(.price.amount)"
+        elif $root.data.total.amount != $root.data.subtotal.amount then
+          "Wolt basket total \($root.data.total.amount) != CLI subtotal \($root.data.subtotal.amount)"
+        else "ok"
+        end
+    ' "${out}" 2>/dev/null || echo "cart could not be parsed"
+  )"
+  if [ "${verdict}" = "ok" ]; then
+    printf "ok (%s units, Wolt total matches)\n" "${expected_count}"
+    pass=$((pass + 1))
+    return 0
+  fi
+  printf "FAIL (%s)\n" "$(printf '%s' "${verdict}" | redact)"
+  fail=$((fail + 1))
+  failures+=("${label}")
+  return 1
+}
+
+# assert_checkout_item_subtotal "<checkout-json>" "<cart-json>" "<label>" —
+# the "Item subtotal" Wolt computes from the purchase plan must equal the
+# basket subtotal. A count-based line counted twice (issue #59) breaks it.
+# Skipped when the preview itself returned an accepted typed error.
+assert_checkout_item_subtotal() {
+  local checkout="$1" cart="$2" label="$3"
+  local subtotal expected
+  if ! jq -e '(.error // null) == null' "${checkout}" >/dev/null 2>&1; then
+    skip_step "${label}" "checkout preview returned no rows"
+    return 0
+  fi
+  printf "[%s] %-22s ... " "$(date -u +%H:%M:%S)" "${label}"
+  subtotal="$(jq -r '
+    [ .data.checkout_rows[]? | select(.label == "Item subtotal")
+      | (.original_amount.amount // .amount.amount) ][0] // empty
+  ' "${checkout}" 2>/dev/null || true)"
+  expected="$(jq -r '.data.subtotal.amount // empty' "${cart}" 2>/dev/null || true)"
+  if [ -n "${subtotal}" ] && [ "${subtotal}" = "${expected}" ]; then
+    printf "ok (%s c)\n" "${subtotal}"
+    pass=$((pass + 1))
+    return 0
+  fi
+  printf "FAIL (item subtotal %s, want basket subtotal %s)\n" "${subtotal:-missing}" "${expected:-missing}"
+  fail=$((fail + 1))
+  failures+=("${label}")
+  return 1
+}
+
 # seed_config_from_env — when CI hands us the full config blob, write
 # it to ~/.wolt/.wolt-config.json with owner-only perms. Roundtrip
 # through jq so we (a) validate it's well-formed JSON before disk
@@ -1007,8 +1077,10 @@ run "cart"          "${WOLT_BIN}" cart
 run "cart count"    "${WOLT_BIN}" cart count
 
 # ---- cart round-trip (opt-in; mutating) ---------------------------
-# Add one currently orderable item, preview checkout, then remove exactly one
-# unit of the same line. The cleanup trap never clears a pre-existing basket.
+# Add two units of one currently orderable item, check the whole-line price
+# against Wolt's own basket total and the checkout preview, then remove one
+# unit and finally the rest. The fixture item was absent before the add, so
+# the cleanup removes every unit of it and never touches other lines.
 # Checkout is preview-only; no order is ever placed.
 if [ "${RUN_CART_SMOKE}" = "1" ]; then
   echo ""
@@ -1019,7 +1091,7 @@ if [ "${RUN_CART_SMOKE}" = "1" ]; then
   cleanup_added_item() {
     if [ -n "${added_item_id}" ] && [ -n "${added_venue_id}" ]; then
       "${WOLT_BIN}" cart remove "${added_item_id}" \
-        --count 1 \
+        --all \
         --venue-id "${added_venue_id}" \
         --format json >/dev/null 2>&1 || true
     fi
@@ -1033,17 +1105,24 @@ if [ "${RUN_CART_SMOKE}" = "1" ]; then
     # even when the add mutates upstream and then exits or renders incorrectly.
     added_item_id="${fixture_item_id}"
     added_venue_id="${fixture_venue_id}"
-    if cart_add_discovered "${fixture_venue_id}" "${fixture_item_id}"; then
+    if cart_add_discovered "${fixture_venue_id}" "${fixture_item_id}" 2 "cart add x2"; then
+      assert_line_pricing "${added_venue_id}" "${added_item_id}" 2 "cart line x2" || true
       run_validated \
         "checkout preview" \
         is_checkout_preview_result \
         "${WOLT_BIN}" checkout --venue-id "${added_venue_id}"
+      assert_checkout_item_subtotal \
+        "${SMOKE_DIR}/checkout_preview.json" \
+        "${SMOKE_DIR}/cart_line_x2.json" \
+        "checkout subtotal x2" || true
       # Same basket, via the MCP tool — covers the handler the CLI path doesn't.
       run_mcp_checkout_preview "${added_venue_id}"
       if cart_remove_added "${added_venue_id}" "${added_item_id}"; then
-        added_item_id=""
-        added_venue_id=""
+        assert_line_pricing "${added_venue_id}" "${added_item_id}" 1 "cart line x1" || true
       fi
+      cleanup_added_item
+      added_item_id=""
+      added_venue_id=""
     fi
     # ---- sell-by-weight leg ----------------------------------------
     # Weighted items are priced by the selected weight, not per unit. This
