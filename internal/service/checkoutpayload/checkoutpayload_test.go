@@ -861,6 +861,54 @@ func TestBuildFetchesCatalogItemsMissingFromSuppliedCurrentCatalog(t *testing.T)
 	}
 }
 
+// The items lookup reports each item's category only through
+// categories[].item_ids; the item records carry no category field. When the
+// item page is empty and a search by the basket's (often translated) line name
+// finds nothing, that mapping is the only source of the category.
+func TestBuildResolvesCategoryFromCatalogItemsCategoryList(t *testing.T) {
+	const itemID = "000000000000000000000419"
+	basket := basketWithItem("CZK 125.80", map[string]any{
+		"id":    itemID,
+		"name":  "Green Olives Stuffed with Blue Cheese Paste 300g",
+		"count": 2,
+		"price": 6290,
+	})
+	basket["venue"].(map[string]any)["slug"] = "synthetic-hypermarket"
+	basket["venue"].(map[string]any)["currency"] = "CZK"
+
+	searched := 0
+	api := &fakeAPI{
+		venueItemPageFn: func(_ context.Context, _, id string) (map[string]any, error) {
+			return map[string]any{"id": id, "sections": []any{}}, nil
+		},
+		assortmentItemsFn: func(_ context.Context, _ string, itemIDs []string) (map[string]any, error) {
+			return map[string]any{
+				"categories": []any{
+					map[string]any{"id": "olives-category", "item_ids": []any{itemID}},
+				},
+				"items": []any{
+					map[string]any{"id": itemID, "name": "Zelené olivy plněné pastou z modrého sýra 300g"},
+				},
+			}, nil
+		},
+		searchFn: func(_ context.Context, _ string, _ string) (map[string]any, error) {
+			searched++
+			return map[string]any{}, nil
+		},
+	}
+
+	payload, warnings, err := Build(context.Background(), api, nil, basket, domain.Location{}, "standard", 0, "")
+	if err != nil {
+		t.Fatalf("Build() error = %v (warnings: %v)", err, warnings)
+	}
+	if got := firstMenuItem(t, purchasePlan(t, payload))["category_id"]; got != "olives-category" {
+		t.Fatalf("category_id = %v, want olives-category", got)
+	}
+	if searched != 0 {
+		t.Fatalf("item search ran %d times, want 0: the items lookup already maps the category", searched)
+	}
+}
+
 // Grocery venues load categories lazily: the assortment lists categories with
 // empty item_ids, so the item-to-category mapping only exists in venue content.
 func TestBuildResolvesCategoryFromPagedVenueContent(t *testing.T) {

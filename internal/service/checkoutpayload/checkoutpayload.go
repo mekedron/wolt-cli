@@ -180,6 +180,13 @@ func Build(
 			warnings = append(warnings, fmt.Sprintf("unable to load catalog items for weighted pricing (slug=%s)", venueSlug))
 		}
 	}
+	// The items lookup maps each item to its category through
+	// categories[].item_ids rather than a field on the item itself, so index it
+	// like the other category-bearing payloads.
+	mergeCheckoutCategoryIndexes(categoryIDsByItemID, buildCheckoutCategoryIDIndex(catalogItemsPayload))
+	for _, payload := range fetchedCatalogPayloads {
+		mergeCheckoutCategoryIndexes(categoryIDsByItemID, buildCheckoutCategoryIDIndex(payload))
+	}
 
 	// Item search answers both open questions in one targeted request: the
 	// response maps the item to its categories and carries the full catalog
