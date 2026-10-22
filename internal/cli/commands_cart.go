@@ -1449,7 +1449,7 @@ func buildCartState(page map[string]any, venueID string) (map[string]any, []stri
 			priceDisplay = nil
 			warnings = append(warnings, fmt.Sprintf("basket item %q: %v", asString(item["id"]), unitErr))
 		}
-		lines = append(lines, map[string]any{
+		line := map[string]any{
 			"line_id": asString(item["id"]),
 			"item_id": asString(item["id"]),
 			"name":    asString(item["name"]),
@@ -1463,7 +1463,20 @@ func buildCartState(page map[string]any, venueID string) (map[string]any, []stri
 				"amount":           lineAmount,
 				"formatted_amount": lineTotalDisplay,
 			},
-		})
+		}
+		// Wolt leaves an unavailable line (sold out, or outside the item's
+		// sale hours) out of the basket total, so the total can be below the
+		// subtotal of the listed lines.
+		if available, ok := item["is_available"].(bool); ok {
+			line["is_available"] = available
+			if !available {
+				warnings = append(warnings, fmt.Sprintf(
+					"basket item %q is unavailable now; Wolt leaves it out of the basket total",
+					fallbackString(asString(item["name"]), asString(item["id"])),
+				))
+			}
+		}
+		lines = append(lines, line)
 	}
 	if !totalsValid {
 		subtotalAmount = 0

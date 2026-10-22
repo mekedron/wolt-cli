@@ -123,6 +123,8 @@ type Client struct {
 	nextRequestAt  time.Time
 	verboseOutput  io.Writer
 	verboseOutputM sync.RWMutex
+	now            func() time.Time
+	venueLocations sync.Map
 }
 
 // Option applies Client options.
@@ -156,6 +158,13 @@ func WithRequestMinInterval(interval time.Duration) Option {
 			interval = 0
 		}
 		c.minRequestGap = interval
+	}
+}
+
+// WithClock replaces the clock used to evaluate item sale windows.
+func WithClock(now func() time.Time) Option {
+	return func(c *Client) {
+		c.now = now
 	}
 }
 
@@ -196,6 +205,7 @@ func NewClient(opts ...Option) *Client {
 		},
 		locale:      "en",
 		webClientID: generateWebClientID(),
+		now:         time.Now,
 	}
 	for _, opt := range opts {
 		opt(c)
@@ -649,7 +659,8 @@ func (c *Client) VenuePageDynamic(ctx context.Context, slug string, options Venu
 
 // AssortmentByVenueSlug returns full assortment payload for one venue slug.
 func (c *Client) AssortmentByVenueSlug(ctx context.Context, slug string) (map[string]any, error) {
-	return c.doJSONRequest(ctx, http.MethodGet, c.endpoints.Assortment+slug+"/assortment", nil, nil, c.headers(nil, nil))
+	payload, err := c.doJSONRequest(ctx, http.MethodGet, c.endpoints.Assortment+slug+"/assortment", nil, nil, c.headers(nil, nil))
+	return c.withItemSchedules(ctx, slug, payload, err)
 }
 
 // AssortmentCategoryByVenueSlug returns one category assortment payload by category slug.
@@ -667,7 +678,8 @@ func (c *Client) AssortmentCategoryByVenueSlug(
 		params.Set("language", lang)
 	}
 	endpoint := c.endpoints.Assortment + slug + "/assortment/categories/slug/" + url.PathEscape(strings.TrimSpace(categorySlug))
-	return c.doJSONRequest(ctx, http.MethodGet, endpoint, params, nil, c.headers(nil, &auth))
+	payload, err := c.doJSONRequest(ctx, http.MethodGet, endpoint, params, nil, c.headers(nil, &auth))
+	return c.withItemSchedules(ctx, slug, payload, err)
 }
 
 // AssortmentItemsByVenueSlug returns detailed item payload for selected assortment item ids.
@@ -689,7 +701,7 @@ func (c *Client) AssortmentItemsByVenueSlug(
 		"item_ids": ids,
 	}
 	endpoint := c.endpoints.Assortment + slug + "/assortment/items"
-	return c.doJSONRequest(
+	payload, err := c.doJSONRequest(
 		ctx,
 		http.MethodPost,
 		endpoint,
@@ -697,6 +709,7 @@ func (c *Client) AssortmentItemsByVenueSlug(
 		body,
 		c.headers(map[string]string{"Content-Type": "application/json"}, &auth),
 	)
+	return c.withItemSchedules(ctx, slug, payload, err)
 }
 
 // AssortmentItemsSearchByVenueSlug searches items inside one venue assortment.
@@ -717,7 +730,7 @@ func (c *Client) AssortmentItemsSearchByVenueSlug(
 		"q": strings.TrimSpace(query),
 	}
 	endpoint := c.endpoints.Assortment + slug + "/assortment/items/search"
-	return c.doJSONRequest(
+	payload, err := c.doJSONRequest(
 		ctx,
 		http.MethodPost,
 		endpoint,
@@ -725,6 +738,7 @@ func (c *Client) AssortmentItemsSearchByVenueSlug(
 		body,
 		c.headers(map[string]string{"Content-Type": "application/json"}, &auth),
 	)
+	return c.withItemSchedules(ctx, slug, payload, err)
 }
 
 // VenueContentByVenueSlug returns venue-content payload by venue slug.

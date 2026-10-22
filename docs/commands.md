@@ -345,8 +345,9 @@ fails with `WOLT_VENUE_UNRESOLVED` instead of reporting a success that
 never reaches your cart.
 
 It then refreshes the exact current item. A non-null `disabled_info`,
-non-positive numeric `purchasable_balance`, or a missing current item blocks
-the mutation even when `--price`, `--currency`, and `--name` are supplied.
+non-positive numeric `purchasable_balance`, an item outside its weekly sale
+hours (`available_times`), or a missing current item blocks the mutation even
+when `--price`, `--currency`, and `--name` are supplied.
 A null balance means Wolt supplied no numeric balance constraint, not unlimited
 stock. Currency is resolved from current item, basket, or venue metadata; the
 command fails instead of silently defaulting to EUR. See

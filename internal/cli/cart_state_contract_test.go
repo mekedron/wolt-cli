@@ -72,6 +72,45 @@ func TestBuildCartStateNormalizesMissingCountAndHonorsExplicitZeroTotal(t *testi
 	}
 }
 
+func TestBuildCartStateFlagsLinesWoltMarksUnavailable(t *testing.T) {
+	page := map[string]any{
+		"baskets": []any{
+			map[string]any{
+				"id":    "basket-1",
+				"total": "€0.00",
+				"venue": map[string]any{"id": "venue-1"},
+				"items": []any{
+					map[string]any{"id": "lunch", "name": "LAMB METHI", "count": 2, "price": 2900, "is_available": false},
+					map[string]any{"id": "soup", "name": "Soup", "count": 1, "price": 900, "is_available": true},
+				},
+				"telemetry": map[string]any{"basket_total": 900},
+			},
+		},
+	}
+
+	state, warnings := buildCartState(page, "venue-1")
+	lines := asSlice(state["lines"])
+	if got := asMap(lines[0])["is_available"]; got != false {
+		t.Fatalf("lunch is_available = %#v, want false", got)
+	}
+	if got := asMap(lines[1])["is_available"]; got != true {
+		t.Fatalf("soup is_available = %#v, want true", got)
+	}
+	want := `basket item "LAMB METHI" is unavailable now; Wolt leaves it out of the basket total`
+	found := false
+	for _, warning := range warnings {
+		if warning == want {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("warnings = %#v, want %q", warnings, want)
+	}
+	if asInt(asMap(state["subtotal"])["amount"]) != 3800 || asInt(asMap(state["total"])["amount"]) != 900 {
+		t.Fatalf("subtotal = %#v, total = %#v", state["subtotal"], state["total"])
+	}
+}
+
 func TestFindBasketLineByIDAcceptsObjectIDCase(t *testing.T) {
 	basket := map[string]any{
 		"items": []any{
