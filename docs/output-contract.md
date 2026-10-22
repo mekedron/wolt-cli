@@ -405,8 +405,9 @@ Availability is derived from Wolt's current `disabled_info` and
   Wolt keeps `disabled_info` null outside those hours, but its basket marks
   such a line unavailable. The CLI and MCP therefore treat an item outside its
   hours as disabled, with a reason such as
-  `not sold now; available Mon 10:30-15:00 Europe/Helsinki`. When the venue
-  timezone cannot be read, the hours are not checked.
+  `not sold now; available Mon 10:30-15:00 venue time`. The venue's time
+  comes from the venue pages the command already loads; when it cannot be
+  read, the hours are not checked.
 
 `is_sold_out` remains as a deprecated, derived compatibility alias
 (`!is_available`); raw `is_sold_out` and `sold_out` fields are not expected

@@ -124,7 +124,7 @@ type Client struct {
 	verboseOutput  io.Writer
 	verboseOutputM sync.RWMutex
 	now            func() time.Time
-	venueLocations sync.Map
+	venueZones     sync.Map
 }
 
 // Option applies Client options.
@@ -628,7 +628,11 @@ func (c *Client) searchPage(ctx context.Context, body map[string]any, auth AuthC
 
 // VenuePageStatic returns venue static page payload.
 func (c *Client) VenuePageStatic(ctx context.Context, slug string) (map[string]any, error) {
-	return c.doJSONRequest(ctx, http.MethodGet, c.endpoints.VenuePage+slug+"/static", nil, nil, c.headers(nil, nil))
+	payload, err := c.doJSONRequest(ctx, http.MethodGet, c.endpoints.VenuePage+slug+"/static", nil, nil, c.headers(nil, nil))
+	if err == nil {
+		c.rememberVenueStaticZone(slug, payload)
+	}
+	return payload, err
 }
 
 // VenuePageDynamic returns venue dynamic page payload.
@@ -647,7 +651,7 @@ func (c *Client) VenuePageDynamic(ctx context.Context, slug string, options Venu
 		}
 		params.Set("selected_delivery_method", selectedDeliveryMethod)
 	}
-	return c.doJSONRequest(
+	payload, err := c.doJSONRequest(
 		ctx,
 		http.MethodGet,
 		endpoint+slug+"/dynamic/",
@@ -655,6 +659,10 @@ func (c *Client) VenuePageDynamic(ctx context.Context, slug string, options Venu
 		nil,
 		c.headers(nil, &options.Auth),
 	)
+	if err == nil {
+		c.rememberVenueDynamicZone(slug, payload)
+	}
+	return payload, err
 }
 
 // AssortmentByVenueSlug returns full assortment payload for one venue slug.

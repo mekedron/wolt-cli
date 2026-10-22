@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	// Venue timezones are resolved by IANA name; Windows hosts ship no zoneinfo.
+	// Static venue pages name an IANA zone; Windows hosts ship no zoneinfo.
 	_ "time/tzdata"
 )
 
@@ -29,6 +29,15 @@ type itemWindow struct {
 	end   int64
 }
 
+// offsetZoneTTL bounds how long a UTC offset read from a venue's current
+// time is trusted; a long-running MCP server may outlive a DST switch.
+const offsetZoneTTL = time.Hour
+
+type venueZone struct {
+	location *time.Location
+	expires  time.Time // zero for an IANA zone, which never goes stale
+}
+
 func (c *Client) withItemSchedules(
 	ctx context.Context,
 	slug string,
@@ -42,8 +51,8 @@ func (c *Client) withItemSchedules(
 }
 
 // markOffScheduleItems disables the top-level assortment items whose
-// available_times exclude the current venue-local time. The venue timezone
-// is fetched only when some item is restricted at all; when it cannot be
+// available_times exclude the current venue-local time. The venue zone is
+// looked up only when some item is restricted at all; when it cannot be
 // resolved, items stay as Wolt returned them.
 func (c *Client) markOffScheduleItems(ctx context.Context, slug string, payload map[string]any) {
 	type scheduledItem struct {
@@ -71,48 +80,105 @@ func (c *Client) markOffScheduleItems(ctx context.Context, slug string, payload 
 	if !ok {
 		return
 	}
-	clock := c.now
-	if clock == nil {
-		clock = time.Now
-	}
-	now := clock().In(location)
+	now := c.clock().In(location)
 	for _, entry := range restricted {
 		if windowsContain(entry.windows, now) {
 			continue
 		}
 		entry.item["disabled_info"] = map[string]any{
-			"disable_text": "not sold now; available " + describeWindows(entry.windows) + " " + location.String(),
+			"disable_text": "not sold now; available " + describeWindows(entry.windows) + " venue time",
 			"source":       itemScheduleSource,
 		}
 	}
 }
 
-// venueLocation resolves the venue timezone from its static page and caches
-// it for the client's lifetime.
+func (c *Client) clock() time.Time {
+	if c.now == nil {
+		return time.Now()
+	}
+	return c.now()
+}
+
+// venueLocation returns the venue's zone. Venue pages the client already
+// loaded supply it, so a menu load normally costs no extra request. Otherwise
+// the dynamic venue page is asked for the venue's current time, and the
+// static page, which Wolt rate-limits harder, is the last resort.
 func (c *Client) venueLocation(ctx context.Context, slug string) (*time.Location, bool) {
-	key := strings.ToLower(strings.TrimSpace(slug))
+	if location, ok := c.lookupVenueZone(slug); ok {
+		return location, true
+	}
+	if _, err := c.VenuePageDynamic(ctx, slug, VenuePageDynamicOptions{}); err == nil {
+		if location, ok := c.lookupVenueZone(slug); ok {
+			return location, true
+		}
+	}
+	if _, err := c.VenuePageStatic(ctx, slug); err == nil {
+		return c.lookupVenueZone(slug)
+	}
+	return nil, false
+}
+
+func (c *Client) lookupVenueZone(reference string) (*time.Location, bool) {
+	key := venueZoneKey(reference)
 	if key == "" {
 		return nil, false
 	}
-	if cached, ok := c.venueLocations.Load(key); ok {
-		return cached.(*time.Location), true
-	}
-	page, err := c.VenuePageStatic(ctx, slug)
-	if err != nil {
+	cached, ok := c.venueZones.Load(key)
+	if !ok {
 		return nil, false
 	}
-	venue, _ := page["venue"].(map[string]any)
+	zone := cached.(venueZone)
+	if !zone.expires.IsZero() && c.clock().After(zone.expires) {
+		c.venueZones.Delete(key)
+		return nil, false
+	}
+	return zone.location, true
+}
+
+// rememberVenueStaticZone records the IANA zone of a static venue page under
+// the requested reference and the venue's own slug and id.
+func (c *Client) rememberVenueStaticZone(reference string, payload map[string]any) {
+	venue, _ := payload["venue"].(map[string]any)
 	name, _ := venue["timezone"].(string)
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return nil, false
+	location, err := time.LoadLocation(strings.TrimSpace(name))
+	if strings.TrimSpace(name) == "" || err != nil {
+		return
 	}
-	location, err := time.LoadLocation(name)
-	if err != nil {
-		return nil, false
+	c.storeVenueZone(venueZone{location: location}, reference, venue["slug"], venue["id"])
+}
+
+// rememberVenueDynamicZone records the UTC offset of the venue's current time,
+// which the dynamic venue page reports as open_status.now.
+func (c *Client) rememberVenueDynamicZone(reference string, payload map[string]any) {
+	venue, _ := payload["venue"].(map[string]any)
+	for _, key := range []string{"open_status", "delivery_open_status"} {
+		status, _ := venue[key].(map[string]any)
+		raw, _ := status["now"].(string)
+		venueNow, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(raw))
+		if err != nil {
+			continue
+		}
+		_, offset := venueNow.Zone()
+		zone := venueZone{
+			location: time.FixedZone(venueNow.Format("-07:00"), offset),
+			expires:  c.clock().Add(offsetZoneTTL),
+		}
+		c.storeVenueZone(zone, reference, venue["slug"], venue["id"])
+		return
 	}
-	c.venueLocations.Store(key, location)
-	return location, true
+}
+
+func (c *Client) storeVenueZone(zone venueZone, references ...any) {
+	for _, reference := range references {
+		name, _ := reference.(string)
+		if key := venueZoneKey(name); key != "" {
+			c.venueZones.Store(key, zone)
+		}
+	}
+}
+
+func venueZoneKey(reference string) string {
+	return strings.ToLower(strings.TrimSpace(reference))
 }
 
 // parseItemWindows reads available_times. Missing, empty or malformed

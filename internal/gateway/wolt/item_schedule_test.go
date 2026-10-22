@@ -38,7 +38,10 @@ func (c *routeHTTPClient) Do(req *http.Request) (*http.Response, error) {
 	}, nil
 }
 
-const scheduleTestStatic = `{"venue":{"timezone":"Europe/Helsinki"}}`
+const scheduleTestStatic = `{"venue":{"slug":"trishuli","timezone":"Europe/Helsinki"}}`
+
+// The dynamic page reports the venue's current time with its UTC offset.
+const scheduleTestDynamic = `{"venue":{"open_status":{"now":"2026-10-22T15:51:00.123456+03:00"}}}`
 
 // Monday-only lunch (10:30-15:00), an all-week item and a Friday-to-Saturday
 // overnight window (22:00-02:00).
@@ -65,8 +68,9 @@ func scheduleTestClient(t *testing.T, routes map[string]string, now string) (*Cl
 	client := NewClient(
 		WithHTTPClient(httpClient),
 		WithEndpoints(Endpoints{
-			VenuePage:  "https://example.test/pages/venue/slug/",
-			Assortment: "https://example.test/assortment/v1/venues/slug/",
+			VenuePage:        "https://example.test/pages/venue/slug/",
+			VenuePageDynamic: "https://example.test/venue/slug/",
+			Assortment:       "https://example.test/assortment/v1/venues/slug/",
 		}),
 		// The clock runs in UTC, as on CI; windows are venue-local.
 		WithClock(at.UTC),
@@ -87,6 +91,7 @@ func scheduleTestItems(t *testing.T, payload map[string]any) map[string]map[stri
 func TestAssortmentDisablesItemsOutsideTheirSaleWindow(t *testing.T) {
 	client, httpClient := scheduleTestClient(t, map[string]string{
 		"/trishuli/assortment": scheduleTestAssortment,
+		"/trishuli/dynamic/":   scheduleTestDynamic,
 		"/trishuli/static":     scheduleTestStatic,
 	}, "2026-10-22 15:51") // Thursday
 
@@ -99,7 +104,7 @@ func TestAssortmentDisablesItemsOutsideTheirSaleWindow(t *testing.T) {
 	if !ok {
 		t.Fatalf("lunch disabled_info = %#v, want a map", items["lunch"]["disabled_info"])
 	}
-	if got, want := disabled["disable_text"], "not sold now; available Mon 10:30-15:00 Europe/Helsinki"; got != want {
+	if got, want := disabled["disable_text"], "not sold now; available Mon 10:30-15:00 venue time"; got != want {
 		t.Fatalf("disable_text = %q, want %q", got, want)
 	}
 	if disabled["source"] != itemScheduleSource {
@@ -112,8 +117,11 @@ func TestAssortmentDisablesItemsOutsideTheirSaleWindow(t *testing.T) {
 	if _, err := client.AssortmentByVenueSlug(context.Background(), "trishuli"); err != nil {
 		t.Fatalf("second AssortmentByVenueSlug() error = %v", err)
 	}
-	if got := httpClient.calls["/trishuli/static"]; got != 1 {
-		t.Fatalf("static calls = %d, want 1 (timezone is cached per venue)", got)
+	if got := httpClient.calls["/trishuli/dynamic/"]; got != 1 {
+		t.Fatalf("dynamic calls = %d, want 1 (the zone is cached per venue)", got)
+	}
+	if got := httpClient.calls["/trishuli/static"]; got != 0 {
+		t.Fatalf("static calls = %d, want 0", got)
 	}
 }
 
@@ -161,8 +169,64 @@ func TestAssortmentSkipsTimezoneLookupWithoutRestrictedItems(t *testing.T) {
 	if _, err := client.AssortmentByVenueSlug(context.Background(), "trishuli"); err != nil {
 		t.Fatalf("AssortmentByVenueSlug() error = %v", err)
 	}
-	if got := httpClient.calls["/trishuli/static"]; got != 0 {
-		t.Fatalf("static calls = %d, want 0", got)
+	if got := httpClient.calls["/trishuli/static"] + httpClient.calls["/trishuli/dynamic/"]; got != 0 {
+		t.Fatalf("venue page calls = %d, want 0", got)
+	}
+}
+
+func TestAssortmentUsesTheZoneOfAVenuePageAlreadyLoaded(t *testing.T) {
+	client, httpClient := scheduleTestClient(t, map[string]string{
+		"/trishuli/assortment":             scheduleTestAssortment,
+		"/6347f894ef53042e6c3eaaa6/static": scheduleTestStatic,
+	}, "2026-10-22 15:51")
+	// A cart add by venue id loads the static page first; it names the slug.
+	if _, err := client.VenuePageStatic(context.Background(), "6347f894ef53042e6c3eaaa6"); err != nil {
+		t.Fatalf("VenuePageStatic() error = %v", err)
+	}
+	payload, err := client.AssortmentByVenueSlug(context.Background(), "trishuli")
+	if err != nil {
+		t.Fatalf("AssortmentByVenueSlug() error = %v", err)
+	}
+	if scheduleTestItems(t, payload)["lunch"]["disabled_info"] == nil {
+		t.Fatal("lunch was not disabled with the zone from the loaded static page")
+	}
+	if got := httpClient.calls["/trishuli/dynamic/"] + httpClient.calls["/trishuli/static"]; got != 0 {
+		t.Fatalf("extra venue page calls = %d, want 0", got)
+	}
+}
+
+func TestAssortmentFallsBackToTheStaticPageZone(t *testing.T) {
+	client, httpClient := scheduleTestClient(t, map[string]string{
+		"/trishuli/assortment": scheduleTestAssortment,
+		"/trishuli/dynamic/":   `{"venue":{"open_status":null}}`,
+		"/trishuli/static":     scheduleTestStatic,
+	}, "2026-10-22 15:51")
+	payload, err := client.AssortmentByVenueSlug(context.Background(), "trishuli")
+	if err != nil {
+		t.Fatalf("AssortmentByVenueSlug() error = %v", err)
+	}
+	if scheduleTestItems(t, payload)["lunch"]["disabled_info"] == nil {
+		t.Fatal("lunch was not disabled with the static page zone")
+	}
+	if httpClient.calls["/trishuli/dynamic/"] != 1 || httpClient.calls["/trishuli/static"] != 1 {
+		t.Fatalf("calls = %#v, want one dynamic and one static", httpClient.calls)
+	}
+}
+
+func TestOffsetZoneExpires(t *testing.T) {
+	client, httpClient := scheduleTestClient(t, map[string]string{
+		"/trishuli/dynamic/": scheduleTestDynamic,
+	}, "2026-10-22 15:51")
+	if _, ok := client.venueLocation(context.Background(), "trishuli"); !ok {
+		t.Fatal("venueLocation() found no zone")
+	}
+	later := client.clock().Add(offsetZoneTTL + time.Minute)
+	client.now = func() time.Time { return later }
+	if _, ok := client.venueLocation(context.Background(), "trishuli"); !ok {
+		t.Fatal("venueLocation() found no zone after expiry")
+	}
+	if got := httpClient.calls["/trishuli/dynamic/"]; got != 2 {
+		t.Fatalf("dynamic calls = %d, want 2 (the offset is re-read after it expires)", got)
 	}
 }
 
