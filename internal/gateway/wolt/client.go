@@ -123,6 +123,8 @@ type Client struct {
 	nextRequestAt  time.Time
 	verboseOutput  io.Writer
 	verboseOutputM sync.RWMutex
+	now            func() time.Time
+	venueZones     sync.Map
 }
 
 // Option applies Client options.
@@ -156,6 +158,13 @@ func WithRequestMinInterval(interval time.Duration) Option {
 			interval = 0
 		}
 		c.minRequestGap = interval
+	}
+}
+
+// WithClock replaces the clock used to evaluate item sale windows.
+func WithClock(now func() time.Time) Option {
+	return func(c *Client) {
+		c.now = now
 	}
 }
 
@@ -196,6 +205,7 @@ func NewClient(opts ...Option) *Client {
 		},
 		locale:      "en",
 		webClientID: generateWebClientID(),
+		now:         time.Now,
 	}
 	for _, opt := range opts {
 		opt(c)
@@ -618,7 +628,11 @@ func (c *Client) searchPage(ctx context.Context, body map[string]any, auth AuthC
 
 // VenuePageStatic returns venue static page payload.
 func (c *Client) VenuePageStatic(ctx context.Context, slug string) (map[string]any, error) {
-	return c.doJSONRequest(ctx, http.MethodGet, c.endpoints.VenuePage+slug+"/static", nil, nil, c.headers(nil, nil))
+	payload, err := c.doJSONRequest(ctx, http.MethodGet, c.endpoints.VenuePage+slug+"/static", nil, nil, c.headers(nil, nil))
+	if err == nil {
+		c.rememberVenueStaticZone(slug, payload)
+	}
+	return payload, err
 }
 
 // VenuePageDynamic returns venue dynamic page payload.
@@ -637,7 +651,7 @@ func (c *Client) VenuePageDynamic(ctx context.Context, slug string, options Venu
 		}
 		params.Set("selected_delivery_method", selectedDeliveryMethod)
 	}
-	return c.doJSONRequest(
+	payload, err := c.doJSONRequest(
 		ctx,
 		http.MethodGet,
 		endpoint+slug+"/dynamic/",
@@ -645,11 +659,16 @@ func (c *Client) VenuePageDynamic(ctx context.Context, slug string, options Venu
 		nil,
 		c.headers(nil, &options.Auth),
 	)
+	if err == nil {
+		c.rememberVenueDynamicZone(slug, payload)
+	}
+	return payload, err
 }
 
 // AssortmentByVenueSlug returns full assortment payload for one venue slug.
 func (c *Client) AssortmentByVenueSlug(ctx context.Context, slug string) (map[string]any, error) {
-	return c.doJSONRequest(ctx, http.MethodGet, c.endpoints.Assortment+slug+"/assortment", nil, nil, c.headers(nil, nil))
+	payload, err := c.doJSONRequest(ctx, http.MethodGet, c.endpoints.Assortment+slug+"/assortment", nil, nil, c.headers(nil, nil))
+	return c.withItemSchedules(ctx, slug, payload, err)
 }
 
 // AssortmentCategoryByVenueSlug returns one category assortment payload by category slug.
@@ -667,7 +686,8 @@ func (c *Client) AssortmentCategoryByVenueSlug(
 		params.Set("language", lang)
 	}
 	endpoint := c.endpoints.Assortment + slug + "/assortment/categories/slug/" + url.PathEscape(strings.TrimSpace(categorySlug))
-	return c.doJSONRequest(ctx, http.MethodGet, endpoint, params, nil, c.headers(nil, &auth))
+	payload, err := c.doJSONRequest(ctx, http.MethodGet, endpoint, params, nil, c.headers(nil, &auth))
+	return c.withItemSchedules(ctx, slug, payload, err)
 }
 
 // AssortmentItemsByVenueSlug returns detailed item payload for selected assortment item ids.
@@ -689,7 +709,7 @@ func (c *Client) AssortmentItemsByVenueSlug(
 		"item_ids": ids,
 	}
 	endpoint := c.endpoints.Assortment + slug + "/assortment/items"
-	return c.doJSONRequest(
+	payload, err := c.doJSONRequest(
 		ctx,
 		http.MethodPost,
 		endpoint,
@@ -697,6 +717,7 @@ func (c *Client) AssortmentItemsByVenueSlug(
 		body,
 		c.headers(map[string]string{"Content-Type": "application/json"}, &auth),
 	)
+	return c.withItemSchedules(ctx, slug, payload, err)
 }
 
 // AssortmentItemsSearchByVenueSlug searches items inside one venue assortment.
@@ -717,7 +738,7 @@ func (c *Client) AssortmentItemsSearchByVenueSlug(
 		"q": strings.TrimSpace(query),
 	}
 	endpoint := c.endpoints.Assortment + slug + "/assortment/items/search"
-	return c.doJSONRequest(
+	payload, err := c.doJSONRequest(
 		ctx,
 		http.MethodPost,
 		endpoint,
@@ -725,6 +746,7 @@ func (c *Client) AssortmentItemsSearchByVenueSlug(
 		body,
 		c.headers(map[string]string{"Content-Type": "application/json"}, &auth),
 	)
+	return c.withItemSchedules(ctx, slug, payload, err)
 }
 
 // VenueContentByVenueSlug returns venue-content payload by venue slug.

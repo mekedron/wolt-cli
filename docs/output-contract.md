@@ -400,6 +400,14 @@ Availability is derived from Wolt's current `disabled_info` and
 - `null` means Wolt supplied no numeric balance constraint. It does **not**
   mean unlimited stock; availability still depends on `disabled_info` and the
   item being present in the current assortment.
+- `available_times` lists the weekly hours an item is sold, in the venue's
+  local time (for example a lunch dish sold only on Mondays 10:30-15:00).
+  Wolt keeps `disabled_info` null outside those hours, but its basket marks
+  such a line unavailable. The CLI and MCP therefore treat an item outside its
+  hours as disabled, with a reason such as
+  `not sold now; available Mon 10:30-15:00 venue time`. The venue's time
+  comes from the venue pages the command already loads; when it cannot be
+  read, the hours are not checked.
 
 `is_sold_out` remains as a deprecated, derived compatibility alias
 (`!is_available`); raw `is_sold_out` and `sold_out` fields are not expected
@@ -470,7 +478,7 @@ basket_id, venue_id, venue_name, venue_slug
 selection, currency, total_items
 lines[]: {
   line_id, item_id, name, count,
-  options[], price, line_total
+  options[], price, line_total, is_available?
 }
 subtotal, fees, total
 ```
@@ -481,6 +489,11 @@ are the price of the weighed amount. `subtotal` is the sum of the line totals,
 the same item total the Wolt app shows. A line whose stored price does not
 divide evenly by its count gets a `null` unit price and a warning; remove the
 item and add it again.
+
+`is_available` is Wolt's own flag for the line and is present when Wolt sends
+it. Wolt leaves an unavailable line (sold out, or outside the item's sale
+hours) out of `total`, so `total` can be lower than `subtotal`; each such line
+also adds a warning.
 
 ### `wolt cart add|remove|clear` — CartMutationResult
 
