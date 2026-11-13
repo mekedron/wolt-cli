@@ -380,39 +380,47 @@ func ScopedItem(payload map[string]any, itemID string) map[string]any {
 		}
 	}
 
-	referenced := make(map[string]struct{})
-	appendReference := func(raw any) {
-		id := strings.TrimSpace(payloadutil.String(raw))
-		if id != "" {
-			referenced[strings.ToLower(id)] = struct{}{}
-		}
-	}
-	for _, rawID := range payloadutil.Slice(target["option_group_ids"]) {
-		appendReference(rawID)
-	}
-	targetGroups := payloadutil.MergeOptionGroups(
-		payloadutil.Slice(target["options"]),
-		payloadutil.Slice(target["option_groups"]),
-	)
-	for _, rawGroup := range targetGroups {
-		appendReference(optionGroupID(rawGroup))
-	}
-	groups := append([]any(nil), targetGroups...)
-	rootGroups := payloadutil.MergeOptionGroups(
-		payloadutil.Slice(payload["options"]),
-		payloadutil.Slice(payload["option_groups"]),
-	)
-	for _, rawGroup := range rootGroups {
-		if _, ok := referenced[strings.ToLower(optionGroupID(rawGroup))]; !ok {
-			continue
-		}
-		groups = payloadutil.MergeOptionGroups(groups, []any{rawGroup})
-	}
-	if len(groups) > 0 {
+	if groups := itemOptionGroups(payload, target); len(groups) > 0 {
 		scoped["options"] = groups
 		scoped["option_groups"] = groups
 	}
 	return scoped
+}
+
+// OptionGroups returns the option groups of one item in a payload, joined
+// with the payload's option library (see payloadutil.JoinOptionLibrary).
+func OptionGroups(payload map[string]any, itemID string) []any {
+	target := Find(payload, itemID)
+	if target == nil {
+		rootID := strings.TrimSpace(payloadutil.String(payloadutil.CoalesceAny(payload["item_id"], payload["id"])))
+		if rootID != "" && strings.EqualFold(rootID, strings.TrimSpace(itemID)) {
+			target = payload
+		}
+	}
+	if target == nil {
+		return nil
+	}
+	return itemOptionGroups(payload, target)
+}
+
+func itemOptionGroups(payload map[string]any, target map[string]any) []any {
+	rootGroups := payloadutil.MergeOptionGroups(
+		payloadutil.Slice(payload["options"]),
+		payloadutil.Slice(payload["option_groups"]),
+	)
+	groups := payloadutil.JoinOptionLibrary(target, rootGroups)
+	// A group the item lists by its own id may also have a root definition;
+	// MergeOptionGroups keeps whichever of the two is richer.
+	listed := make(map[string]struct{}, len(groups))
+	for _, rawGroup := range groups {
+		listed[strings.ToLower(optionGroupID(rawGroup))] = struct{}{}
+	}
+	for _, rawGroup := range rootGroups {
+		if _, ok := listed[strings.ToLower(optionGroupID(rawGroup))]; ok {
+			groups = payloadutil.MergeOptionGroups(groups, []any{rawGroup})
+		}
+	}
+	return groups
 }
 
 func optionGroupID(raw any) string {

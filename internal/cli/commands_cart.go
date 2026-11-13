@@ -9,6 +9,7 @@ import (
 	woltgateway "github.com/mekedron/wolt-cli/internal/gateway/wolt"
 	"github.com/mekedron/wolt-cli/internal/service/basketprices"
 	"github.com/mekedron/wolt-cli/internal/service/catalogitem"
+	"github.com/mekedron/wolt-cli/internal/service/itemoptions"
 	"github.com/mekedron/wolt-cli/internal/service/output"
 	"github.com/mekedron/wolt-cli/internal/service/payloadutil"
 	"github.com/spf13/cobra"
@@ -550,7 +551,8 @@ func newCartAddCommand(deps Dependencies) *cobra.Command {
 			if len(selectedOptions) > 0 && !hasHydratedOptionSpecs(itemPayload) {
 				warnings = append(warnings, "option metadata unavailable; provide option IDs or use --venue-slug to resolve option names")
 			}
-			options, err := buildBasketOptions(itemPayload, selectedOptions)
+			optionResult, err := itemoptions.Build(itemPayload, selectedOptions)
+			options := optionResult.Options
 			if err != nil {
 				return emitErrorWithWarnings(
 					cmd,
@@ -569,7 +571,7 @@ func newCartAddCommand(deps Dependencies) *cobra.Command {
 			linePrice := price
 			if _, weighted := payloadutil.WeightConfigFromItem(itemPayload); !weighted {
 				var ok bool
-				linePrice, ok = payloadutil.CheckedMultiplyInt(price+basketOptionsTotal(options), count)
+				linePrice, ok = payloadutil.CheckedMultiplyInt(price+optionResult.UnitTotal, count)
 				if !ok {
 					return emitError(
 						cmd,
@@ -704,6 +706,9 @@ func newCartAddCommand(deps Dependencies) *cobra.Command {
 				"item_name":     name,
 				"item_price":    price,
 				"item_currency": currency,
+			}
+			if len(optionResult.Defaults) > 0 {
+				data["default_options"] = itemoptions.DefaultsData(optionResult.Defaults)
 			}
 
 			if format == output.FormatTable {
@@ -1726,6 +1731,18 @@ func buildCartMutationTable(data map[string]any) string {
 		{"Removed count", asString(data["removed_count"])},
 		{"Total items", asString(data["total_items"])},
 		{"Total", fallbackString(asString(asMap(data["total"])["formatted_amount"]), "-")},
+	}
+	if defaults := asSlice(data["default_options"]); len(defaults) > 0 {
+		labels := make([]string, 0, len(defaults))
+		for _, raw := range defaults {
+			entry := asMap(raw)
+			labels = append(labels, fmt.Sprintf(
+				"%s: %s",
+				fallbackString(asString(entry["group_name"]), asString(entry["group_id"])),
+				fallbackString(asString(entry["value_name"]), asString(entry["value_id"])),
+			))
+		}
+		rows = append(rows, []string{"Default options", strings.Join(labels, "; ")})
 	}
 	return output.RenderTable("Cart mutation", headers, rows)
 }

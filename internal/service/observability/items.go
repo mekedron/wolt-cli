@@ -199,36 +199,7 @@ func extractOptionGroups(node any, itemID string) []map[string]any {
 	if payload == nil {
 		return []map[string]any{}
 	}
-	target := catalogitem.Find(payload, itemID)
-	if target == nil {
-		rootID := strings.TrimSpace(stringFromAny(coalesce(payload["item_id"], payload["id"])))
-		if strings.EqualFold(rootID, strings.TrimSpace(itemID)) {
-			target = payload
-		}
-	}
-	if target == nil {
-		return []map[string]any{}
-	}
-
-	referenced := map[string]struct{}{}
-	for _, groupID := range extractOptionGroupIDs(target) {
-		referenced[strings.ToLower(groupID)] = struct{}{}
-	}
-	groups := payloadutil.MergeOptionGroups(
-		toSlice(target["options"]),
-		toSlice(target["option_groups"]),
-	)
-	rootGroups := payloadutil.MergeOptionGroups(
-		toSlice(payload["options"]),
-		toSlice(payload["option_groups"]),
-	)
-	for _, rawGroup := range rootGroups {
-		groupID := rawOptionGroupID(rawGroup)
-		if _, wanted := referenced[strings.ToLower(groupID)]; !wanted {
-			continue
-		}
-		groups = payloadutil.MergeOptionGroups(groups, []any{rawGroup})
-	}
+	groups := catalogitem.OptionGroups(payload, itemID)
 	specs := payloadutil.ExtractOptionSpecs(map[string]any{"option_groups": groups})
 	groupIDs := make([]string, 0, len(specs))
 	for groupID := range specs {
@@ -254,27 +225,28 @@ func extractOptionGroups(node any, itemID string) []map[string]any {
 			if valueSpec.HasPrice {
 				value["price"] = valueSpec.Price
 			}
+			if spec.DefaultValueID != "" && strings.EqualFold(spec.DefaultValueID, valueID) {
+				value["default"] = true
+			}
 			values = append(values, value)
 		}
-		out = append(out, map[string]any{
+		group := map[string]any{
 			"group_id": groupID,
 			"name":     spec.Name,
 			"required": spec.Required,
 			"min":      spec.MinSelect,
 			"max":      spec.MaxSelect,
 			"values":   values,
-		})
+		}
+		if spec.OptionID != "" {
+			group["library_group_id"] = spec.OptionID
+		}
+		if len(spec.PrerequisiteValueIDs) > 0 {
+			group["prerequisite_value_ids"] = append([]string(nil), spec.PrerequisiteValueIDs...)
+		}
+		out = append(out, group)
 	}
 	return out
-}
-
-func rawOptionGroupID(raw any) string {
-	group := toMap(raw)
-	return strings.TrimSpace(stringFromAny(coalesce(
-		group["id"],
-		group["group_id"],
-		group["option_id"],
-	)))
 }
 
 func extractUpsellItems(node any) []map[string]any {

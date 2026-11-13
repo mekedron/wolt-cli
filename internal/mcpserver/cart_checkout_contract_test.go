@@ -148,7 +148,7 @@ func TestCartAddSendsWeightedBasketPayload(t *testing.T) {
 	}
 }
 
-func TestCartAddRejectsRequiredOptionsItCannotRepresent(t *testing.T) {
+func TestCartAddRejectsRequiredOptionsWithoutAChoiceOrDefault(t *testing.T) {
 	const (
 		venueID = "000000000000000000000343"
 		itemID  = "000000000000000000000344"
@@ -190,7 +190,7 @@ func TestCartAddRejectsRequiredOptionsItCannotRepresent(t *testing.T) {
 		Venue:  "synthetic-market",
 		ItemID: itemID,
 	})
-	if err == nil || !strings.Contains(err.Error(), "requires option selections") {
+	if err == nil || !strings.Contains(err.Error(), `option group "size" selection count must be at least 1; got 0`) {
 		t.Fatalf("cart add error = %v, want required-option rejection", err)
 	}
 	if addCalls != 0 {

@@ -595,3 +595,49 @@ func TestBuildBasketOptionsKeepsGroupsSharingALibraryGroupApart(t *testing.T) {
 		}
 	}
 }
+
+// Wolt keeps a dish's selection range on the item-level group
+// (multi_choice_config.total_range) and its values and default on the
+// library group; the CLI item payload must carry both.
+func TestBuildItemPayloadFromAssortmentKeepsItemLevelRanges(t *testing.T) {
+	assortment := map[string]any{
+		"items": []any{
+			map[string]any{
+				"id":    "item-1",
+				"name":  "Kebab",
+				"price": 1350,
+				"options": []any{
+					map[string]any{
+						"id":                  "grp-salsa",
+						"option_id":           "lib-salsa",
+						"name":                "Salsa",
+						"prerequisite_values": []any{},
+						"multi_choice_config": map[string]any{
+							"total_range": map[string]any{"min": 1, "max": 1},
+						},
+					},
+				},
+			},
+		},
+		"options": []any{
+			map[string]any{
+				"id":            "lib-salsa",
+				"name":          "Salsa (library)",
+				"default_value": "val-mild",
+				"values": []any{
+					map[string]any{"id": "val-mild", "name": "Mild", "price": 0},
+					map[string]any{"id": "val-hot", "name": "Hot", "price": 0},
+				},
+			},
+		},
+	}
+	specs := extractOptionSpecs(buildItemPayloadFromAssortment(assortment, "item-1"))
+	spec, ok := specs["grp-salsa"]
+	if !ok {
+		t.Fatalf("specs = %#v, want grp-salsa", specs)
+	}
+	if spec.Name != "Salsa" || !spec.Required || spec.MinSelect != 1 || spec.MaxSelect != 1 ||
+		spec.DefaultValueID != "val-mild" || len(spec.Values) != 2 {
+		t.Fatalf("spec = %#v", spec)
+	}
+}
