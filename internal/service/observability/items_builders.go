@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	"github.com/mekedron/wolt-cli/internal/domain"
+	"github.com/mekedron/wolt-cli/internal/service/catalogitem"
+	"github.com/mekedron/wolt-cli/internal/service/itemoptions"
 )
 
 // BuildVenueMenu builds normalized venue menu payload.
@@ -439,6 +441,9 @@ func BuildItemDetail(
 		"option_groups": extractOptionGroups(payload, itemID),
 		"upsell_items":  upsellItems,
 	}
+	if defaultPrice := defaultConfigurationPrice(payload, itemID, price); defaultPrice != nil {
+		data["default_price"] = defaultPrice
+	}
 	if itemContext.VenueSlug != "" {
 		data["venue_slug"] = itemContext.VenueSlug
 	}
@@ -566,4 +571,30 @@ func CopyItemMetadata(target map[string]any, source map[string]any) {
 			target[key] = value
 		}
 	}
+}
+
+// defaultConfigurationPrice is the item price with the options the Wolt app
+// preselects: the base price plus the default values of the required groups.
+// It is nil for an item without option groups, without a base amount, or with
+// a required group that has no default (a choice is needed first).
+func defaultConfigurationPrice(payload map[string]any, itemID string, price map[string]any) map[string]any {
+	groups := catalogitem.OptionGroups(payload, itemID)
+	rawAmount, hasAmount := price["amount"]
+	if len(groups) == 0 || !hasAmount || rawAmount == nil {
+		return nil
+	}
+	optionsTotal, ok := itemoptions.DefaultConfigurationTotal(map[string]any{"option_groups": groups})
+	if !ok {
+		return nil
+	}
+	amount := intValue(rawAmount) + optionsTotal
+	currency := strings.TrimSpace(stringFromAny(price["currency"]))
+	out := map[string]any{"amount": amount}
+	if currency != "" {
+		out["currency"] = currency
+		if formatted := formatAmount(&amount, currency); formatted != nil {
+			out["formatted_amount"] = *formatted
+		}
+	}
+	return out
 }

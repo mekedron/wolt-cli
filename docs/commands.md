@@ -363,9 +363,17 @@ wolt cart add huuva-food-court-niittykumpu 689efcc0dbe125482d2fecb2 \
 
 When complete option metadata is available, unknown or ambiguous names fail
 closed; use the displayed group/value ID to disambiguate. Required and
-minimum/maximum selection counts are validated before the mutation, and
-explicitly free option values remain distinct from values whose price metadata
-is missing.
+minimum/maximum selection counts, and the per-value limit, are validated before
+the mutation, and explicitly free option values remain distinct from values
+whose price metadata is missing.
+
+A required group you leave out gets its default value, the one the Wolt app
+preselects and `venue item` marks with `default: true`; the result lists it
+under `default_options`. A required group without a default needs `--option`.
+Optional groups stay empty unless you choose a value, even when Wolt names a
+default for them. Some groups apply only after a value of another group is
+chosen (`prerequisite_value_ids` in `venue item`); such a group is skipped
+until then, and choosing a value in it before that is an error.
 
 A restaurant dish names each option group by its own item-level ID and takes
 the values from a shared library group; `venue menu --include-options` lists

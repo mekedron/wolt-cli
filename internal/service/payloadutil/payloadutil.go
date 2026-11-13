@@ -28,6 +28,7 @@ type OptionValueSpec struct {
 	Name     string
 	Price    int
 	HasPrice bool
+	MaxCount int // most units of this one value per line; 0 means no limit
 }
 
 type OptionGroupSpec struct {
@@ -37,7 +38,14 @@ type OptionGroupSpec struct {
 	Required  bool
 	MinSelect int
 	MaxSelect int
-	Values    map[string]OptionValueSpec
+	// MaxSingleSelections caps the count of any one value; 0 means no limit.
+	MaxSingleSelections int
+	// DefaultValueID is the value the Wolt app preselects for the group.
+	DefaultValueID string
+	// PrerequisiteValueIDs make the group apply only when one of these values
+	// (from another group of the same item) is selected. Empty means always.
+	PrerequisiteValueIDs []string
+	Values               map[string]OptionValueSpec
 }
 
 // BasketVenueIdentity is the venue identity carried by a basket payload.
@@ -635,14 +643,31 @@ func ExtractOptionSpecs(payload map[string]any) map[string]OptionGroupSpec {
 			spec.OptionID = libraryID
 		}
 		if spec.Name == "" {
-			spec.Name = String(CoalesceAny(group["name"], group["title"]))
+			spec.Name = strings.TrimSpace(String(CoalesceAny(group["name"], group["title"])))
 		}
-		spec.Required = spec.Required || Bool(group["required"])
+		// Wolt assortments carry the selection range of an item-level group in
+		// multi_choice_config.total_range; older payloads use flat fields.
+		choiceConfig := Map(group["multi_choice_config"])
+		totalRange := Map(choiceConfig["total_range"])
 		if spec.MinSelect == 0 {
-			spec.MinSelect = Int(CoalesceAny(group["min"], group["minimum"], group["min_select"]))
+			spec.MinSelect = Int(CoalesceAny(group["min"], group["minimum"], group["min_select"], totalRange["min"]))
 		}
 		if spec.MaxSelect == 0 {
-			spec.MaxSelect = Int(CoalesceAny(group["max"], group["maximum"], group["max_select"]))
+			spec.MaxSelect = Int(CoalesceAny(group["max"], group["maximum"], group["max_select"], totalRange["max"]))
+		}
+		if spec.MaxSingleSelections == 0 {
+			spec.MaxSingleSelections = Int(choiceConfig["max_single_selections"])
+		}
+		spec.Required = spec.Required || Bool(group["required"]) || spec.MinSelect >= 1
+		if spec.DefaultValueID == "" {
+			spec.DefaultValueID = strings.TrimSpace(String(group["default_value"]))
+		}
+		if len(spec.PrerequisiteValueIDs) == 0 {
+			for _, raw := range Slice(group["prerequisite_values"]) {
+				if valueID := strings.TrimSpace(String(raw)); valueID != "" {
+					spec.PrerequisiteValueIDs = append(spec.PrerequisiteValueIDs, valueID)
+				}
+			}
 		}
 
 		for _, alias := range []string{"values", "options", "items"} {
@@ -670,6 +695,9 @@ func ExtractOptionSpecs(payload map[string]any) map[string]OptionGroupSpec {
 				if !valueSpec.HasPrice && hasPrice {
 					valueSpec.Price = price
 					valueSpec.HasPrice = true
+				}
+				if valueSpec.MaxCount == 0 {
+					valueSpec.MaxCount = Int(Map(Map(valueMap["multi_choice_config"])["total_range"])["max"])
 				}
 				spec.Values[canonicalValueID] = valueSpec
 			}
@@ -722,6 +750,99 @@ func MergeOptionGroups(existing []any, incoming []any) []any {
 	return out
 }
 
+// JoinOptionLibrary returns the option groups of one assortment item with the
+// shared option library joined in.
+//
+// A dish names each option group by an item-level "id" and points at the
+// venue's option library through "option_id". The item-level entry carries
+// the dish-specific name, selection range (multi_choice_config) and
+// prerequisite_values; the library entry carries the values, their prices and
+// default_value. The basket API and the Wolt app recognise only the
+// item-level id, and one library group can back several groups of the same
+// dish (pick 1, 2 or 3 toppings), so every item-level group becomes its own
+// group carrying the library values. Groups referenced only through
+// option_group_ids come from the library as they are; item groups with no
+// library entry stay as they are.
+func JoinOptionLibrary(item map[string]any, library []any) []any {
+	if item == nil {
+		return nil
+	}
+	libraryIndex := map[string]map[string]any{}
+	for _, rawGroup := range library {
+		group := Map(rawGroup)
+		if id := optionGroupID(group); id != "" {
+			libraryIndex[strings.ToLower(id)] = group
+		}
+	}
+
+	out := []any{}
+	seen := map[string]struct{}{}
+	coveredLibraryIDs := map[string]struct{}{}
+	appendGroup := func(group map[string]any) {
+		key := strings.ToLower(optionGroupID(group))
+		if _, exists := seen[key]; exists {
+			return
+		}
+		seen[key] = struct{}{}
+		out = append(out, group)
+	}
+	for _, rawOption := range MergeOptionGroups(Slice(item["options"]), Slice(item["option_groups"])) {
+		option := Map(rawOption)
+		if option == nil {
+			continue
+		}
+		libraryID := strings.TrimSpace(String(option["option_id"]))
+		libraryGroup := libraryIndex[strings.ToLower(libraryID)]
+		if libraryID == "" || libraryGroup == nil || sameMap(libraryGroup, option) {
+			if optionGroupID(option) != "" {
+				appendGroup(option)
+			}
+			continue
+		}
+		coveredLibraryIDs[strings.ToLower(libraryID)] = struct{}{}
+		joined := make(map[string]any, len(libraryGroup)+len(option))
+		for key, value := range libraryGroup {
+			joined[key] = value
+		}
+		for key, value := range option {
+			if text, ok := value.(string); ok && strings.TrimSpace(text) == "" {
+				continue
+			}
+			if value == nil {
+				continue
+			}
+			joined[key] = value
+		}
+		if name := strings.TrimSpace(String(option["name"])); name != "" {
+			joined["name"] = name
+		}
+		itemLevelID := strings.TrimSpace(String(CoalesceAny(option["id"], option["group_id"])))
+		if itemLevelID == "" {
+			itemLevelID = libraryID
+		}
+		joined["id"] = itemLevelID
+		joined["option_id"] = libraryID
+		appendGroup(joined)
+	}
+	for _, rawID := range Slice(item["option_group_ids"]) {
+		key := strings.ToLower(strings.TrimSpace(String(rawID)))
+		if _, covered := coveredLibraryIDs[key]; covered {
+			continue
+		}
+		if group := libraryIndex[key]; group != nil {
+			appendGroup(group)
+		}
+	}
+	return out
+}
+
+func sameMap(left map[string]any, right map[string]any) bool {
+	if left == nil || right == nil {
+		return false
+	}
+	return reflect.ValueOf(left).Pointer() == reflect.ValueOf(right).Pointer()
+}
+
 func optionGroupID(raw any) string {
 	group := Map(raw)
 	return strings.TrimSpace(String(CoalesceAny(
@@ -740,7 +861,10 @@ func optionGroupScore(raw any) int {
 	if strings.TrimSpace(String(CoalesceAny(group["name"], group["title"]))) != "" {
 		score++
 	}
-	for _, key := range []string{"required", "min", "minimum", "min_select", "max", "maximum", "max_select"} {
+	for _, key := range []string{
+		"required", "min", "minimum", "min_select", "max", "maximum", "max_select",
+		"multi_choice_config", "default_value",
+	} {
 		if _, exists := group[key]; exists {
 			score++
 		}

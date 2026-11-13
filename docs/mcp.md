@@ -168,9 +168,14 @@ that could not be loaded.
 > official Wolt app or web UI. `wolt_checkout_preview` is a pricing preview only.
 
 `wolt_cart_add` always revalidates the exact item before mutating the basket;
-caller-supplied display metadata cannot bypass an unavailable item. The tool
-does not currently accept option selections, so it fails closed when an item
-requires one instead of posting an invalid empty selection.
+caller-supplied display metadata cannot bypass an unavailable item. It takes
+option choices as `options: [{group_id, value_id, count?}]`, with the ids from
+`wolt_venue_item` (names also work when unambiguous), and validates them the
+same way as `wolt cart add --option`: limits per group and per value, unknown
+values and groups that apply only after another choice. A required group left
+out gets its default value, as in the Wolt app, and `default_options` in the
+result lists each one applied; a required group without a default fails closed.
+The line price includes the chosen option prices.
 `wolt_checkout_preview` revalidates every basket item before sending the
 preview request. Both operations fail closed if availability or venue
 currency cannot be verified.

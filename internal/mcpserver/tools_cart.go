@@ -11,6 +11,7 @@ import (
 	woltgateway "github.com/mekedron/wolt-cli/internal/gateway/wolt"
 	"github.com/mekedron/wolt-cli/internal/service/basketprices"
 	"github.com/mekedron/wolt-cli/internal/service/catalogitem"
+	"github.com/mekedron/wolt-cli/internal/service/itemoptions"
 	"github.com/mekedron/wolt-cli/internal/service/observability"
 	"github.com/mekedron/wolt-cli/internal/service/payloadutil"
 )
@@ -40,7 +41,7 @@ func registerCartTools(srv *mcp.Server, tc *ToolCtx) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "wolt_cart_add",
 		Title:       "Add an item to a basket",
-		Description: "Add an item after revalidating its current availability. Merges with existing basket items (does not replace them) and resolves current price and venue currency.",
+		Description: "Add an item after revalidating its current availability. Merges with existing basket items (does not replace them) and resolves current price and venue currency. Choose options with `options` (group and value ids from wolt_venue_item); a required group left out gets its default value, as in the Wolt app, and the line price includes the option prices.",
 		Annotations: mutateAdd,
 	}, tc.handleCartAdd)
 
@@ -143,19 +144,30 @@ func (tc *ToolCtx) handleCartCount(ctx context.Context, _ *mcp.CallToolRequest, 
 
 type CartAddInput struct {
 	LocationInput
-	Venue              string `json:"venue"               jsonschema:"venue slug, id, or url"`
-	ItemID             string `json:"item_id"             jsonschema:"24-char item id (see wolt_venue_menu)"`
-	Count              int    `json:"count,omitempty"     jsonschema:"how many to add (default 1)"`
-	Price              int    `json:"price,omitempty"     jsonschema:"item price in minor units (auto-detected from menu if omitted)"`
-	Currency           string `json:"currency,omitempty"  jsonschema:"3-letter currency (auto-detected if omitted)"`
-	Name               string `json:"name,omitempty"      jsonschema:"item display name (auto-detected if omitted)"`
-	AllowSubstitutions bool   `json:"allow_substitutions,omitempty" jsonschema:"if true, the venue may substitute equivalent items"`
+	Venue              string            `json:"venue"               jsonschema:"venue slug, id, or url"`
+	ItemID             string            `json:"item_id"             jsonschema:"24-char item id (see wolt_venue_menu)"`
+	Count              int               `json:"count,omitempty"     jsonschema:"how many to add (default 1)"`
+	Price              int               `json:"price,omitempty"     jsonschema:"item price in minor units (auto-detected from menu if omitted)"`
+	Currency           string            `json:"currency,omitempty"  jsonschema:"3-letter currency (auto-detected if omitted)"`
+	Name               string            `json:"name,omitempty"      jsonschema:"item display name (auto-detected if omitted)"`
+	AllowSubstitutions bool              `json:"allow_substitutions,omitempty" jsonschema:"if true, the venue may substitute equivalent items"`
+	Options            []CartOptionInput `json:"options,omitempty" jsonschema:"option choices for the item; list a value once per unit or set count. Required groups left out get their default value"`
 }
+
+// CartOptionInput is one chosen option value of the item being added.
+type CartOptionInput struct {
+	GroupID string `json:"group_id"        jsonschema:"option group id (group_id from wolt_venue_item; a library_group_id or the group name also works when unambiguous)"`
+	ValueID string `json:"value_id"        jsonschema:"option value id (value_id from wolt_venue_item; the value name also works when unambiguous)"`
+	Count   int    `json:"count,omitempty" jsonschema:"units of this value (default 1)"`
+}
+
 type CartAddOutput struct {
 	Summary           string         `json:"summary"`
 	VenueID           string         `json:"venue_id"`
 	ItemID            string         `json:"item_id"`
 	Added             int            `json:"added"`
+	Options           []any          `json:"options,omitempty"`
+	DefaultOptions    []any          `json:"default_options,omitempty"`
 	OrderAvailability map[string]any `json:"order_availability,omitempty"`
 	Response          map[string]any `json:"response,omitempty"`
 	Warnings          []string       `json:"warnings,omitempty"`
@@ -264,16 +276,30 @@ func (tc *ToolCtx) handleCartAdd(ctx context.Context, _ *mcp.CallToolRequest, in
 			}
 		}
 	}
-	for _, spec := range payloadutil.ExtractOptionSpecs(itemPayload) {
-		minSelect := spec.MinSelect
-		if spec.Required && minSelect < 1 {
-			minSelect = 1
+	selections := itemoptions.Selections{}
+	for _, option := range in.Options {
+		groupID := strings.TrimSpace(option.GroupID)
+		valueID := strings.TrimSpace(option.ValueID)
+		if groupID == "" || valueID == "" {
+			return nil, CartAddOutput{}, toolErrf("item was NOT added: every option needs group_id and value_id")
 		}
-		if minSelect > 0 {
-			return nil, CartAddOutput{}, toolErrf(
-				"item was NOT added because it requires option selections, which wolt_cart_add does not accept",
-			)
+		if option.Count < 0 {
+			return nil, CartAddOutput{}, toolErrf("item was NOT added: option count must be zero or greater")
 		}
+		optionCount := option.Count
+		if optionCount == 0 {
+			optionCount = 1
+		}
+		selections[groupID] = append(selections[groupID], itemoptions.Choice{ValueID: valueID, Count: optionCount})
+	}
+	if len(selections) > 0 && !optionValuesKnown(itemPayload) {
+		return nil, CartAddOutput{}, toolErrf(
+			"item was NOT added because its option values and prices could not be loaded; try again later",
+		)
+	}
+	optionResult, err := itemoptions.Build(itemPayload, selections)
+	if err != nil {
+		return nil, CartAddOutput{}, toolErrf("item was NOT added: %v", err)
 	}
 	if price <= 0 {
 		return nil, CartAddOutput{}, toolErrf("could not determine item price; pass `price` in minor units")
@@ -282,7 +308,11 @@ func (tc *ToolCtx) handleCartAdd(ctx context.Context, _ *mcp.CallToolRequest, in
 
 	// A basket line's price is the whole-line total, as the Wolt app stores
 	// it. Weighted lines are repriced by weight when they are built.
-	linePrice, ok := payloadutil.CheckedMultiplyInt(price, count)
+	unitPrice, ok := payloadutil.CheckedAddInt(price, optionResult.UnitTotal)
+	if !ok {
+		return nil, CartAddOutput{}, toolErrf("item was NOT added because its total exceeds the supported integer range")
+	}
+	linePrice, ok := payloadutil.CheckedMultiplyInt(unitPrice, count)
 	if !ok {
 		return nil, CartAddOutput{}, toolErrf("item was NOT added because its total exceeds the supported integer range")
 	}
@@ -291,7 +321,7 @@ func (tc *ToolCtx) handleCartAdd(ctx context.Context, _ *mcp.CallToolRequest, in
 		"count":   count,
 		"name":    name,
 		"price":   linePrice,
-		"options": []any{},
+		"options": optionResult.Options,
 		"substitution_settings": map[string]any{
 			"is_allowed": in.AllowSubstitutions,
 		},
@@ -331,14 +361,27 @@ func (tc *ToolCtx) handleCartAdd(ctx context.Context, _ *mcp.CallToolRequest, in
 		return nil, CartAddOutput{}, toolErr(err)
 	}
 	summary := fmt.Sprintf("added %d × %s to %s basket", count, firstNonEmpty(name, in.ItemID), venueMutationID)
+	if len(optionResult.Defaults) > 0 {
+		labels := make([]string, 0, len(optionResult.Defaults))
+		for _, applied := range optionResult.Defaults {
+			labels = append(labels, firstNonEmpty(applied.GroupName, applied.GroupID)+": "+firstNonEmpty(applied.ValueName, applied.ValueID))
+		}
+		summary += "; default options used for " + strings.Join(labels, ", ")
+	}
 	if asBool(orderAvailability["scheduled_only"]) {
 		summary += "; basket is available for scheduled order only"
+	}
+	var defaultOptions []any
+	if len(optionResult.Defaults) > 0 {
+		defaultOptions = itemoptions.DefaultsData(optionResult.Defaults)
 	}
 	return nil, CartAddOutput{
 		Summary:           summary,
 		VenueID:           venueMutationID,
 		ItemID:            in.ItemID,
 		Added:             count,
+		Options:           optionResult.Options,
+		DefaultOptions:    defaultOptions,
 		OrderAvailability: orderAvailability,
 		Response:          resp,
 		Warnings:          append(priceWarnings, availabilityWarnings...),
@@ -676,4 +719,19 @@ func lookupProfileLocation(ctx context.Context, tc *ToolCtx) domain.Location {
 		return domain.Location{}
 	}
 	return profile.Location
+}
+
+// optionValuesKnown reports whether every option group of the item comes
+// with its values, so chosen values can be validated and priced.
+func optionValuesKnown(itemPayload map[string]any) bool {
+	specs := payloadutil.ExtractOptionSpecs(itemPayload)
+	if len(specs) == 0 {
+		return false
+	}
+	for _, spec := range specs {
+		if len(spec.Values) == 0 {
+			return false
+		}
+	}
+	return true
 }

@@ -454,11 +454,24 @@ availability_verified, is_available, unavailable_reason, purchasable_balance
 image_url, image_urls, image_blurhash
 unit_info, unit_price, sell_by_weight_config
 option_groups[]: {
-  group_id, name, required, min, max,
-  values[]: { value_id, name, price? }
+  group_id, library_group_id?, name, required, min, max,
+  prerequisite_value_ids[]?,
+  values[]: { value_id, name, price?, default? }
 }
+default_price?: { amount, currency, formatted_amount }
 upsell_items[]
 ```
+
+`group_id` is the dish's item-level group id, the one the basket stores;
+`library_group_id` is the venue's shared option-library group it takes its
+values from. `min` and `max` bound how many units the group takes in total, and
+`required` is true when `min` is at least 1. `default: true` marks the value
+the Wolt app preselects. A group with `prerequisite_value_ids` applies only
+while one of those values (from another group of the dish) is selected.
+`default_price` is the price with the default values of the required groups
+that apply without any other choice, which is what the Wolt app shows for a
+dish whose required group is paid. It is absent when the item has no option
+groups or a required group has no default.
 
 `price.formatted_amount` is normalized from venue metadata when upstream
 omits the currency and the amount is known. Unknown amounts and their formatted
@@ -503,7 +516,8 @@ total_items: int
 total: { amount, formatted_amount }
 
 # Per mutation
-add:    basket_id, venue_id, line_id, item_name, item_price, item_currency
+add:    basket_id, venue_id, line_id, item_name, item_price, item_currency,
+        default_options[]?: { group_id, group_name?, value_id, value_name?, price }
 remove: basket_id, venue_id, line_id, removed_count
 clear:  basket_ids[], cleared_baskets
 ```
@@ -512,6 +526,8 @@ Before `cart add`, the CLI always fetches the exact current item and refuses
 the mutation when it is disabled, has zero purchasable balance, is missing
 from the current assortment, or cannot be validated. Explicit `--price`,
 `--currency`, and `--name` values do not bypass this check.
+A required option group left without `--option` gets its default value, as the
+Wolt app preselects it, and `default_options` lists each one applied.
 The complete existing basket snapshot must also be reconstructable, including
 every item, selected option, count, and price, because Wolt's mutation replaces
 the full item array.
